@@ -45,17 +45,30 @@ export const LEDGER: LedgerRow[] = RAW.map((t) => {
 });
 
 const pnls = RAW.map((t) => (t.exit - t.entry) * (t.side === "LONG" ? 1 : -1) * t.pv * t.n);
-const wins = pnls.filter((p) => p > 0);
-const grossWin = wins.reduce((a, b) => a + b, 0);
-const grossLoss = -pnls.filter((p) => p <= 0).reduce((a, b) => a + b, 0);
+const winsUsd = pnls.filter((p) => p > 0);
+const lossesUsd = pnls.filter((p) => p <= 0);
+const grossWin = winsUsd.reduce((a, b) => a + b, 0);
+const grossLoss = -lossesUsd.reduce((a, b) => a + b, 0);
+const winR = LEDGER.filter((r) => r.win).map((r) => r.rValue);
+const lossR = LEDGER.filter((r) => !r.win).map((r) => r.rValue);
 const sumR = LEDGER.reduce((a, r) => a + r.rValue, 0);
+const avg = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
 
-export const LEDGER_STATS = [
-  { label: "Trades", value: String(RAW.length), accent: false },
-  { label: "Win rate", value: `${((wins.length / RAW.length) * 100).toFixed(1)}%`, accent: false },
-  { label: "Profit factor", value: (grossWin / grossLoss).toFixed(2), accent: false },
-  { label: "Net", value: signed(sumR, 1, "R"), accent: true },
-];
+export const LEDGER_SUMMARY = {
+  trades: RAW.length,
+  wins: winsUsd.length,
+  losses: lossesUsd.length,
+  netR: signed(sumR, 1, "R"),
+  netUsd: money(grossWin - grossLoss),
+  winRate: `${((winsUsd.length / RAW.length) * 100).toFixed(1)}%`,
+  profitFactor: (grossWin / grossLoss).toFixed(2),
+  grossWin: money(grossWin).replace(".00", ""),
+  grossLoss: money(-grossLoss),
+  winShare: (grossWin / (grossWin + grossLoss)) * 100,
+  avgR: signed(sumR / RAW.length, 2, "R"),
+  avgWin: signed(avg(winR), 1, "R"),
+  avgLoss: signed(avg(lossR), 1, "R"),
+};
 
 /** SVG path for cumulative R, oldest → newest, in a 1200×180 box. */
 export function equityPaths() {

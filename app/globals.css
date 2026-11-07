@@ -1,8 +1,16 @@
-:root {
+:root,
+[data-theme="dark"] {
   --bg: #0a0b0d;
+  --bg-alt: #0d1015;
   --panel: #111317;
   --panel-2: #0f1114;
   --panel-3: #0d0f12;
+  --tile: #0e1013;
+  --raised: #15181c;
+  --raised-2: #1a1d22;
+  --chip: #121418;
+  --seg-on: #262a30;
+  --track: #1e2228;
   --navy: #1c2633;
   --slate-deep: #2c3e50;
   --slate: #a8b5c2;
@@ -14,12 +22,124 @@
   --blue: #4da3ff;
   --blue-soft: #8ec5ff;
   --blue-ink: #04101c;
+  --blue-wash: rgba(77, 163, 255, 0.14);
   --ember: #ff6a2b;
   --ember-soft: #ff8a57;
+  --ember-wash: rgba(255, 106, 43, 0.12);
   --line: rgba(255, 255, 255, 0.07);
   --line-2: rgba(255, 255, 255, 0.1);
+  --line-3: rgba(255, 255, 255, 0.16);
+  --hair: rgba(255, 255, 255, 0.04);
+  --hover: rgba(255, 255, 255, 0.025);
+  --btn-bg: #e9ecef;
+  --btn-fg: #0a0b0d;
+  --btn-hover: #ffffff;
+  --glass: rgba(12, 14, 17, 0.78);
+  --glass-strong: rgba(12, 14, 17, 0.9);
+  --inset: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  --glow: rgba(77, 163, 255, 0.28);
+  --scrim: rgba(10, 11, 13, 0.92);
+  --shadow: rgba(0, 0, 0, 0.55);
+  --dot-grid: rgba(255, 255, 255, 0.06);
+  --wordmark: linear-gradient(180deg, #e9ecef 0%, #a8b5c2 38%, #4da3ff 72%, rgba(77, 163, 255, 0.1) 100%);
+  --wordmark-glow: radial-gradient(closest-side, rgba(77, 163, 255, 0.55), rgba(44, 62, 80, 0.25) 60%, rgba(10, 11, 13, 0) 100%);
 
-  --serif: "Instrument Serif", Georgia, "Times New Roman", serif;
+  --fluid-bg: #0c0d0f;
+  --fluid-blob: #182338;
+  --fluid-core: #2a4168;
+  --fluid-strength: 1.9;
+
+  /* canvas palette */
+  --cv-candle-up: #4da3ff;
+  --cv-candle-down: #3b414a;
+  --cv-grid: rgba(255, 255, 255, 0.045);
+  --cv-axis: #7c8692;
+  --cv-entry: rgba(233, 236, 239, 0.7);
+  --cv-tp: #6eb6ff;
+  --cv-sl: #ff8a57;
+  --cv-zone-up: rgba(77, 163, 255, 0.08);
+  --cv-zone-down: rgba(255, 106, 43, 0.08);
+  --cv-tip-bg: rgba(22, 25, 29, 0.94);
+  --cv-tip-line: rgba(255, 255, 255, 0.12);
+  --cv-cross: rgba(233, 236, 239, 0.35);
+  --cv-cross-tag: #2a2f36;
+  --cv-dither-0: #1c2633;
+  --cv-dither-1: #2f6fb8;
+  --cv-dither-2: #6eb6ff;
+  --cv-dither-3: #dcebfa;
+}
+
+[data-theme="light"] {
+  --bg: #f6f7f9;
+  --bg-alt: #eef1f5;
+  --panel: #ffffff;
+  --panel-2: #ffffff;
+  --panel-3: #fcfcfd;
+  --tile: #f3f5f8;
+  --raised: #ffffff;
+  --raised-2: #eef1f5;
+  --chip: #f1f3f6;
+  --seg-on: #ffffff;
+  --track: #e2e6ec;
+  --navy: #dfe6ee;
+  --slate-deep: #2c3e50;
+  --slate: #56677a;
+  --text: #0e1116;
+  --text-strong: #05070a;
+  --soft: #3a434e;
+  --muted: #4d5763;
+  --dim: #646e7a;
+  --blue: #1e7bef;
+  --blue-soft: #1560c9;
+  --blue-ink: #ffffff;
+  --blue-wash: rgba(30, 123, 239, 0.1);
+  --ember: #e8561a;
+  --ember-soft: #c2410c;
+  --ember-wash: rgba(232, 86, 26, 0.1);
+  --line: rgba(12, 18, 28, 0.08);
+  --line-2: rgba(12, 18, 28, 0.12);
+  --line-3: rgba(12, 18, 28, 0.2);
+  --hair: rgba(12, 18, 28, 0.05);
+  --hover: rgba(12, 18, 28, 0.025);
+  --btn-bg: #0e1116;
+  --btn-fg: #f6f7f9;
+  --btn-hover: #000000;
+  --glass: rgba(255, 255, 255, 0.78);
+  --glass-strong: rgba(255, 255, 255, 0.92);
+  --inset: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  --glow: rgba(30, 123, 239, 0.16);
+  --scrim: rgba(246, 247, 249, 0.92);
+  --shadow: rgba(12, 18, 28, 0.14);
+  --dot-grid: rgba(12, 18, 28, 0.08);
+  --wordmark: linear-gradient(180deg, #0e1116 0%, #2c3e50 38%, #1e7bef 72%, rgba(30, 123, 239, 0.08) 100%);
+  --wordmark-glow: radial-gradient(closest-side, rgba(30, 123, 239, 0.28), rgba(168, 181, 194, 0.25) 60%, rgba(246, 247, 249, 0) 100%);
+
+  --fluid-bg: #f3f4f6;
+  --fluid-blob: #cfdcf3;
+  --fluid-core: #a6bfec;
+  --fluid-strength: 1.8;
+
+  --cv-candle-up: #1e7bef;
+  --cv-candle-down: #aeb6c0;
+  --cv-grid: rgba(12, 18, 28, 0.06);
+  --cv-axis: #646e7a;
+  --cv-entry: rgba(14, 17, 22, 0.65);
+  --cv-tp: #1560c9;
+  --cv-sl: #c2410c;
+  --cv-zone-up: rgba(30, 123, 239, 0.08);
+  --cv-zone-down: rgba(232, 86, 26, 0.07);
+  --cv-tip-bg: rgba(255, 255, 255, 0.96);
+  --cv-tip-line: rgba(12, 18, 28, 0.12);
+  --cv-cross: rgba(14, 17, 22, 0.35);
+  --cv-cross-tag: #dfe4ea;
+  --cv-dither-0: #dde4ec;
+  --cv-dither-1: #9fc3ef;
+  --cv-dither-2: #3d8eea;
+  --cv-dither-3: #1b4f99;
+}
+
+:root {
+  --serif: var(--font-geist-serif-triangle), Georgia, "Times New Roman", serif;
   --sans: var(--font-geist-sans), "Inter", system-ui, sans-serif;
   --mono: var(--font-geist-mono), ui-monospace, "SFMono-Regular", Menlo, monospace;
 }
@@ -33,15 +153,20 @@ html {
   background: var(--bg);
 }
 
+
 body {
   margin: 0;
-  background: var(--bg);
+  background: transparent;
   color: var(--text);
   font-family: var(--sans);
   font-size: 16px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+em {
+  font-style: normal;
 }
 
 a {
@@ -57,7 +182,7 @@ textarea {
 }
 
 ::selection {
-  background: rgba(77, 163, 255, 0.35);
+  background: var(--blue-wash);
 }
 
 input::placeholder,
@@ -77,6 +202,47 @@ a:focus-visible,
 button:focus-visible {
   outline: 2px solid var(--blue);
   outline-offset: 3px;
+}
+
+/* site-wide fluid background (components/FluidBackground.tsx) */
+.fluid-bg {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  display: block;
+  z-index: -1;
+  pointer-events: none;
+}
+.fluid-fallback {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(40% 35% at 20% 25%, var(--fluid-blob), transparent 70%),
+    radial-gradient(45% 40% at 80% 70%, var(--fluid-blob), transparent 70%),
+    var(--fluid-bg);
+}
+
+/* theme switch: crossfade (lib/theme.ts switchTheme) */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 0.7s;
+  animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 @keyframes alt-pulse-ember {

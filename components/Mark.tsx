@@ -1,23 +1,27 @@
 type Props = {
   size?: number;
-  /** Color of the body cells. The top cell is always Signal blue unless `mono` is set. */
-  color?: string;
-  mono?: boolean;
   className?: string;
+  /** Defaults to currentColor, so the mark follows the theme's text color. */
+  color?: string;
+  title?: string;
 };
 
-/** Altron mark: a pixel "A" on a 3×4 grid. The peak is the signal. */
-export function Mark({ size = 30, color = "#E9ECEF", mono = false, className }: Props) {
-  const w = (size * 22) / 30;
-  const cells: [number, number][] = [
-    [0, 8], [16, 8], [0, 16], [8, 16], [16, 16], [0, 24], [16, 24],
-  ];
+/** Four-point star. Taller than it is wide (55:40), with concave arms and a soft core. */
+export const STAR_PATH =
+  "M40 0C41 27 43 41 48.5 46.5C54 52 67 54.3 80 55C67 55.7 54 58 48.5 63.5C43 69 41 83 40 110C39 83 37 69 31.5 63.5C26 58 13 55.7 0 55C13 54.3 26 52 31.5 46.5C37 41 39 27 40 0Z";
+
+export function Mark({ size = 24, className, color = "currentColor", title }: Props) {
   return (
-    <svg width={w} height={size} viewBox="0 0 22 30" aria-hidden="true" className={className}>
-      <rect x={8} y={0} width={6} height={6} fill={mono ? color : "#4DA3FF"} />
-      {cells.map(([x, y]) => (
-        <rect key={`${x}-${y}`} x={x} y={y} width={6} height={6} fill={color} />
-      ))}
+    <svg
+      width={(size * 80) / 110}
+      height={size}
+      viewBox="0 0 80 110"
+      className={className}
+      role={title ? "img" : undefined}
+      aria-label={title}
+      aria-hidden={title ? undefined : true}
+    >
+      <path d={STAR_PATH} fill={color} />
     </svg>
   );
 }
