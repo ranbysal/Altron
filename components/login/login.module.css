@@ -18,23 +18,25 @@
   grid-template-areas:
     ".     tools"
     ".     panel"
-    "title .";
+    "home  .";
   padding: 28px 40px 36px 48px;
   pointer-events: none;
 }
 .layer > * { pointer-events: auto; }
 .tools { grid-area: tools; justify-self: end; }
-.title {
-  grid-area: title;
+.home {
+  grid-area: home;
   align-self: end;
-  margin: 0;
-  font-family: var(--serif);
-  font-weight: 400;
-  font-size: 22px;
-  line-height: 1;
-  letter-spacing: -0.01em;
+  justify-self: start;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  margin: 0 0 -8px -10px;
   color: var(--text);
+  transition: transform 0.5s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
+.home:hover { transform: rotate(90deg); }
 
 /* ---------- panel ---------- */
 .panel {
@@ -42,7 +44,7 @@
   align-self: center;
   position: relative;
   width: min(380px, 100%);
-  margin-right: clamp(0px, calc(10vw - 24px), 180px);
+  margin-right: clamp(0px, calc(24vw - 120px), 420px);
   padding: 34px 32px 30px;
   background: color-mix(in srgb, var(--bg) 58%, transparent);
   border: 1px solid var(--line-2);
@@ -276,7 +278,7 @@
     grid-template-areas:
       "tools"
       "panel"
-      "title";
+      "home";
     padding: 20px 20px 28px;
   }
   .panel { justify-self: center; margin-right: 0; padding: 30px 24px 26px; }

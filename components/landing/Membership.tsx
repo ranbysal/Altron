@@ -1,27 +1,41 @@
+import { Mark } from "@/components/Mark";
 import { LEDGER } from "@/lib/ledger";
 import s from "./landing.module.css";
 
+/** A phone-style notification: who, what, and the three levels, each labelled. */
 function AlertStage() {
   return (
     <div className={s.stage} aria-hidden="true">
-      <div className={s.mini}>
-        <div className={s.miniRow}>
-          <span className={s.miniLabel}>NEW POSITION · 10:33:07 ET</span>
-          <span className={`${s.dotEmber} pulse-ember`} />
+      <div className={s.notif}>
+        <div className={s.notifHead}>
+          <span className={s.notifApp}>
+            <Mark size={11} />
+          </span>
+          <span className={s.notifFrom}>Altron</span>
+          <span className={s.notifTime}>now</span>
         </div>
-        <div className={s.miniRow} style={{ marginTop: 8 }}>
-          <span className={s.miniStrong}>Long 2 × NQZ6</span>
-          <span className={`${s.miniStrong} ${s.up}`}>24,476.50</span>
-        </div>
-        <div className={s.miniRow} style={{ marginTop: 4, color: "var(--dim)", fontSize: 12 }}>
-          <span>SL 24,452.00</span>
-          <span>TP 24,525.00</span>
+        <p className={s.notifTitle}>Yazan opened a long</p>
+        <p className={s.notifBody}>2 NQ contracts at 24,476.50</p>
+        <div className={s.notifLevels}>
+          <span>
+            <i>Stop</i>
+            <b className={s.down}>24,452.00</b>
+          </span>
+          <span>
+            <i>Target</i>
+            <b className={s.up}>24,525.00</b>
+          </span>
         </div>
       </div>
-      <div className={`${s.mini} ${s.miniBack}`}>
-        <div className={s.miniRow}>
-          <span className={s.miniLabel}>DELIVERED TO DISCORD · WHATSAPP</span>
-        </div>
+      <div className={s.notifChannels}>
+        <span>
+          <i className={s.notifCheck} />
+          Discord
+        </span>
+        <span>
+          <i className={s.notifCheck} />
+          WhatsApp
+        </span>
       </div>
     </div>
   );
@@ -64,21 +78,21 @@ function RecordStage() {
 
 const FEATURES = [
   {
-    kicker: "LIVE",
-    title: "Live, not later.",
-    body: "Positions appear the moment he’s filled, and alerts go out to Discord or WhatsApp. You see the trade while it’s happening, not after it’s over.",
+    kicker: "01 / LIVE",
+    title: "Positions in real time.",
+    body: "See entries, stops, targets, and position updates as they happen. Trade alerts are delivered directly to communication channels.",
     Stage: AlertStage,
   },
   {
-    kicker: "REASONING",
-    title: "The why, in his words.",
-    body: "Notes before and after each trade: the setup he’s watching, where the idea is wrong, and what he’d change looking back.",
+    kicker: "02 / REASONING",
+    title: "Context behind every trade.",
+    body: "Read the trader’s notes before and after each position, including the setup, reasoning, and what changed along the way.",
     Stage: NoteStage,
   },
   {
-    kicker: "RECORD",
-    title: "The whole record.",
-    body: "Every closed trade stays on the ledger, losses included. Go back through the history by market or side and study how it actually went.",
+    kicker: "03 / RECORD",
+    title: "A complete trading history.",
+    body: "Every closed position is recorded, including losses. Review past trades, execution levels, and performance over time.",
     Stage: RecordStage,
   },
 ];

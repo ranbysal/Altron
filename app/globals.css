@@ -44,6 +44,7 @@
   --wordmark: linear-gradient(180deg, #e9ecef 0%, #a8b5c2 38%, #4da3ff 72%, rgba(77, 163, 255, 0.1) 100%);
   --wordmark-glow: radial-gradient(closest-side, rgba(77, 163, 255, 0.55), rgba(44, 62, 80, 0.25) 60%, rgba(10, 11, 13, 0) 100%);
 
+  --live-green: #3ccf7f;
   --fluid-bg: #0c0d0f;
   --fluid-blob: #182338;
   --fluid-core: #2a4168;
@@ -67,6 +68,10 @@
   --cv-dither-1: #2f6fb8;
   --cv-dither-2: #6eb6ff;
   --cv-dither-3: #dcebfa;
+  --cv-ember-0: #2a140c;
+  --cv-ember-1: #8a3a1c;
+  --cv-ember-2: #ff6a2b;
+  --cv-ember-3: #ffc4a6;
 }
 
 [data-theme="light"] {
@@ -114,6 +119,7 @@
   --wordmark: linear-gradient(180deg, #0e1116 0%, #2c3e50 38%, #1e7bef 72%, rgba(30, 123, 239, 0.08) 100%);
   --wordmark-glow: radial-gradient(closest-side, rgba(30, 123, 239, 0.28), rgba(168, 181, 194, 0.25) 60%, rgba(246, 247, 249, 0) 100%);
 
+  --live-green: #16a34a;
   --fluid-bg: #f3f4f6;
   --fluid-blob: #cfdcf3;
   --fluid-core: #a6bfec;
@@ -136,6 +142,10 @@
   --cv-dither-1: #9fc3ef;
   --cv-dither-2: #3d8eea;
   --cv-dither-3: #1b4f99;
+  --cv-ember-0: #f6dccf;
+  --cv-ember-1: #f0a27e;
+  --cv-ember-2: #e0581f;
+  --cv-ember-3: #9a3410;
 }
 
 :root {

@@ -2,8 +2,8 @@
 
 import { fmt, money, signed } from "@/lib/format";
 import { POSITION, positionStats } from "@/lib/feed";
-import { DitherGlow } from "./DitherCanvas";
 import { useFeed } from "./FeedProvider";
+import { HeroChart } from "./HeroChart";
 import { HeroRuler } from "./HeroRuler";
 import { Nav } from "./Nav";
 import { RollingNumber } from "./RollingNumber";
@@ -18,15 +18,15 @@ export function Hero() {
 
   return (
     <header className={s.hero} id="top">
-      <DitherGlow variant="horizon" className={`${s.fill} ${s.heroDome}`} />
+      <HeroChart />
       <Nav />
 
       <div className={s.heroStage}>
-        <section className={`${s.instrument} rise`} aria-label="Live position (simulated)">
+        <section className={`${s.instrument} rise`} aria-label="Live position (demo)" data-hero-clear>
           <span className={s.instChip}>{POSITION.symbol} · 1M</span>
           <span className={s.instStatus}>
             <span className={`${s.dotEmber} pulse-ember`} />
-            SIMULATED FEED
+            DEMO
           </span>
           <i className={`${s.corner} ${s.cTL}`} aria-hidden="true" />
           <i className={`${s.corner} ${s.cTR}`} aria-hidden="true" />
@@ -51,8 +51,8 @@ export function Hero() {
         </section>
 
         <div className={`${s.heroCopy} rise`} style={{ animationDelay: ".12s" }}>
-          <h1 className={s.heroLine}>Proprietary futures trading, shared live.</h1>
-          <div className={s.ctaRow}>
+          <h1 className={s.heroLine} data-hero-clear>Proprietary futures trading, shared live.</h1>
+          <div className={s.ctaRow} data-hero-clear>
             <a className={s.ctaPrimary} href="#access">
               <span>Request access</span>
               <span className={s.ctaIcon} aria-hidden="true">
