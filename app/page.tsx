@@ -3,7 +3,6 @@ import { Hero } from "@/components/landing/Hero";
 import { MarketStrip } from "@/components/landing/MarketStrip";
 import { Desk } from "@/components/landing/Desk";
 import { Membership } from "@/components/landing/Membership";
-import { Method } from "@/components/landing/Method";
 import { Ledger } from "@/components/landing/Ledger";
 import { Access } from "@/components/landing/Access";
 import { Footer } from "@/components/landing/Footer";
@@ -18,7 +17,6 @@ export default function Home() {
         <Desk />
       </FeedProvider>
       <Membership />
-      <Method />
       <Ledger />
       <Access />
       <Footer />

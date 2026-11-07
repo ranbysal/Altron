@@ -64,7 +64,7 @@ export function IdentityView() {
   return (
     <main className={s.page}>
       <div className={s.head}>
-        <span>ALTRON — IDENTITY · V0.1</span>
+        <span>ALTRON · IDENTITY · V0.1</span>
         <span>DARK FIRST · DATA SECOND · ORNAMENT LAST</span>
         <Link href="/">← BACK TO SITE</Link>
       </div>
@@ -72,12 +72,17 @@ export function IdentityView() {
       <div className={s.grid}>
         <section className={`${s.tile} ${s.span4} ${s.markTile}`} aria-label="Mark">
           <span className={s.cap}>MARK</span>
-          <div className={s.markWrap}>
-            <Mark size={180} />
-            <span aria-hidden="true" className={s.callout} />
-            <span className={s.calloutText}>THE PEAK IS THE SIGNAL</span>
+          <div className={s.markPair}>
+            <div className={s.markSwatch} style={{ background: "#000", color: "#fff" }}>
+              <Mark size={120} />
+              <span>DARK · FAVICON</span>
+            </div>
+            <div className={s.markSwatch} style={{ background: "#fff", color: "#000" }}>
+              <Mark size={120} />
+              <span>LIGHT</span>
+            </div>
           </div>
-          <p>A pixel A built on a 3×4 grid with 2-unit gaps. The top cell is always Signal blue; the rest take the text color.</p>
+          <p>A four-point star with concave arms, taller than it is wide. White on black in dark mode and as the browser icon; black on white in light mode.</p>
         </section>
 
         <section className={`${s.tile} ${s.span8} ${s.wordTile}`} aria-label="Wordmark">
@@ -86,7 +91,7 @@ export function IdentityView() {
             <span>#2C3E50 → #A8B5C2</span>
           </div>
           <div className={s.wordLock}>
-            <Mark size={90} color="#0A0B0D" mono />
+            <Mark size={96} color="#0A0B0D" />
             <span className={s.word}>Altron</span>
           </div>
           <div className={s.wordBottom}>
@@ -121,7 +126,7 @@ export function IdentityView() {
             <small>GEIST · INTERFACE</small>
           </div>
           <div className={s.spec}>
-            <span style={{ fontFamily: "var(--mono)", fontSize: 18, letterSpacing: "0.08em", color: "#C3CAD2" }}>
+            <span style={{ fontFamily: "var(--mono)", fontSize: 18, letterSpacing: "0.08em", color: "var(--soft)" }}>
               [10:33:07] FILLED BUY 2 NQZ6
             </span>
             <small>GEIST MONO · DATA, LABELS</small>

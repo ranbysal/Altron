@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { Mark } from "@/components/Mark";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { isRthOpen, nyClock } from "@/lib/format";
 import { MountainScene } from "./MountainScene";
 import s from "./login.module.css";
@@ -40,7 +41,7 @@ export function LoginView() {
 
   return (
     <div className={s.wrap}>
-      <div className={s.visual}>
+      <div className={s.visual} data-theme="dark">
         <MountainScene className={s.scene} />
         <div aria-hidden="true" className={s.shade} />
         <div aria-hidden="true" className={s.frame}>
@@ -58,7 +59,7 @@ export function LoginView() {
         </div>
         <div className={s.top}>
           <Link href="/" className={s.brand} aria-label="Altron home">
-            <Mark size={24} />
+            <Mark size={22} />
             Altron
           </Link>
           <span className={`${s.label} ${s.hideSm}`}>[ CME GLOBEX · ES · NQ ]</span>
@@ -85,6 +86,7 @@ export function LoginView() {
       </div>
 
       <main className={s.panel}>
+        <ThemeToggle className={s.toggle} />
         <div className={`${s.inner} rise`}>
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             <h1 className={s.h1}>Welcome back.</h1>
@@ -169,7 +171,7 @@ export function LoginView() {
             </button>
             {notice && (
               <p role="status" className={s.notice}>
-                Design preview — sign-in connects once authentication is set up.
+                Design preview. Sign-in connects once authentication is set up.
               </p>
             )}
           </form>
@@ -188,7 +190,7 @@ export function LoginView() {
           </button>
 
           <p className={s.foot}>
-            Altron is invite-only. <Link href="/#access">Request access →</Link>
+            Altron is invite only. <Link href="/#access">Request access →</Link>
           </p>
         </div>
       </main>

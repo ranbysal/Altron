@@ -13,6 +13,8 @@
   min-height: 420px;
   overflow: hidden;
   border-right: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--text);
 }
 .scene { position: absolute; inset: 0; width: 100%; height: 100%; display: block; image-rendering: pixelated; }
 .shade {
@@ -45,7 +47,7 @@
   justify-content: space-between;
   gap: 16px;
 }
-.brand { display: flex; align-items: center; gap: 12px; font-size: 19px; font-weight: 500; letter-spacing: -0.02em; }
+.brand { display: flex; align-items: center; gap: 12px; font-size: 19px; font-weight: 500; letter-spacing: -0.02em; color: var(--text); }
 .label { font-family: var(--mono); font-size: 11px; letter-spacing: 0.14em; color: #c3cad2; }
 .bottom {
   position: absolute;
@@ -86,9 +88,25 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  position: relative;
   padding: 56px 32px;
-  background: radial-gradient(ellipse 80% 50% at 50% 0%, rgba(44, 62, 80, 0.35), rgba(10, 11, 13, 0) 70%);
+  background: radial-gradient(ellipse 80% 50% at 50% 0%, var(--blue-wash), transparent 70%);
 }
+.toggle {
+  position: absolute;
+  top: 24px;
+  right: 24px;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  border: 1px solid var(--line-2);
+  background: transparent;
+  color: var(--muted);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+.toggle:hover { color: var(--text); border-color: var(--line-3); }
 .inner { width: 100%; max-width: 420px; display: flex; flex-direction: column; gap: 28px; animation-delay: 0.1s; }
 .h1 { margin: 0; font-family: var(--serif); font-weight: 400; font-size: 52px; line-height: 1; letter-spacing: -0.015em; }
 .sub { margin: 0; font-size: 15.5px; color: var(--muted); }
@@ -97,7 +115,7 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
   padding: 5px;
   border-radius: 14px;
-  background: #121418;
+  background: var(--chip);
   border: 1px solid var(--line);
 }
 .seg {
@@ -111,9 +129,9 @@
   transition: background 0.2s, color 0.2s;
 }
 .seg[aria-pressed="true"] {
-  background: #262a30;
+  background: var(--seg-on);
   color: var(--text-strong);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 2px 8px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--inset), 0 2px 8px rgba(0, 0, 0, 0.18);
 }
 .form { display: flex; flex-direction: column; gap: 16px; }
 .box {
@@ -122,12 +140,12 @@
   gap: 8px;
   padding: 12px 14px;
   border-radius: 14px;
-  background: #121418;
+  background: var(--chip);
   border: 1px solid var(--line);
   transition: border-color 0.2s, box-shadow 0.2s;
 }
-.box:focus-within { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(77, 163, 255, 0.18); }
-.boxDesk { border-color: rgba(77, 163, 255, 0.3); }
+.box:focus-within { border-color: var(--blue); box-shadow: 0 0 0 3px var(--blue-wash); }
+.boxDesk { border-color: color-mix(in srgb, var(--blue) 35%, transparent); }
 .box label, .boxLabel { font-size: 12.5px; color: var(--muted); }
 .bare {
   height: 30px;
@@ -161,7 +179,7 @@
   border: 0;
   border-radius: 14px;
   background: linear-gradient(90deg, #1e8bff 0%, #7cc6ff 100%);
-  color: var(--blue-ink);
+  color: #04101c;
   font-size: 16px;
   font-weight: 600;
   cursor: pointer;
@@ -172,23 +190,23 @@
   transition: filter 0.2s, transform 0.2s;
 }
 .cta:hover { filter: brightness(1.08); transform: translateY(-1px); }
-.spinner { width: 16px; height: 16px; border-radius: 50%; border: 2px solid rgba(4, 16, 28, 0.25); border-top-color: var(--blue-ink); }
+.spinner { width: 16px; height: 16px; border-radius: 50%; border: 2px solid rgba(4, 16, 28, 0.25); border-top-color: #04101c; }
 .notice {
   margin: 0;
   padding: 12px 14px;
   border-radius: 12px;
-  background: rgba(77, 163, 255, 0.08);
-  border: 1px solid rgba(77, 163, 255, 0.25);
+  background: var(--blue-wash);
+  border: 1px solid color-mix(in srgb, var(--blue) 30%, transparent);
   font-size: 13.5px;
   line-height: 1.5;
-  color: #bfdfff;
+  color: var(--blue-soft);
 }
 .or { display: flex; align-items: center; gap: 14px; font-family: var(--mono); font-size: 11px; letter-spacing: 0.12em; color: var(--dim); }
-.or span { flex: 1; height: 1px; background: rgba(255, 255, 255, 0.08); }
+.or span { flex: 1; height: 1px; background: var(--line); }
 .ghost {
   height: 52px;
   border-radius: 14px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid var(--line-2);
   background: transparent;
   color: var(--text);
   font-size: 15px;
@@ -199,7 +217,7 @@
   gap: 10px;
   transition: border-color 0.2s, background 0.2s;
 }
-.ghost:hover { border-color: rgba(255, 255, 255, 0.28); background: rgba(255, 255, 255, 0.05); }
+.ghost:hover { border-color: var(--line-3); background: var(--hover); }
 .foot { margin: 0; font-size: 14px; color: var(--muted); text-align: center; }
 .foot a { color: var(--blue-soft); }
 

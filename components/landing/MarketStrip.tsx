@@ -38,7 +38,7 @@ export function MarketStrip() {
             </div>
             <div className={s.quoteRight}>
               <span className={s.quotePrice}>{t.price}</span>
-              <span className={`${s.quoteChg} ${t.up ? s.blue : s.ember}`}>{t.chg}</span>
+              <span className={`${s.quoteChg} ${t.up ? s.up : s.down}`}>{t.chg}</span>
             </div>
           </div>
         ))}

@@ -5,7 +5,7 @@ import { POSITION, SETTLE, positionStats } from "@/lib/feed";
 import { CandleChart } from "./CandleChart";
 import { useFeed } from "./FeedProvider";
 import { useQuotes } from "./MarketStrip";
-import { SectionLabel } from "./SectionLabel";
+import { PositionTrack } from "./PositionTrack";
 import s from "./landing.module.css";
 
 const TAPE = [
@@ -24,14 +24,6 @@ function Icon({ d, children }: { d?: string; children?: React.ReactNode }) {
   );
 }
 
-function Check() {
-  return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#4DA3FF" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M5 12l5 5 9-10" />
-    </svg>
-  );
-}
-
 export function Desk() {
   const { sim, snap } = useFeed();
   const quotes = useQuotes();
@@ -42,14 +34,13 @@ export function Desk() {
   return (
     <section id="desk" className={s.desk}>
       <div className={`${s.container} ${s.stack56}`}>
-        <SectionLabel>01 — THE DESK</SectionLabel>
         <div className={s.splitHead}>
           <h2 className={s.h2}>
             Watch the position, <em>not the highlight reel.</em>
           </h2>
           <p className={s.lede}>
             Every trade lives on the chart where it was taken. Levels, size and live P&amp;L update with the market, so
-            you see the trade the way he sees it — while it’s still open.
+            you see the trade the way he sees it, while it’s still open.
           </p>
         </div>
 
@@ -141,7 +132,7 @@ export function Desk() {
                     <div className={s.stats}>
                       <div className={s.stat}>
                         <span>Change</span>
-                        <span className={diff >= 0 ? s.blue : s.ember}>
+                        <span className={diff >= 0 ? s.up : s.down}>
                           {(diff >= 0 ? "+" : "−") + fmt(Math.abs(diff))} ({quotes[0].chg})
                         </span>
                       </div>
@@ -180,43 +171,21 @@ export function Desk() {
                       </div>
                       <div className={s.tile}>
                         <div>Stop</div>
-                        <div className={s.ember}>{fmt(POSITION.stop)}</div>
+                        <div className={s.down}>{fmt(POSITION.stop)}</div>
                       </div>
                       <div className={s.tile}>
                         <div>Target</div>
-                        <div className={s.blue}>{fmt(POSITION.target)}</div>
+                        <div className={s.up}>{fmt(POSITION.target)}</div>
                       </div>
                     </div>
                     <div className={s.pnlRow}>
                       <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
                         <span style={{ fontSize: 12, color: "var(--dim)" }}>Unrealized P&amp;L</span>
-                        <span className={`${s.pnl} ${up ? s.blue : s.ember}`}>{money(pnl)}</span>
+                        <span className={`${s.pnl} ${up ? s.up : s.down}`}>{money(pnl)}</span>
                       </div>
-                      <span className={`${s.rMult} ${up ? s.blue : s.ember}`}>{signed(r, 2, "R")}</span>
+                      <span className={`${s.rMult} ${up ? s.up : s.down}`}>{signed(r, 2, "R")}</span>
                     </div>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                      <div
-                        className={s.track}
-                        role="img"
-                        aria-label={`Price is ${pct.toFixed(0)}% of the way from stop to target`}
-                      >
-                        <div
-                          className={s.trackFill}
-                          style={{
-                            width: `${pct}%`,
-                            background: `linear-gradient(90deg, rgba(255,106,43,0.7) 0%, rgba(255,106,43,0.7) ${entryPct}%, #4DA3FF ${entryPct}%, #8EC5FF 100%)`,
-                            backgroundSize: `${pct > 0 ? 10000 / pct : 100}% 100%`,
-                          }}
-                        />
-                        <div className={s.trackEntry} style={{ left: `${entryPct}%` }} />
-                        <div className={s.trackKnob} style={{ left: `${pct}%` }} />
-                      </div>
-                      <div className={s.trackLabels}>
-                        <span>SL</span>
-                        <span>ENTRY</span>
-                        <span>TP</span>
-                      </div>
-                    </div>
+                    <PositionTrack pct={pct} entryPct={entryPct} />
                   </div>
 
                   <div className={s.card}>
@@ -225,26 +194,12 @@ export function Desk() {
                       <span>BEFORE ENTRY</span>
                     </div>
                     <p className={s.note}>
-                      “Watching for a reclaim of the overnight high on volume. Stop goes under the 10:15 higher low — if
+                      “Watching for a reclaim of the overnight high on volume. Stop goes under the 10:15 higher low. If
                       that breaks, the idea is wrong. First target is yesterday’s value-area high.”
                     </p>
                     <div className={s.noteBy}>
                       <span className={`${s.avatar} ${s.avatarSm}`}>Y</span>Yazan
                     </div>
-                  </div>
-
-                  <div className={s.alertRow}>
-                    <span>ALERT DELIVERED</span>
-                    <span>
-                      <span className={s.check}>
-                        <Check />
-                        DISCORD
-                      </span>
-                      <span className={s.check}>
-                        <Check />
-                        WHATSAPP
-                      </span>
-                    </span>
                   </div>
                 </div>
               </div>

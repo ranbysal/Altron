@@ -12,12 +12,11 @@ export function Access() {
 
   return (
     <section id="access" className={s.access}>
-      <DitherGlow className={s.fill} />
+      <DitherGlow variant="bowl" className={s.fill} />
       <div className={`${s.container} ${s.accessInner}`}>
-        <div className={`${s.center} ${s.accessHead}`}>
-          <span className={s.kicker}>[ 05 — ACCESS ]</span>
+        <div className={s.accessHead}>
           <h2 className={s.accessH2}>
-            Altron is <em>invite-only.</em>
+            Altron is <em>invite only.</em>
           </h2>
           <p className={s.accessP}>
             Membership is free. We keep the room small so the desk stays readable. Tell us a little about how you trade
@@ -29,7 +28,7 @@ export function Access() {
           {sent ? (
             <div className={s.done} role="status">
               <span className={s.doneIcon}>
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#8EC5FF" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                   <path d="M5 12l5 5 9-10" />
                 </svg>
               </span>
@@ -38,7 +37,7 @@ export function Access() {
                 Every request is reviewed by hand. If there’s a seat, you’ll get an invite at the email you gave within
                 [REVIEW TIME].
               </p>
-              <button type="button" className={`${s.btnGhost} ${s.btnSm}`} onClick={() => setSent(false)}>
+              <button type="button" className={`${s.btnGhost} ${s.btnMd}`} onClick={() => setSent(false)}>
                 Send another
               </button>
             </div>

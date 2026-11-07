@@ -4,6 +4,16 @@ import { useEffect, useRef } from "react";
 import { prepCanvas } from "@/lib/canvas";
 import { fmt, hhmm, toTick } from "@/lib/format";
 import { POSITION, SESSION_OPEN_MIN, type FeedSim } from "@/lib/feed";
+import { cssVar, onThemeChange } from "@/lib/theme";
+
+function readPalette() {
+  const v = (n: string) => cssVar(`--cv-${n}`);
+  return {
+    up: v("candle-up"), down: v("candle-down"), grid: v("grid"), axis: v("axis"), entry: v("entry"),
+    tp: v("tp"), sl: v("sl"), zoneUp: v("zone-up"), zoneDown: v("zone-down"), tipBg: v("tip-bg"),
+    tipLine: v("tip-line"), cross: v("cross"), crossTag: v("cross-tag"), text: cssVar("--text"), ink: "#04101C",
+  };
+}
 
 function monoFamily(): string {
   const v = getComputedStyle(document.documentElement).getPropertyValue("--font-geist-mono").trim();
@@ -22,6 +32,8 @@ export function CandleChart({ sim, className }: { sim: FeedSim; className?: stri
     let last = 0;
     let visible = true;
     const MONO = monoFamily();
+    let P = readPalette();
+    const offTheme = onThemeChange(() => (P = readPalette()));
     const io = new IntersectionObserver(([e]) => (visible = e.isIntersecting));
     io.observe(el);
 
@@ -57,24 +69,24 @@ export function CandleChart({ sim, className }: { sim: FeedSim; className?: stri
       for (let g = 0; g <= 5; g++) {
         const gv = lo + ((hi - lo) * g) / 5;
         const gy = Y(gv);
-        ctx.fillStyle = "rgba(255,255,255,0.045)";
+        ctx.fillStyle = P.grid;
         ctx.fillRect(0, Math.round(gy), plotW, 1);
-        ctx.fillStyle = "#7C8692";
+        ctx.fillStyle = P.axis;
         ctx.textAlign = "left";
         ctx.fillText(fmt(toTick(gv)), plotW + 10, gy);
       }
 
       const ei = C.findIndex((c) => c.t === POSITION.entryMinute);
       const zx = ei >= 0 ? (ei + 0.5) * slot : 0;
-      ctx.fillStyle = "rgba(77,163,255,0.08)";
+      ctx.fillStyle = P.zoneUp;
       ctx.fillRect(zx, Y(POSITION.target), plotW - zx, Y(POSITION.entry) - Y(POSITION.target));
-      ctx.fillStyle = "rgba(255,106,43,0.08)";
+      ctx.fillStyle = P.zoneDown;
       ctx.fillRect(zx, Y(POSITION.entry), plotW - zx, Y(POSITION.stop) - Y(POSITION.entry));
 
       for (let j = 0; j < N; j++) {
         const cd = C[j];
         const x = (j + 0.5) * slot;
-        ctx.fillStyle = cd.c >= cd.o ? "#4DA3FF" : "#3B414A";
+        ctx.fillStyle = cd.c >= cd.o ? P.up : P.down;
         ctx.fillRect(Math.round(x) - 0.5, Y(cd.h), 1, Math.max(1, Y(cd.l) - Y(cd.h)));
         const top = Y(Math.max(cd.o, cd.c));
         ctx.fillRect(x - bw / 2, top, bw, Math.max(1.5, Math.abs(Y(cd.o) - Y(cd.c))));
@@ -94,14 +106,14 @@ export function CandleChart({ sim, className }: { sim: FeedSim; className?: stri
         ctx.textAlign = "right";
         ctx.fillText(`${label}  ${fmt(v)}`, plotW - 8, y - 9);
       };
-      level(POSITION.target, "#6EB6FF", "TP");
-      level(POSITION.entry, "rgba(233,236,239,0.7)", "ENTRY");
-      level(POSITION.stop, "#FF8A57", "SL");
+      level(POSITION.target, P.tp, "TP");
+      level(POSITION.entry, P.entry, "ENTRY");
+      level(POSITION.stop, P.sl, "SL");
 
       if (ei >= 0) {
         const ex = (ei + 0.5) * slot;
         const ey = Y(C[ei].l) + 10;
-        ctx.fillStyle = "#4DA3FF";
+        ctx.fillStyle = P.up;
         ctx.beginPath();
         ctx.moveTo(ex, ey);
         ctx.lineTo(ex - 6, ey + 9);
@@ -109,28 +121,31 @@ export function CandleChart({ sim, className }: { sim: FeedSim; className?: stri
         ctx.closePath();
         ctx.fill();
         ctx.textAlign = "center";
-        ctx.fillStyle = "#8EC5FF";
+        ctx.fillStyle = P.tp;
         ctx.fillText(`BUY ${POSITION.size}`, ex, ey + 22);
       }
 
       const py = Math.round(Y(sim.nq)) + 0.5;
-      ctx.strokeStyle = "rgba(77,163,255,0.4)";
+      ctx.strokeStyle = P.up;
+      ctx.globalAlpha = 0.45;
       ctx.setLineDash([2, 3]);
       ctx.beginPath();
       ctx.moveTo(0, py);
       ctx.lineTo(plotW, py);
       ctx.stroke();
+      ctx.globalAlpha = 1;
       ctx.setLineDash([]);
-      ctx.fillStyle = "#4DA3FF";
+      ctx.fillStyle = P.up;
       ctx.fillRect(plotW + 2, py - 10, axisW - 4, 20);
-      ctx.fillStyle = "#04101C";
+      ctx.fillStyle = "#fff";
       ctx.textAlign = "left";
       ctx.fillText(fmt(sim.nq), plotW + 9, py);
 
-      ctx.fillStyle = "#7C8692";
+      ctx.fillStyle = P.axis;
       ctx.textAlign = "center";
       for (let i = 0; i < N; i++) {
-        if (C[i].t % 15 === 0) ctx.fillText(hhmm(SESSION_OPEN_MIN + C[i].t), Math.min(plotW - 20, Math.max(20, (i + 0.5) * slot)), h - 10);
+        const every = slot * 15 < 56 ? 30 : 15;
+        if (C[i].t % every === 0) ctx.fillText(hhmm(SESSION_OPEN_MIN + C[i].t), Math.min(plotW - 20, Math.max(20, (i + 0.5) * slot)), h - 10);
       }
 
       const hv = hover.current;
@@ -138,7 +153,7 @@ export function CandleChart({ sim, className }: { sim: FeedSim; className?: stri
         const idx = Math.max(0, Math.min(N - 1, Math.floor(hv.x / slot)));
         const cx = (idx + 0.5) * slot;
         const cd = C[idx];
-        ctx.strokeStyle = "rgba(233,236,239,0.35)";
+        ctx.strokeStyle = P.cross;
         ctx.setLineDash([3, 4]);
         ctx.beginPath();
         ctx.moveTo(cx, padT);
@@ -148,9 +163,9 @@ export function CandleChart({ sim, className }: { sim: FeedSim; className?: stri
         ctx.stroke();
         ctx.setLineDash([]);
         const hvp = hi - ((hv.y - padT) / plotH) * (hi - lo);
-        ctx.fillStyle = "#2A2F36";
+        ctx.fillStyle = P.crossTag;
         ctx.fillRect(plotW + 2, hv.y - 10, axisW - 4, 20);
-        ctx.fillStyle = "#E9ECEF";
+        ctx.fillStyle = P.text;
         ctx.textAlign = "left";
         ctx.fillText(fmt(toTick(hvp)), plotW + 9, hv.y);
         const lines: [string, string][] = [
@@ -164,8 +179,8 @@ export function CandleChart({ sim, className }: { sim: FeedSim; className?: stri
         const bht = 18 + lines.length * 18;
         const bx = cx + 16 + bwid > plotW ? cx - 16 - bwid : cx + 16;
         const by = Math.max(padT, Math.min(hv.y - bht / 2, h - padB - bht));
-        ctx.fillStyle = "rgba(22,25,29,0.94)";
-        ctx.strokeStyle = "rgba(255,255,255,0.12)";
+        ctx.fillStyle = P.tipBg;
+        ctx.strokeStyle = P.tipLine;
         ctx.beginPath();
         if (ctx.roundRect) ctx.roundRect(bx, by, bwid, bht, 10);
         else ctx.rect(bx, by, bwid, bht);
@@ -174,10 +189,10 @@ export function CandleChart({ sim, className }: { sim: FeedSim; className?: stri
         lines.forEach(([k, v], li) => {
           const ly = by + 18 + li * 18;
           ctx.textAlign = "left";
-          ctx.fillStyle = "#7C8692";
+          ctx.fillStyle = P.axis;
           ctx.fillText(k, bx + 12, ly);
           ctx.textAlign = "right";
-          ctx.fillStyle = "#E9ECEF";
+          ctx.fillStyle = P.text;
           ctx.fillText(v, bx + bwid - 12, ly);
         });
       }
@@ -193,6 +208,7 @@ export function CandleChart({ sim, className }: { sim: FeedSim; className?: stri
     return () => {
       cancelAnimationFrame(raf);
       io.disconnect();
+      offTheme();
     };
   }, [sim]);
 
