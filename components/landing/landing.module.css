@@ -94,9 +94,6 @@
 }
 
 @media (max-width: 860px) {
-  .brandName { font-size: 18px; letter-spacing: 0.24em; margin-right: -0.24em; }
-  .navRight { gap: 14px; }
-  .navRight .btnSolid { white-space: nowrap; padding: 0 16px; }
   .hideSm { display: none !important; }
   .container { padding: 0 20px; }
   .wide { padding: 0 20px; }
@@ -130,6 +127,19 @@
   transition: color 0.15s, border-color 0.15s, background 0.15s;
 }
 .iconBtn:hover { color: var(--text); border-color: var(--line-3); background: var(--hover); }
+/* after the base nav rules so they actually win */
+@media (max-width: 860px) {
+  .brandName { font-size: 18px; letter-spacing: 0.24em; margin-right: -0.24em; }
+  .navRight { gap: 14px; }
+  .navRight .btnSolid { white-space: nowrap; padding: 0 16px; }
+}
+@media (max-width: 480px) {
+  .nav { gap: 12px; }
+  .brand { gap: 10px; }
+  .brandName { font-size: 17px; letter-spacing: 0.18em; margin-right: -0.18em; }
+  .navRight { gap: 12px; }
+  .navRight .btnSolid { padding: 0 14px; font-size: 12px; }
+}
 
 /* ---------- hero ---------- */
 .hero {
@@ -340,10 +350,102 @@
 }
 .ctaText:hover::after { transform: scaleX(1); opacity: 0.9; }
 
+/* hero price band: the session drawn flat in the dithered band texture */
+.band { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
+.bandCanvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; opacity: 0.86; }
+:global([data-theme="light"]) .bandCanvas { opacity: 0.92; }
+.bandFallback {
+  opacity: 0.72;
+  -webkit-mask-image: radial-gradient(46% 30% at 50% 66%, transparent 0%, transparent 34%, #000 86%);
+  mask-image: radial-gradient(46% 30% at 50% 66%, transparent 0%, transparent 34%, #000 86%);
+}
+.bandMark {
+  position: absolute;
+  left: 0;
+  top: 0;
+  opacity: 0;
+  will-change: transform, opacity;
+}
+.bandHead {
+  width: 7px;
+  height: 7px;
+  margin: -3.5px 0 0 -3.5px;
+  border-radius: 50%;
+  background: var(--text-strong);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--bg) 80%, transparent), 0 0 22px 4px var(--glow);
+}
+.bandHead::after {
+  content: "";
+  position: absolute;
+  inset: -7px;
+  border-radius: 50%;
+  border: 1px solid var(--cv-dither-2);
+  animation: band-ping 2.8s cubic-bezier(0.2, 0.7, 0.2, 1) infinite;
+}
+@keyframes band-ping {
+  0% { transform: scale(0.55); opacity: 0.85; }
+  75%, 100% { transform: scale(2.1); opacity: 0; }
+}
+.bandGuide {
+  height: 1px;
+  margin-top: -0.5px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--text) 30%, transparent) 50%, transparent 0) 0 0 / 6px 1px repeat-x;
+  -webkit-mask-image: linear-gradient(90deg, #000 40%, transparent);
+  mask-image: linear-gradient(90deg, #000 40%, transparent);
+}
+.bandEntry {
+  width: 9px;
+  height: 9px;
+  margin: -4.5px 0 0 -4.5px;
+  border-radius: 50%;
+  border: 1.5px solid var(--text-strong);
+  background: var(--bg);
+}
+.bandHair {
+  width: 1px;
+  margin-left: -0.5px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--text) 42%, transparent) 50%, transparent 0) 0 0 / 1px 6px repeat-y;
+  -webkit-mask-image: linear-gradient(180deg, #000, transparent 85%);
+  mask-image: linear-gradient(180deg, #000, transparent 85%);
+}
+.bandRing {
+  width: 11px;
+  height: 11px;
+  margin: -5.5px 0 0 -5.5px;
+  border-radius: 50%;
+  border: 1.5px solid var(--text-strong);
+  background: var(--bg);
+}
+.bandTip {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 7px;
+  background: var(--glass-strong);
+  border: 1px solid var(--line-2);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+.bandTip b { font-weight: 400; color: var(--dim); }
+.bandTip i { font-style: normal; }
+.bandTip em { font-style: normal; color: var(--blue-soft); letter-spacing: 0.1em; }
+.bandTip em:empty { display: none; }
+@media (prefers-reduced-motion: reduce) {
+  .bandHead::after { animation: none; opacity: 0; }
+}
+
 @media (max-width: 640px) {
   .rulerEntryLabel { display: none; }
   .hero { min-height: 0; }
-  .heroStage { gap: 64px; padding: 64px 20px 140px; }
+  .heroStage { gap: 64px; padding: 64px 20px 200px; }
   .instrument { padding: 24px 18px 20px; }
   .spark { display: none; }
   .instMeta { font-size: 11px; }

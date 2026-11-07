@@ -3,11 +3,11 @@
 import { fmt, money, signed } from "@/lib/format";
 import { POSITION, positionStats } from "@/lib/feed";
 import { useFeed } from "./FeedProvider";
+import { HeroChart } from "./HeroChart";
 import { HeroRuler } from "./HeroRuler";
 import { Nav } from "./Nav";
 import { RollingNumber } from "./RollingNumber";
 import { Sparkline } from "./Sparkline";
-import { PriceStreet } from "./street/PriceStreet";
 import s from "./landing.module.css";
 
 export function Hero() {
@@ -18,11 +18,11 @@ export function Hero() {
 
   return (
     <header className={s.hero} id="top">
-      <PriceStreet className={s.fill} />
+      <HeroChart />
       <Nav />
 
       <div className={s.heroStage}>
-        <section className={`${s.instrument} rise`} aria-label="Live position (demo)" data-street-clear>
+        <section className={`${s.instrument} rise`} aria-label="Live position (demo)" data-hero-clear>
           <span className={s.instChip}>{POSITION.symbol} · 1M</span>
           <span className={s.instStatus}>
             <span className={`${s.dotEmber} pulse-ember`} />
@@ -50,9 +50,9 @@ export function Hero() {
           <HeroRuler price={snap.nq} />
         </section>
 
-        <div className={`${s.heroCopy} rise`} style={{ animationDelay: ".12s" }} data-street-clear>
-          <h1 className={s.heroLine}>Proprietary futures trading, shared live.</h1>
-          <div className={s.ctaRow}>
+        <div className={`${s.heroCopy} rise`} style={{ animationDelay: ".12s" }}>
+          <h1 className={s.heroLine} data-hero-clear>Proprietary futures trading, shared live.</h1>
+          <div className={s.ctaRow} data-hero-clear>
             <a className={s.ctaPrimary} href="#access">
               <span>Request access</span>
               <span className={s.ctaIcon} aria-hidden="true">
