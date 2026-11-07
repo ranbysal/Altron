@@ -1,0 +1,112 @@
+:root {
+  --bg: #0a0b0d;
+  --panel: #111317;
+  --panel-2: #0f1114;
+  --panel-3: #0d0f12;
+  --navy: #1c2633;
+  --slate-deep: #2c3e50;
+  --slate: #a8b5c2;
+  --text: #e9ecef;
+  --text-strong: #f4f6f8;
+  --soft: #b7bfc8;
+  --muted: #a3acb6;
+  --dim: #7c8692;
+  --blue: #4da3ff;
+  --blue-soft: #8ec5ff;
+  --blue-ink: #04101c;
+  --ember: #ff6a2b;
+  --ember-soft: #ff8a57;
+  --line: rgba(255, 255, 255, 0.07);
+  --line-2: rgba(255, 255, 255, 0.1);
+
+  --serif: "Instrument Serif", Georgia, "Times New Roman", serif;
+  --sans: var(--font-geist-sans), "Inter", system-ui, sans-serif;
+  --mono: var(--font-geist-mono), ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+  background: var(--bg);
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+::selection {
+  background: rgba(77, 163, 255, 0.35);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--dim);
+}
+
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: none;
+  border-color: var(--blue) !important;
+  box-shadow: 0 0 0 3px rgba(77, 163, 255, 0.18);
+}
+
+a:focus-visible,
+button:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 3px;
+}
+
+@keyframes alt-pulse-ember {
+  0% { box-shadow: 0 0 0 0 rgba(255, 106, 43, 0.6); }
+  70% { box-shadow: 0 0 0 8px rgba(255, 106, 43, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(255, 106, 43, 0); }
+}
+@keyframes alt-pulse-blue {
+  0% { box-shadow: 0 0 0 0 rgba(77, 163, 255, 0.6); }
+  70% { box-shadow: 0 0 0 8px rgba(77, 163, 255, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(77, 163, 255, 0); }
+}
+@keyframes alt-spin {
+  to { transform: rotate(360deg); }
+}
+@keyframes alt-rise {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes alt-draw {
+  to { stroke-dashoffset: 0; }
+}
+
+.pulse-ember { animation: alt-pulse-ember 1.8s infinite; }
+.pulse-blue { animation: alt-pulse-blue 1.8s infinite; }
+.spin-slow { animation: alt-spin 60s linear infinite; }
+.spin-fast { animation: alt-spin 0.8s linear infinite; }
+.rise { animation: alt-rise 1s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  .pulse-ember, .pulse-blue, .spin-slow, .rise { animation: none; }
+}
