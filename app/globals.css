@@ -44,6 +44,11 @@
   --wordmark: linear-gradient(180deg, #e9ecef 0%, #a8b5c2 38%, #4da3ff 72%, rgba(77, 163, 255, 0.1) 100%);
   --wordmark-glow: radial-gradient(closest-side, rgba(77, 163, 255, 0.55), rgba(44, 62, 80, 0.25) 60%, rgba(10, 11, 13, 0) 100%);
 
+  --fluid-bg: #0c0d0f;
+  --fluid-blob: #182338;
+  --fluid-core: #2a4168;
+  --fluid-strength: 1.9;
+
   /* canvas palette */
   --cv-candle-up: #4da3ff;
   --cv-candle-down: #3b414a;
@@ -109,6 +114,11 @@
   --wordmark: linear-gradient(180deg, #0e1116 0%, #2c3e50 38%, #1e7bef 72%, rgba(30, 123, 239, 0.08) 100%);
   --wordmark-glow: radial-gradient(closest-side, rgba(30, 123, 239, 0.28), rgba(168, 181, 194, 0.25) 60%, rgba(246, 247, 249, 0) 100%);
 
+  --fluid-bg: #f3f4f6;
+  --fluid-blob: #cfdcf3;
+  --fluid-core: #a6bfec;
+  --fluid-strength: 1.8;
+
   --cv-candle-up: #1e7bef;
   --cv-candle-down: #aeb6c0;
   --cv-grid: rgba(12, 18, 28, 0.06);
@@ -146,7 +156,7 @@ html {
 
 body {
   margin: 0;
-  background: var(--bg);
+  background: transparent;
   color: var(--text);
   font-family: var(--sans);
   font-size: 16px;
@@ -192,6 +202,47 @@ a:focus-visible,
 button:focus-visible {
   outline: 2px solid var(--blue);
   outline-offset: 3px;
+}
+
+/* site-wide fluid background (components/FluidBackground.tsx) */
+.fluid-bg {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  display: block;
+  z-index: -1;
+  pointer-events: none;
+}
+.fluid-fallback {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(40% 35% at 20% 25%, var(--fluid-blob), transparent 70%),
+    radial-gradient(45% 40% at 80% 70%, var(--fluid-blob), transparent 70%),
+    var(--fluid-bg);
+}
+
+/* theme switch: crossfade (lib/theme.ts switchTheme) */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 0.7s;
+  animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 @keyframes alt-pulse-ember {

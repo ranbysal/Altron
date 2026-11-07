@@ -23,13 +23,11 @@ export function DitherGlow({ variant, className }: { variant: Variant; className
       if (!r) return;
       const { ctx, w, h } = r;
       const cell = w < 700 ? 3 : 4;
-      const bg = cssVar("--bg");
       const c0 = cssVar("--cv-dither-0");
       const c1 = cssVar("--cv-dither-1");
       const c2 = cssVar("--cv-dither-2");
       const c3 = cssVar("--cv-dither-3");
-      ctx.fillStyle = bg;
-      ctx.fillRect(0, 0, w, h);
+      ctx.clearRect(0, 0, w, h);
 
       // ellipse the band follows
       const horizon = variant === "horizon";

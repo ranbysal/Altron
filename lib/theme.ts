@@ -42,3 +42,16 @@ export function useTheme(): Theme {
 export function cssVar(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
+
+type VTDoc = Document & { startViewTransition?: (cb: () => void) => unknown };
+
+/** Switch theme with a soft crossfade (View Transitions API where supported). */
+export function switchTheme(t: Theme) {
+  const doc = document as VTDoc;
+  const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  if (!doc.startViewTransition || reduce) {
+    setTheme(t);
+    return;
+  }
+  doc.startViewTransition(() => setTheme(t));
+}

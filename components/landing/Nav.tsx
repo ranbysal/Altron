@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Mark } from "@/components/Mark";
-import { ThemeToggle } from "@/components/ThemeToggle";
+import { ThemeSwitch } from "@/components/ThemeSwitch";
 import s from "./landing.module.css";
 
 export function Nav() {
@@ -17,7 +17,7 @@ export function Nav() {
           <Link className={s.link} href="/login">Sign in</Link>
         </div>
         <span className={`${s.navSep} ${s.hideSm}`} aria-hidden="true" />
-        <ThemeToggle className={s.iconBtn} />
+        <ThemeSwitch />
         <a className={`${s.btnSolid} ${s.btnMd}`} href="#access">
           Request access
         </a>
