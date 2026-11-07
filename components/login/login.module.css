@@ -1,115 +1,82 @@
 .wrap {
-  min-height: 100vh;
-  display: flex;
-  flex-wrap: wrap;
-  background: var(--bg);
-  color: var(--text);
-}
-
-/* visual panel */
-.visual {
   position: relative;
-  flex: 1.35 1 560px;
-  min-height: 420px;
+  min-height: 100vh;
+  min-height: 100svh;
   overflow: hidden;
-  border-right: 1px solid var(--line);
-  background: var(--bg);
+  background: #04060a;
   color: var(--text);
 }
-.scene { position: absolute; inset: 0; width: 100%; height: 100%; display: block; image-rendering: pixelated; }
-.shade {
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(180deg, rgba(10, 11, 13, 0.55) 0%, rgba(10, 11, 13, 0) 26%, rgba(10, 11, 13, 0) 58%, rgba(10, 11, 13, 0.9) 100%);
-}
-.frame { position: absolute; inset: 28px; border: 1px solid rgba(233, 236, 239, 0.14); pointer-events: none; }
-.frame .rule { position: absolute; left: 0; right: 0; top: 64px; height: 1px; background: rgba(233, 236, 239, 0.1); }
-.node {
-  position: absolute;
-  width: 8px;
-  height: 8px;
-  transform: rotate(45deg);
-  background: var(--bg);
-  border: 1px solid rgba(233, 236, 239, 0.5);
-}
-.reticle { position: absolute; left: 63%; top: 47%; width: 0; height: 0; }
-.reticle .ring { position: absolute; left: -64px; top: -64px; width: 128px; height: 128px; border-radius: 50%; border: 1px dashed rgba(233, 236, 239, 0.5); }
-.reticle .core { position: absolute; left: -36px; top: -36px; width: 72px; height: 72px; border-radius: 50%; border: 1.5px solid var(--text); }
-.reticle .h { position: absolute; left: -36px; top: 0; width: 72px; height: 1.5px; background: var(--text); }
-.reticle .v { position: absolute; left: 0; top: -36px; width: 1.5px; height: 72px; background: var(--text); }
-.top {
-  position: absolute;
-  left: 56px;
-  right: 56px;
-  top: 48px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-}
-.brand { display: flex; align-items: center; gap: 12px; font-size: 19px; font-weight: 500; letter-spacing: -0.02em; color: var(--text); }
-.label { font-family: var(--mono); font-size: 11px; letter-spacing: 0.14em; color: #c3cad2; }
-.bottom {
-  position: absolute;
-  left: 56px;
-  right: 56px;
-  bottom: 56px;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  justify-content: space-between;
+.art { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+
+.layer {
+  position: relative;
+  z-index: 1;
+  min-height: 100vh;
+  min-height: 100svh;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto 1fr auto;
+  grid-template-areas:
+    "brand  tools"
+    ".      card"
+    "title  .";
+  padding: 40px 48px;
   gap: 24px;
 }
-.headline {
-  margin: 0;
-  font-family: var(--serif);
-  font-size: clamp(44px, 5vw, 72px);
-  line-height: 0.95;
-  letter-spacing: -0.015em;
-}
-.headline em { color: #c9d3dd; }
-.status {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 8px;
-  font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: 0.12em;
-  color: #c3cad2;
-}
-.status strong { color: var(--text-strong); font-weight: 400; font-variant-numeric: tabular-nums; }
-.dot { width: 6px; height: 6px; border-radius: 50%; }
-
-/* form panel */
-.panel {
-  flex: 1 1 440px;
-  min-width: 0;
+.brand {
+  grid-area: brand;
+  align-self: start;
+  justify-self: start;
   display: flex;
   align-items: center;
-  justify-content: center;
-  position: relative;
-  padding: 56px 32px;
-  background: radial-gradient(ellipse 80% 50% at 50% 0%, var(--blue-wash), transparent 70%);
+  gap: 12px;
+  font-size: 19px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  color: #e9ecef;
 }
+.tools { grid-area: tools; justify-self: end; }
 .toggle {
-  position: absolute;
-  top: 24px;
-  right: 24px;
   width: 40px;
   height: 40px;
   border-radius: 10px;
-  border: 1px solid var(--line-2);
-  background: transparent;
-  color: var(--muted);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(10, 14, 20, 0.5);
+  color: #c3cad2;
   display: grid;
   place-items: center;
   cursor: pointer;
+  backdrop-filter: blur(8px);
 }
-.toggle:hover { color: var(--text); border-color: var(--line-3); }
-.inner { width: 100%; max-width: 420px; display: flex; flex-direction: column; gap: 28px; animation-delay: 0.1s; }
-.h1 { margin: 0; font-family: var(--serif); font-weight: 400; font-size: 52px; line-height: 1; letter-spacing: -0.015em; }
-.sub { margin: 0; font-size: 15.5px; color: var(--muted); }
+.toggle:hover { color: #fff; border-color: rgba(255, 255, 255, 0.3); }
+.title {
+  grid-area: title;
+  margin: 0;
+  align-self: end;
+  font-family: var(--serif);
+  font-weight: 400;
+  font-size: clamp(44px, 5.4vw, 80px);
+  line-height: 0.95;
+  letter-spacing: -0.02em;
+  color: #f4f6f8;
+}
+
+.card {
+  grid-area: card;
+  align-self: center;
+  width: min(420px, 100%);
+  margin-right: max(0px, calc(6vw - 48px));
+  padding: 32px;
+  border-radius: 24px;
+  background: var(--glass-strong);
+  border: 1px solid var(--line-2);
+  box-shadow: 0 40px 120px -30px rgba(0, 0, 0, 0.7), var(--inset);
+  backdrop-filter: blur(18px);
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+.sub { margin: 0; font-size: 17px; line-height: 1.4; color: var(--text); }
 .segment {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -133,11 +100,11 @@
   color: var(--text-strong);
   box-shadow: var(--inset), 0 2px 8px rgba(0, 0, 0, 0.18);
 }
-.form { display: flex; flex-direction: column; gap: 16px; }
+.form { display: flex; flex-direction: column; gap: 14px; }
 .box {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
   padding: 12px 14px;
   border-radius: 14px;
   background: var(--chip);
@@ -146,14 +113,14 @@
 }
 .box:focus-within { border-color: var(--blue); box-shadow: 0 0 0 3px var(--blue-wash); }
 .boxDesk { border-color: color-mix(in srgb, var(--blue) 35%, transparent); }
-.box label, .boxLabel { font-size: 12.5px; color: var(--muted); }
+.box label { font-size: 12.5px; color: var(--muted); }
 .bare {
   height: 30px;
   padding: 0;
   border: 0;
   background: transparent;
   color: var(--text-strong);
-  font-size: 18px;
+  font-size: 17px;
   outline: none;
   min-width: 0;
 }
@@ -175,7 +142,7 @@
 .remember { display: flex; align-items: center; gap: 10px; min-height: 44px; font-size: 14px; color: var(--muted); cursor: pointer; }
 .remember input { width: 18px; height: 18px; margin: 0; accent-color: var(--blue); }
 .cta {
-  height: 56px;
+  height: 54px;
   border: 0;
   border-radius: 14px;
   background: linear-gradient(90deg, #1e8bff 0%, #7cc6ff 100%);
@@ -189,7 +156,7 @@
   gap: 10px;
   transition: filter 0.2s, transform 0.2s;
 }
-.cta:hover { filter: brightness(1.08); transform: translateY(-1px); }
+.cta:hover { filter: brightness(1.06); transform: translateY(-1px); }
 .spinner { width: 16px; height: 16px; border-radius: 50%; border: 2px solid rgba(4, 16, 28, 0.25); border-top-color: #04101c; }
 .notice {
   margin: 0;
@@ -201,27 +168,17 @@
   line-height: 1.5;
   color: var(--blue-soft);
 }
-.or { display: flex; align-items: center; gap: 14px; font-family: var(--mono); font-size: 11px; letter-spacing: 0.12em; color: var(--dim); }
-.or span { flex: 1; height: 1px; background: var(--line); }
-.ghost {
-  height: 52px;
-  border-radius: 14px;
-  border: 1px solid var(--line-2);
-  background: transparent;
-  color: var(--text);
-  font-size: 15px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  transition: border-color 0.2s, background 0.2s;
-}
-.ghost:hover { border-color: var(--line-3); background: var(--hover); }
-.foot { margin: 0; font-size: 14px; color: var(--muted); text-align: center; }
-.foot a { color: var(--blue-soft); }
 
-@media (max-width: 860px) {
-  .hideSm { display: none !important; }
-  .top, .bottom { left: 40px; right: 40px; }
+@media (max-width: 900px) {
+  .layer {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: auto 1fr auto;
+    grid-template-areas:
+      "brand tools"
+      "card  card"
+      "title title";
+    padding: 24px 20px 32px;
+  }
+  .card { justify-self: center; margin-right: 0; padding: 24px; }
+  .title { font-size: 40px; }
 }

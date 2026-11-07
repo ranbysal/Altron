@@ -4,8 +4,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { Mark } from "@/components/Mark";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { isRthOpen, nyClock } from "@/lib/format";
-import { MountainScene } from "./MountainScene";
+import { AsciiStar } from "./AsciiStar";
 import s from "./login.module.css";
 
 type Role = "member" | "desk";
@@ -15,20 +14,20 @@ export function LoginView() {
   const [show, setShow] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState(false);
-  const [clock, setClock] = useState("--:--:--");
-  const [open, setOpen] = useState(false);
+  const [focusX, setFocusX] = useState(0.36);
   const timer = useRef<number | undefined>(undefined);
 
+  // Center the star in the open space left of the card.
   useEffect(() => {
-    const tick = () => {
-      const now = new Date();
-      setClock(nyClock(now));
-      setOpen(isRthOpen(now));
+    const fit = () => {
+      const w = window.innerWidth;
+      const cardSpace = 420 + 48 + Math.max(0, w * 0.06 - 48) + 24;
+      setFocusX(Math.max(0.3, (w - cardSpace) / 2 / w));
     };
-    tick();
-    const id = window.setInterval(tick, 1000);
+    fit();
+    window.addEventListener("resize", fit);
     return () => {
-      window.clearInterval(id);
+      window.removeEventListener("resize", fit);
       window.clearTimeout(timer.current);
     };
   }, []);
@@ -41,57 +40,18 @@ export function LoginView() {
 
   return (
     <div className={s.wrap}>
-      <div className={s.visual} data-theme="dark">
-        <MountainScene className={s.scene} />
-        <div aria-hidden="true" className={s.shade} />
-        <div aria-hidden="true" className={s.frame}>
-          <span className={s.node} style={{ left: -5, top: -5 }} />
-          <span className={s.node} style={{ right: -5, top: -5 }} />
-          <span className={s.node} style={{ left: -5, bottom: -5 }} />
-          <span className={s.node} style={{ right: -5, bottom: -5 }} />
-          <span className={s.rule} />
+      <AsciiStar className={s.art} focusX={focusX} />
+      <div className={s.layer}>
+        <Link href="/" className={s.brand} aria-label="Altron home">
+          <Mark size={22} />
+          Altron
+        </Link>
+        <div className={s.tools}>
+          <ThemeToggle className={s.toggle} />
         </div>
-        <div aria-hidden="true" className={`${s.reticle} ${s.hideSm}`}>
-          <div className={`${s.ring} spin-slow`} />
-          <div className={s.core} />
-          <div className={s.h} />
-          <div className={s.v} />
-        </div>
-        <div className={s.top}>
-          <Link href="/" className={s.brand} aria-label="Altron home">
-            <Mark size={22} />
-            Altron
-          </Link>
-          <span className={`${s.label} ${s.hideSm}`}>[ CME GLOBEX · ES · NQ ]</span>
-        </div>
-        <div className={s.bottom}>
-          <div className="rise" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <span className={s.label}>[ MEMBERS ONLY ]</span>
-            <p className={s.headline}>
-              See the ridge
-              <br />
-              <em>before the move.</em>
-            </p>
-          </div>
-          <div className={s.status}>
-            <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span className={`${s.dot} ${open ? "pulse-blue" : ""}`} style={{ background: open ? "var(--blue)" : "var(--dim)" }} />
-              {open ? "RTH OPEN" : "RTH CLOSED"}
-            </span>
-            <span>
-              NEW YORK · <strong>{clock}</strong> ET
-            </span>
-          </div>
-        </div>
-      </div>
 
-      <main className={s.panel}>
-        <ThemeToggle className={s.toggle} />
-        <div className={`${s.inner} rise`}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            <h1 className={s.h1}>Welcome back.</h1>
-            <p className={s.sub}>{desk ? "Desk sign-in for the trading team." : "Sign in to watch the desk live."}</p>
-          </div>
+        <main className={`${s.card} rise`}>
+          <p className={s.sub}>{desk ? "Desk sign-in for the trading team." : "Sign in to watch the desk live."}</p>
 
           <div role="group" aria-label="Account type" className={s.segment}>
             <button type="button" className={s.seg} aria-pressed={!desk} onClick={() => pick("member")}>
@@ -118,7 +78,7 @@ export function LoginView() {
           >
             <div className={s.box}>
               <label htmlFor="si-email">Email</label>
-              <input id="si-email" name="email" type="email" autoComplete="email" required placeholder="you@domain.com" className={s.bare} />
+              <input id="si-email" name="email" type="email" autoComplete="email" required className={s.bare} />
             </div>
             <div className={s.box}>
               <div className={s.row}>
@@ -134,7 +94,6 @@ export function LoginView() {
                   type={show ? "text" : "password"}
                   autoComplete="current-password"
                   required
-                  placeholder="••••••••••"
                   className={s.bare}
                   style={{ flex: 1 }}
                 />
@@ -156,7 +115,6 @@ export function LoginView() {
                   inputMode="numeric"
                   autoComplete="one-time-code"
                   maxLength={6}
-                  placeholder="000000"
                   className={`${s.bare} ${s.code}`}
                 />
               </div>
@@ -175,25 +133,10 @@ export function LoginView() {
               </p>
             )}
           </form>
+        </main>
 
-          <div className={s.or}>
-            <span />
-            OR
-            <span />
-          </div>
-
-          <button type="button" className={s.ghost}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M4 6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H9l-5 4z" />
-            </svg>
-            Continue with Discord
-          </button>
-
-          <p className={s.foot}>
-            Altron is invite only. <Link href="/#access">Request access →</Link>
-          </p>
-        </div>
-      </main>
+        <p className={s.title}>Altron Capital</p>
+      </div>
     </div>
   );
 }

@@ -129,7 +129,7 @@
 }
 
 :root {
-  --serif: "Instrument Serif", Georgia, "Times New Roman", serif;
+  --serif: var(--font-geist-serif-triangle), Georgia, "Times New Roman", serif;
   --sans: var(--font-geist-sans), "Inter", system-ui, sans-serif;
   --mono: var(--font-geist-mono), ui-monospace, "SFMono-Regular", Menlo, monospace;
 }
@@ -153,6 +153,10 @@ body {
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+em {
+  font-style: normal;
 }
 
 a {

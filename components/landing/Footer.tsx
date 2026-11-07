@@ -6,12 +6,7 @@ export function Footer() {
     <footer className={s.footer}>
       <div className={s.wide}>
         <div className={s.footTop}>
-          <div className={s.footIntro}>
-            <h2>A private futures desk that trades in the open.</h2>
-            <a className={`${s.btnSolid} ${s.btnMd}`} href="#access" style={{ alignSelf: "flex-start" }}>
-              Request access
-            </a>
-          </div>
+          <p className={s.footIntro}>A private futures desk that trades in the open.</p>
           <div className={s.footCols}>
             <div className={s.footCol}>
               <span>DESK</span>
@@ -27,14 +22,12 @@ export function Footer() {
         </div>
       </div>
 
-      <div aria-hidden="true" className={s.wordmarkWrap}>
-        <div className={s.wordmarkGlow} />
-        <div className={s.wordmark}>Altron</div>
-      </div>
-
-      <div className={`${s.wide} ${s.footBar}`}>
-        <span>© 2026 Altron</span>
-        <Link href="/legal">Risk disclosure</Link>
+      <div className={s.wordmarkWrap}>
+        <div aria-hidden="true" className={s.wordmarkGlow} />
+        <div aria-hidden="true" className={s.wordmark}>
+          Altron
+        </div>
+        <span className={s.copyright}>© 2026 Altron</span>
       </div>
     </footer>
   );
