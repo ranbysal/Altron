@@ -36,14 +36,15 @@ export function Desk() {
       <div className={`${s.container} ${s.stack56}`}>
         <div className={s.splitHead}>
           <h2 className={s.h2}>
-            Watch the position, <em>not the highlight reel.</em>
+            See the trade <em>as it happens.</em>
           </h2>
           <p className={s.lede}>
-            Every trade lives on the chart where it was taken. Levels, size and live P&amp;L update with the market, so
-            you see the trade the way he sees it, while it’s still open.
+            Follow every position in real time, with live P&amp;L, entry levels, stops, and targets directly on the chart.
           </p>
         </div>
+      </div>
 
+      <div className={`${s.wide} ${s.deskWide}`}>
         <div className={s.window}>
           <div className={s.titlebar}>
             <div className={s.lights} aria-hidden="true">
@@ -52,7 +53,7 @@ export function Desk() {
               <span />
             </div>
             <span style={{ fontSize: 12, letterSpacing: "0.06em" }}>altron / desk</span>
-            <span>SIMULATED FEED · DEMO DATA</span>
+            <span aria-hidden="true" />
           </div>
           <div className={s.windowBody}>
             <div className={`${s.rail} ${s.hideSm}`}>
@@ -100,12 +101,12 @@ export function Desk() {
                   </div>
                 </div>
                 <div className={s.toolbarRight}>
-                  <span className={s.livePill}>
-                    <span className={`${s.dotEmber} pulse-ember`} />
-                    IN A TRADE
-                  </span>
                   <span className={s.who}>
-                    <span className={s.avatar}>Y</span>Yazan · GP
+                    <span className={s.avatarWrap}>
+                      <span className={s.avatar}>Y</span>
+                      <span className={s.presence} role="img" aria-label="Active now" />
+                    </span>
+                    Yazan · GP
                   </span>
                 </div>
               </div>
@@ -217,7 +218,7 @@ export function Desk() {
                         <i style={{ background: e.color }} />
                         {e.kind}
                       </span>
-                      <span style={{ color: "#D5DAE0" }}>{e.text}</span>
+                      <span style={{ color: "var(--soft)" }}>{e.text}</span>
                     </div>
                   ))}
                 </div>

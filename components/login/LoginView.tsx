@@ -1,6 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+import { Mark } from "@/components/Mark";
 import { ThemeSwitch } from "@/components/ThemeSwitch";
 import { AsciiStar } from "./AsciiStar";
 import s from "./login.module.css";
@@ -140,7 +142,9 @@ export function LoginView() {
           </form>
         </main>
 
-        <p className={s.title}>Altron Capital</p>
+        <Link href="/" className={s.home} aria-label="Altron home">
+          <Mark size={30} />
+        </Link>
       </div>
     </div>
   );
