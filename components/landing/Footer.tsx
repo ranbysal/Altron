@@ -11,7 +11,6 @@ export function Footer() {
             <div className={s.footCol}>
               <span>DESK</span>
               <a href="#desk">Live desk</a>
-              <a href="#ledger">Ledger</a>
             </div>
             <div className={s.footCol}>
               <span>ACCESS</span>
