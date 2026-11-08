@@ -23,9 +23,9 @@
   --blue-soft: #8ec5ff;
   --blue-ink: #04101c;
   --blue-wash: rgba(77, 163, 255, 0.14);
-  --ember: #ff4f8b;
-  --ember-soft: #ff7eaa;
-  --ember-wash: rgba(255, 79, 139, 0.12);
+  --ember: #fd50bc;
+  --ember-soft: #ff7dd0;
+  --ember-wash: rgba(253, 80, 188, 0.13);
   --line: rgba(255, 255, 255, 0.07);
   --line-2: rgba(255, 255, 255, 0.1);
   --line-3: rgba(255, 255, 255, 0.16);
@@ -57,9 +57,9 @@
   --cv-axis: #7c8692;
   --cv-entry: rgba(233, 236, 239, 0.7);
   --cv-tp: #6eb6ff;
-  --cv-sl: #ff7eaa;
+  --cv-sl: #ff7dd0;
   --cv-zone-up: rgba(77, 163, 255, 0.08);
-  --cv-zone-down: rgba(255, 79, 139, 0.08);
+  --cv-zone-down: rgba(253, 80, 188, 0.08);
   --cv-tip-bg: rgba(22, 25, 29, 0.94);
   --cv-tip-line: rgba(255, 255, 255, 0.12);
   --cv-cross: rgba(233, 236, 239, 0.35);
@@ -68,10 +68,10 @@
   --cv-dither-1: #2f6fb8;
   --cv-dither-2: #6eb6ff;
   --cv-dither-3: #dcebfa;
-  --cv-ember-0: #2a0f1b;
-  --cv-ember-1: #8c2652;
-  --cv-ember-2: #ff4f8b;
-  --cv-ember-3: #ffc6da;
+  --cv-ember-0: #2b0b22;
+  --cv-ember-1: #962777;
+  --cv-ember-2: #fd50bc;
+  --cv-ember-3: #ffc9ee;
 }
 
 [data-theme="light"] {
@@ -98,9 +98,9 @@
   --blue-soft: #1560c9;
   --blue-ink: #ffffff;
   --blue-wash: rgba(30, 123, 239, 0.1);
-  --ember: #e2356f;
-  --ember-soft: #c21d5a;
-  --ember-wash: rgba(226, 53, 111, 0.1);
+  --ember: #e62ea4;
+  --ember-soft: #c2168a;
+  --ember-wash: rgba(230, 46, 164, 0.1);
   --line: rgba(12, 18, 28, 0.08);
   --line-2: rgba(12, 18, 28, 0.12);
   --line-3: rgba(12, 18, 28, 0.2);
@@ -131,9 +131,9 @@
   --cv-axis: #646e7a;
   --cv-entry: rgba(14, 17, 22, 0.65);
   --cv-tp: #1560c9;
-  --cv-sl: #c21d5a;
+  --cv-sl: #c2168a;
   --cv-zone-up: rgba(30, 123, 239, 0.08);
-  --cv-zone-down: rgba(226, 53, 111, 0.07);
+  --cv-zone-down: rgba(230, 46, 164, 0.07);
   --cv-tip-bg: rgba(255, 255, 255, 0.96);
   --cv-tip-line: rgba(12, 18, 28, 0.12);
   --cv-cross: rgba(14, 17, 22, 0.35);
@@ -142,10 +142,10 @@
   --cv-dither-1: #9fc3ef;
   --cv-dither-2: #3d8eea;
   --cv-dither-3: #1b4f99;
-  --cv-ember-0: #f8dbe6;
-  --cv-ember-1: #f09bbb;
-  --cv-ember-2: #e2356f;
-  --cv-ember-3: #9c1447;
+  --cv-ember-0: #fadcf0;
+  --cv-ember-1: #f39bd6;
+  --cv-ember-2: #e62ea4;
+  --cv-ember-3: #9e0f6f;
 }
 
 :root {
@@ -256,9 +256,9 @@ button:focus-visible {
 }
 
 @keyframes alt-pulse-ember {
-  0% { box-shadow: 0 0 0 0 rgba(255, 79, 139, 0.6); }
-  70% { box-shadow: 0 0 0 8px rgba(255, 79, 139, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(255, 79, 139, 0); }
+  0% { box-shadow: 0 0 0 0 rgba(253, 80, 188, 0.6); }
+  70% { box-shadow: 0 0 0 8px rgba(253, 80, 188, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(253, 80, 188, 0); }
 }
 @keyframes alt-pulse-blue {
   0% { box-shadow: 0 0 0 0 rgba(77, 163, 255, 0.6); }

@@ -222,7 +222,7 @@
   line-height: 1;
   color: var(--text-strong);
 }
-.spark { width: 132px; height: 40px; flex: none; margin-bottom: 10px; overflow: visible; }
+.spark { width: 132px; height: 40px; flex: 0 1 132px; min-width: 0; margin-bottom: 10px; overflow: hidden; }
 .instMeta {
   display: flex;
   align-items: baseline;

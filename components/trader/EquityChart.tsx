@@ -15,6 +15,8 @@ const EQ_BASE = 262;
 const UW_TOP = 286;
 const UW_DEPTH = 58;
 const HEIGHT = 352;
+/** The curve stops short of the right edge, leaving room ahead of the live point. */
+const plotOf = (W: number) => W - Math.max(110, Math.round(W * 0.09));
 
 function hex(c: string): string {
   return c || "#4da3ff";
@@ -28,8 +30,10 @@ export function EquityChart({ curve, trades }: { curve: Point[]; trades: Trade[]
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [hover, setHover] = useState<{ i: number; x: number; y: number; dy: number } | null>(null);
+  const [size, setSize] = useState({ W: 1, P: 1 });
   const state = useRef({
     W: 0,
+    P: 0,
     cols: 0,
     cell: 4,
     from: null as null | { eq: Float32Array; dd: Float32Array },
@@ -62,7 +66,7 @@ export function EquityChart({ curve, trades }: { curve: Point[]; trades: Trade[]
     };
 
     const columns = (pts: Point[]) => {
-      const { W, cell } = st;
+      const { W, P, cell } = st;
       const cols = Math.ceil(W / cell);
       const eq = new Float32Array(cols);
       const dd = new Float32Array(cols);
@@ -79,7 +83,7 @@ export function EquityChart({ curve, trades }: { curve: Point[]; trades: Trade[]
       const yOf = (v: number) => EQ_BASE - ((v - lo) / span) * (EQ_BASE - EQ_TOP);
       st.zeroY = yOf(0);
       for (let i = 0; i < cols; i++) {
-        const u = ((i + 0.5) * cell) / W * (n - 1);
+        const u = Math.min(1, ((i + 0.5) * cell) / P) * (n - 1);
         const a = Math.max(0, Math.min(n - 1, Math.floor(u)));
         const b = Math.min(n - 1, a + 1);
         const f = Math.min(1, Math.max(0, u - a));
@@ -96,7 +100,7 @@ export function EquityChart({ curve, trades }: { curve: Point[]; trades: Trade[]
       const now = st.now;
       if (!ctx || !now) return;
       const dpr = Math.min(2, window.devicePixelRatio || 1);
-      const { W, cell } = st;
+      const { W, P, cell } = st;
       if (canvas.width !== Math.round(W * dpr) || canvas.height !== Math.round(HEIGHT * dpr)) {
         canvas.width = Math.round(W * dpr);
         canvas.height = Math.round(HEIGHT * dpr);
@@ -112,7 +116,7 @@ export function EquityChart({ curve, trades }: { curve: Point[]; trades: Trade[]
 
       for (let i = 0; i < cols; i++) {
         const cx = (i + 0.5) * cell;
-        if (cx > revealX) break;
+        if (cx > revealX || cx > P + cell * 0.5) break;
         const front = Math.min(1, (revealX - cx) / 60);
         const yl = now.eq[i];
         const yp = now.eq[Math.max(0, i - 1)];
@@ -157,8 +161,14 @@ export function EquityChart({ curve, trades }: { curve: Point[]; trades: Trade[]
       // the period's starting balance, as a dotted rule
       ctx.fillStyle = st.pal.dot;
       ctx.globalAlpha = 0.5;
-      for (let x = 0; x < Math.min(W, revealX); x += 6) ctx.fillRect(x, Math.round(st.zeroY), 1.5, 1);
-      for (let x = 0; x < Math.min(W, revealX); x += 6) ctx.fillRect(x, UW_TOP - 6, 1.5, 1);
+      for (let x = 0; x < Math.min(P, revealX); x += 6) ctx.fillRect(x, Math.round(st.zeroY), 1.5, 1);
+      for (let x = 0; x < Math.min(P, revealX); x += 6) ctx.fillRect(x, UW_TOP - 6, 1.5, 1);
+      // a dotted guide from the live point to the edge
+      if (revealX > P) {
+        const headY = Math.round(now.eq[Math.min(cols - 1, Math.floor(P / cell))]);
+        ctx.globalAlpha = 0.7 * Math.min(1, (revealX - P) / 80);
+        for (let x = P + 12; x < W; x += 6) ctx.fillRect(x, headY, 2, 1);
+      }
       ctx.globalAlpha = 1;
     };
 
@@ -197,6 +207,8 @@ export function EquityChart({ curve, trades }: { curve: Point[]; trades: Trade[]
       const W = Math.round(wrap.clientWidth);
       if (!W) return;
       st.W = W;
+      st.P = plotOf(W);
+      setSize({ W, P: st.P });
       st.cell = W < 700 ? 3 : 4;
       st.to = columns(curveRef.current);
       st.from = st.to;
@@ -237,10 +249,11 @@ export function EquityChart({ curve, trades }: { curve: Point[]; trades: Trade[]
     const st = state.current;
     if (!st.now || st.reveal < 0.98) return;
     const r = e.currentTarget.getBoundingClientRect();
-    const x = Math.max(0, Math.min(r.width, e.clientX - r.left));
+    const P = st.P || r.width;
+    const x = Math.max(0, Math.min(P, e.clientX - r.left));
     const n = curve.length;
-    const i = Math.round((x / r.width) * (n - 1));
-    const px = (i / (n - 1)) * r.width;
+    const i = Math.round((x / P) * (n - 1));
+    const px = (i / (n - 1)) * P;
     const col = Math.min(st.now.eq.length - 1, Math.max(0, Math.floor(px / st.cell)));
     setHover({ i, x: px, y: st.now.eq[col], dy: UW_TOP + st.now.dd[col] });
   };
@@ -270,7 +283,7 @@ export function EquityChart({ curve, trades }: { curve: Point[]; trades: Trade[]
     <div className={s.equity}>
       <div ref={wrapRef} className={s.equityPlot} style={{ height: HEIGHT }} onPointerMove={onMove} onPointerLeave={() => setHover(null)}>
         <canvas ref={canvasRef} className={s.equityCanvas} aria-hidden="true" />
-        <span className={s.endMark} style={{ top: endY }}>
+        <span className={s.endMark} style={{ top: endY, left: size.P }}>
           <i />
           <b />
           <span>{money(curve[curve.length - 1].eq)}</span>
@@ -321,7 +334,7 @@ export function EquityChart({ curve, trades }: { curve: Point[]; trades: Trade[]
         {months
           .filter((_, k) => k % thin === 0)
           .map((m) => (
-            <span key={`${m.label}${m.at}`} style={{ left: `${m.at * 100}%` }}>
+            <span key={`${m.label}${m.at}`} style={{ left: `${m.at * (size.P / size.W) * 100}%` }}>
               {m.label}
             </span>
           ))}

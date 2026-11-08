@@ -79,26 +79,24 @@ function useMarketClock(): Clock | null {
   return c;
 }
 
+/** Same shape as the public nav: wide-tracked wordmark left, mono links right. */
 function TopBar({ clock }: { clock: Clock | null }) {
   return (
-    <nav className={s.top} aria-label="Desk">
+    <nav className={s.nav} aria-label="Desk">
       <Link href="/" className={s.brand} aria-label="Altron home">
-        <Mark size={22} />
-        <span>Altron</span>
+        <Mark size={26} />
+        <span className={s.brandName}>Altron</span>
       </Link>
-      <div className={s.tabs} role="tablist">
-        <span role="tab" aria-selected="true" className={s.tab}>
-          Dashboard
-        </span>
-        <span role="tab" aria-selected="false" aria-disabled="true" className={s.tab} title="The trading desk is next">
-          Desk<em>Soon</em>
-        </span>
-      </div>
-      <div className={s.topRight}>
-        <span className={s.feed} title="Market data feed not connected. Prices are simulated.">
-          <i className={s.offDot} />
-          Disconnected
-        </span>
+      <div className={s.navRight}>
+        <div className={s.navLinks}>
+          <span className={s.navOn} aria-current="page">
+            Dashboard
+          </span>
+          <span className={s.navSoon} aria-disabled="true" title="The trading desk is next">
+            Desk<em>Soon</em>
+          </span>
+        </div>
+        <span className={s.navSep} aria-hidden="true" />
         <span className={s.clock}>NY {clock?.time ?? "--:--"}</span>
         <ThemeSwitch />
         <span className={s.me} aria-label="Yazan, online">
@@ -127,12 +125,16 @@ export function Dashboard() {
 
   return (
     <div className={s.root}>
-      <TopBar clock={clock} />
-
       <main className={s.page}>
         <div className={s.sheet}>
           <i className={s.sheetR} aria-hidden="true" />
           <i className={s.sheetB} aria-hidden="true" />
+
+          <div className={s.row1}>
+            <Cell i={0} className={s.navCell}>
+              <TopBar clock={clock} />
+            </Cell>
+          </div>
 
           {/* account strip */}
           <div className={s.row1}>

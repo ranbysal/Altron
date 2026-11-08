@@ -13,7 +13,7 @@ const SWATCHES = [
   { name: "SLATE", hex: "#A8B5C2", use: "atmosphere", fg: "#0A0B0D" },
   { name: "BONE", hex: "#E9ECEF", use: "text", fg: "#0A0B0D" },
   { name: "SIGNAL", hex: "#4DA3FF", use: "long, profit", fg: "#04101C" },
-  { name: "ROSE", hex: "#FF4F8B", use: "live, stop, loss", fg: "#1A0410" },
+  { name: "MAGENTA", hex: "#FD50BC", use: "live, stop, loss", fg: "#1A0414" },
 ];
 
 function BayerTile({ className }: { className?: string }) {
