@@ -10,7 +10,7 @@ import { fmt, money, signed } from "@/lib/format";
 import { LAST_DAY, PERIODS, TRADES, computeStats, dayLabel, tradesFor, type Period } from "@/lib/journal";
 import { Calendar } from "./Calendar";
 import { EquityChart } from "./EquityChart";
-import { Distribution, Journal, Markets, RiskGauge, SessionDots } from "./Panels";
+import { Journal, LongShort, Markets, RiskGauge, SessionDots } from "./Panels";
 import { Cell, LineMeter, Money, Odometer, Spark } from "./parts";
 import s from "./trader.module.css";
 
@@ -87,21 +87,21 @@ function TopBar({ clock }: { clock: Clock | null }) {
         <Mark size={26} />
         <span className={s.brandName}>Altron</span>
       </Link>
+      <div className={s.tabs} role="tablist" aria-label="Views">
+        <span role="tab" aria-selected="true" className={s.tab}>
+          Dashboard
+        </span>
+        <span role="tab" aria-selected="false" aria-disabled="true" className={s.tab} title="The trading desk is next">
+          Desk<em>Soon</em>
+        </span>
+      </div>
       <div className={s.navRight}>
-        <div className={s.seg} role="tablist" aria-label="Views">
-          <span className={s.segGlass} aria-hidden="true" />
-          <span role="tab" aria-selected="true" className={s.segBtn}>
-            Dashboard
-          </span>
-          <span role="tab" aria-selected="false" aria-disabled="true" className={s.segBtn} title="The trading desk is next">
-            Desk<em>Soon</em>
-          </span>
-        </div>
-        <span className={s.navSep} aria-hidden="true" />
         <span className={s.clock}>NY {clock?.time ?? "--:--"}</span>
         <ThemeSwitch />
         <span className={s.me} aria-label="Yazan, online">
-          Y<i />
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/yazan.webp" alt="" width={36} height={36} />
+          <i />
         </span>
       </div>
     </nav>
@@ -127,19 +127,10 @@ export function Dashboard() {
   return (
     <div className={s.root}>
       <main className={s.page}>
-        <div className={s.sheet}>
-          <i className={s.sheetR} aria-hidden="true" />
-          <i className={s.sheetB} aria-hidden="true" />
-
-          <div className={s.row1}>
-            <Cell i={0} className={s.navCell}>
-              <TopBar clock={clock} />
-            </Cell>
-          </div>
+        <TopBar clock={clock} />
 
           {/* headline number + equity */}
-          <div className={s.row1}>
-            <Cell i={1} className={s.hero}>
+            <section className={s.hero}>
               <div className={s.heroTop}>
                 <div className={s.heroNum}>
                   <span className={s.label}>
@@ -198,8 +189,11 @@ export function Dashboard() {
                 </div>
               </div>
               <EquityChart curve={curve} trades={trades} />
-            </Cell>
-          </div>
+            </section>
+
+        <div className={s.sheet}>
+          <i className={s.sheetR} aria-hidden="true" />
+          <i className={s.sheetB} aria-hidden="true" />
 
           {/* key numbers */}
           <div className={s.row5}>
@@ -267,8 +261,8 @@ export function Dashboard() {
             <Cell i={7} label="Daily P&L" aside={day ? "Day below" : "26 weeks"}>
               <Calendar period={period} selected={day} onSelect={setDay} />
             </Cell>
-            <Cell i={8} label="R distribution" aside={meta.long}>
-              <Distribution key={period} trades={trades} />
+            <Cell i={8} label="Long vs short" aside={meta.long}>
+              <LongShort key={period} trades={trades} />
             </Cell>
             <Cell i={9} label="Risk today" aside={`Session ${k(todayNet)}`}>
               <RiskGauge used={Math.max(0, -todayNet) + pos.risk} limit={2000} tradesToday={today.length + 1} maxTrades={6} />
@@ -293,7 +287,6 @@ export function Dashboard() {
           </div>
         </div>
 
-        <p className={s.disclaimer}>Simulated paper trading. Not real results.</p>
       </main>
     </div>
   );

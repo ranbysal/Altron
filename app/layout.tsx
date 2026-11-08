@@ -21,7 +21,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" data-theme="dark" className={`${GeistSans.variable} ${GeistMono.variable} ${GeistSerifTriangle.variable}`} suppressHydrationWarning>
+    <html lang="en" data-theme="light" className={`${GeistSans.variable} ${GeistMono.variable} ${GeistSerifTriangle.variable}`} suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_BOOT_SCRIPT }} />
       </head>

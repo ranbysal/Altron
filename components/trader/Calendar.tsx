@@ -47,6 +47,11 @@ export function Calendar({ period, selected, onSelect }: { period: Period; selec
   }, []);
 
   const info = hover ? DAILY.get(hover.day) : null;
+  const days = TRADING_DAYS.slice(start).map((d) => DAILY.get(d)?.pnl).filter((v): v is number => v !== undefined);
+  const green = days.filter((v) => v > 0).length;
+  const best = days.length ? Math.max(...days) : 0;
+  const worst = days.length ? Math.min(...days) : 0;
+  const avg = days.length ? days.reduce((a, b) => a + b, 0) / days.length : 0;
 
   return (
     <div className={s.cal}>
@@ -105,6 +110,26 @@ export function Calendar({ period, selected, onSelect }: { period: Period; selec
         </div>
         </div>
       </div>
+      <dl className={s.calStats}>
+        <div>
+          <dt>Green days</dt>
+          <dd>
+            {days.length ? Math.round((green / days.length) * 100) : 0}%<span className={s.dim}> of {days.length}</span>
+          </dd>
+        </div>
+        <div>
+          <dt>Best day</dt>
+          <dd className={s.pos}>{money(best)}</dd>
+        </div>
+        <div>
+          <dt>Worst day</dt>
+          <dd className={s.neg}>{money(worst)}</dd>
+        </div>
+        <div>
+          <dt>Avg day</dt>
+          <dd className={avg >= 0 ? s.pos : s.neg}>{money(avg)}</dd>
+        </div>
+      </dl>
       <div className={s.calFoot}>
         <div className={s.legend} aria-hidden="true">
           <span>Loss</span>
