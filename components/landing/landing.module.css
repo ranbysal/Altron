@@ -43,7 +43,6 @@
   align-items: end;
 }
 .stack56 { display: flex; flex-direction: column; gap: 56px; }
-.stack48 { display: flex; flex-direction: column; gap: 48px; }
 
 .btnSolid {
   display: inline-flex;
@@ -709,7 +708,7 @@
   min-width: 520px;
   transition: background 0.15s;
 }
-.tapeRow:hover, .ledgerRow:hover { background: var(--hover); }
+.tapeRow:hover { background: var(--hover); }
 .tapeKind { display: flex; align-items: center; gap: 8px; }
 .tapeKind i { width: 6px; height: 6px; display: block; }
 
@@ -845,68 +844,6 @@
 .featureKicker { font-family: var(--mono); font-size: 11px; letter-spacing: 0.12em; color: var(--dim); }
 .h3 { margin: 0; font-family: var(--serif); font-weight: 400; font-size: 32px; line-height: 1.05; }
 .featureBody p { margin: 0; font-size: 15.5px; line-height: 1.65; color: var(--muted); text-wrap: pretty; }
-
-/* ---------- ledger ---------- */
-.ledger { padding: 140px 0; }
-.ledgerBox { border-radius: 20px; border: 1px solid var(--line); background: var(--panel-3); overflow: hidden; }
-.ledgerTop {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 18px 24px;
-  border-bottom: 1px solid var(--line);
-  font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: 0.12em;
-  color: var(--dim);
-}
-.kpis {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
-  border-bottom: 1px solid var(--line);
-}
-.kpi {
-  position: relative;
-  padding: 26px 24px 24px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  box-shadow: 1px 0 0 var(--line);
-}
-.kpiLabel { font-family: var(--mono); font-size: 11px; letter-spacing: 0.12em; color: var(--dim); }
-.kpiValue { font-size: 44px; font-weight: 300; letter-spacing: -0.03em; line-height: 1; font-variant-numeric: tabular-nums; }
-.kpiSub { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; display: flex; align-items: center; gap: 10px; min-height: 18px; }
-.seq { display: flex; gap: 3px; }
-.seq i { width: 10px; height: 10px; border-radius: 2px; display: block; }
-.ratio { position: relative; flex: 1; height: 4px; border-radius: 2px; background: var(--ember-wash); overflow: hidden; max-width: 140px; }
-.ratio i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--blue); border-radius: 2px; }
-.equity { padding: 18px 24px 8px; }
-.equity svg { width: 100%; height: 200px; display: block; }
-.table { min-width: 860px; }
-.ledgerRow, .ledgerHead {
-  display: grid;
-  grid-template-columns: 1fr 0.8fr 0.8fr 0.6fr 1.1fr 1.1fr 0.7fr 1fr;
-  gap: 12px;
-  align-items: center;
-  padding: 14px 24px;
-  border-bottom: 1px solid var(--hair);
-  font-size: 14px;
-  font-variant-numeric: tabular-nums;
-  transition: background 0.15s;
-}
-.ledgerHead {
-  padding: 12px 24px;
-  border-top: 1px solid var(--line);
-  border-bottom-color: var(--line);
-  font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: 0.1em;
-  color: var(--dim);
-}
-.right { text-align: right; }
-.miniPill { display: inline-flex; height: 24px; align-items: center; padding: 0 9px; border-radius: 6px; font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; }
 
 /* ---------- access ---------- */
 .access { position: relative; padding: 160px 0 170px; overflow: hidden; }

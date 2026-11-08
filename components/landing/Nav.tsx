@@ -13,7 +13,6 @@ export function Nav() {
       <div className={s.navRight}>
         <div className={`${s.navLinks} ${s.hideSm}`}>
           <a className={s.link} href="#desk">Desk</a>
-          <a className={s.link} href="#ledger">Ledger</a>
           <Link className={s.link} href="/login">Sign in</Link>
         </div>
         <span className={`${s.navSep} ${s.hideSm}`} aria-hidden="true" />
