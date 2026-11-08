@@ -936,6 +936,7 @@
   line-height: 0.92;
   letter-spacing: -0.02em;
 }
+.accessCopy { display: flex; flex-direction: column; gap: 10px; align-items: center; }
 .accessP { margin: 0; max-width: 560px; font-size: 17px; line-height: 1.65; color: var(--soft); text-wrap: pretty; }
 .formWrap { position: relative; width: 100%; max-width: 640px; }
 /* colour behind the glass so the frost has something to soften */

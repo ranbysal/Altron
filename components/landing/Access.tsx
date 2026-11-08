@@ -18,10 +18,13 @@ export function Access() {
           <h2 className={s.accessH2}>
             Altron is <em>invite only.</em>
           </h2>
-          <p className={s.accessP}>
-            Membership is free. We keep the room small so the desk stays readable. Tell us a little about how you trade
-            and we’ll be in touch.
-          </p>
+          <div className={s.accessCopy}>
+            <p className={s.accessP}>A private environment built for futures quants.</p>
+            <p className={s.accessP}>
+              Tell us a little about yourself, what you trade, and your experience. We’ll review your application and be
+              in touch.
+            </p>
+          </div>
         </div>
 
         <div className={s.formWrap}>
