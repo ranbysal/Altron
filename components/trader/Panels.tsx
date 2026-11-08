@@ -156,7 +156,7 @@ export function Markets({ trades }: { trades: Trade[] }) {
             <td className={m.avgR >= 0 ? s.pos : s.neg}>{m.trades ? signed(m.avgR, 2, "R") : "–"}</td>
             <td className={m.net >= 0 ? s.pos : s.neg}>{m.trades ? k(m.net) : "–"}</td>
             <td className={s.trendCol}>
-              <Spark values={m.curve} tone={m.net >= 0 ? "pos" : "neg"} height={30} baseline={0} delay={700 + i * 90} />
+              <Spark values={m.curve} tone={m.net >= 0 ? "pos" : "neg"} width={120} height={30} baseline={0} delay={700 + i * 90} />
             </td>
           </tr>
         ))}

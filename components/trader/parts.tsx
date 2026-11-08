@@ -111,7 +111,9 @@ export function Spark({
   baseline,
   className,
   delay = 0,
+  width = 240,
 }: {
+  width?: number;
   values: number[];
   tone?: "plain" | "pos" | "neg";
   height?: number;
@@ -119,7 +121,7 @@ export function Spark({
   className?: string;
   delay?: number;
 }) {
-  const w = 240;
+  const w = width;
   const h = height;
   if (values.length < 2) return <svg className={className} viewBox={`0 0 ${w} ${h}`} />;
   const min = Math.min(...values, baseline ?? Infinity);

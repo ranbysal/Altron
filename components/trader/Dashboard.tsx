@@ -11,7 +11,6 @@ import { LAST_DAY, PERIODS, TRADES, computeStats, dayLabel, tradesFor, type Peri
 import { Calendar } from "./Calendar";
 import { EquityChart } from "./EquityChart";
 import { Journal, Markets, RiskGauge, SessionDots } from "./Panels";
-import { Recent } from "./Recent";
 import { Cell, LineMeter, Money, Odometer, Spark } from "./parts";
 import s from "./trader.module.css";
 
@@ -60,18 +59,18 @@ function useMarketClock(): Clock | null {
       const weekend = wd === 6 || (wd === 0 && mins < 1080) || (wd === 5 && mins >= 1020);
       if (weekend) {
         status = "Market closed";
-        detail = `Globex opens Sun 18:00 · in ${until(1080)}`;
+        detail = `Globex opens Sun 6:00 PM · in ${until(1080)}`;
         open = false;
       } else if (wd >= 1 && wd <= 4 && mins >= 1020 && mins < 1080) {
         status = "Daily halt";
-        detail = `Reopens 18:00 · in ${until(wd * 1440 + 1080)}`;
+        detail = `Reopens 6:00 PM · in ${until(wd * 1440 + 1080)}`;
         open = false;
       } else if (wd >= 1 && wd <= 5 && mins >= 570 && mins < 960) {
         status = "RTH open";
-        detail = `Cash close 16:00 · in ${until(wd * 1440 + 960)}`;
+        detail = `Cash close 4:00 PM · in ${until(wd * 1440 + 960)}`;
       }
       const greeting = h < 5 ? "Good evening" : h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
-      setC({ time: `${parts.hour}:${parts.minute}`, greeting, status, detail, open });
+      setC({ time: `${h % 12 || 12}:${parts.minute} ${h < 12 ? "AM" : "PM"}`, greeting, status, detail, open });
     };
     tick();
     const id = window.setInterval(tick, 1000);
@@ -96,19 +95,9 @@ function TopBar({ clock }: { clock: Clock | null }) {
         </span>
       </div>
       <div className={s.topRight}>
-        <div className={s.mode} role="group" aria-label="Account mode">
-          <span aria-pressed="true">Paper</span>
-          <span aria-disabled="true" title="Connect a broker account to trade live">
-            Live
-            <svg width="9" height="10" viewBox="0 0 9 10" aria-hidden="true">
-              <rect x="0.5" y="4.5" width="8" height="5" rx="1" fill="none" stroke="currentColor" />
-              <path d="M2.2 4.5V3a2.3 2.3 0 0 1 4.6 0v1.5" fill="none" stroke="currentColor" />
-            </svg>
-          </span>
-        </div>
-        <span className={s.feed}>
-          <i className={s.feedDot} />
-          Sim feed
+        <span className={s.feed} title="Market data feed not connected. Prices are simulated.">
+          <i className={s.offDot} />
+          Disconnected
         </span>
         <span className={s.clock}>NY {clock?.time ?? "--:--"}</span>
         <ThemeSwitch />
@@ -141,17 +130,6 @@ export function Dashboard() {
       <TopBar clock={clock} />
 
       <main className={s.page}>
-        <header className={s.hello}>
-          <h1 className={s.helloLine}>
-            {clock ? clock.greeting : "Welcome back"}, <em>Yazan.</em>
-          </h1>
-          <div className={s.status}>
-            <span className={`${s.statusDot} ${clock?.open ? s.statusOpen : ""}`} />
-            <span className={s.statusMain}>{clock?.status ?? " "}</span>
-            <span className={s.statusSub}>{clock?.detail ?? " "}</span>
-          </div>
-        </header>
-
         <div className={s.sheet}>
           <i className={s.sheetR} aria-hidden="true" />
           <i className={s.sheetB} aria-hidden="true" />
@@ -163,11 +141,20 @@ export function Dashboard() {
                 <span className={s.label}>
                   Paper-01 <i className={s.okDot} /> <span className={s.ok}>Connected</span>
                 </span>
-                <span className={s.mono}>ACCT ALT-P-0001 · SIM FEED · CME GLOBEX</span>
+                <span className={s.mono}>ACCT ALT-P-0001 · CME GLOBEX</span>
               </div>
-              <div className={s.acctRight}>
-                <span className={s.mono}>Last session</span>
-                <span className={s.label}>{dayLabel(LAST_DAY, { weekday: "short", month: "short", day: "2-digit" })}</span>
+              <div className={s.acctSide}>
+                <div className={s.acctRight}>
+                  <span className={s.label}>
+                    <i className={`${s.statusDot} ${clock?.open ? s.statusOpen : ""}`} />
+                    {clock?.status ?? "\u00a0"}
+                  </span>
+                  <span className={s.mono}>{clock?.detail ?? "\u00a0"}</span>
+                </div>
+                <div className={s.acctRight}>
+                  <span className={s.label}>{dayLabel(LAST_DAY, { weekday: "short", month: "short", day: "2-digit" })}</span>
+                  <span className={s.mono}>Last session</span>
+                </div>
               </div>
             </Cell>
           </div>
@@ -282,17 +269,17 @@ export function Dashboard() {
             </Cell>
           </div>
 
-          {/* calendar + recent */}
+          {/* calendar + risk */}
           <div className={s.row2}>
             <Cell i={7} label="Daily P&L" aside={day ? "Showing that day below" : "26 weeks · pick a day"}>
               <Calendar period={period} selected={day} onSelect={setDay} />
             </Cell>
-            <Cell i={8} label="Recent performance" aside="Last 100 trades">
-              <Recent trades={TRADES} />
+            <Cell i={8} label="Risk today" aside={`Session ${k(todayNet)}`}>
+              <RiskGauge used={Math.max(0, -todayNet) + pos.risk} limit={2000} tradesToday={today.length + 1} maxTrades={6} />
             </Cell>
           </div>
 
-          {/* markets, session, risk */}
+          {/* markets + time of day */}
           <div className={s.row3}>
             <Cell i={9} label="By market" aside={meta.long}>
               <Markets trades={trades} />
@@ -300,14 +287,11 @@ export function Dashboard() {
             <Cell i={10} label="Time of day" aside="ET · 30 min">
               <SessionDots trades={trades} />
             </Cell>
-            <Cell i={11} label="Risk today" aside={`Session ${k(todayNet)}`}>
-              <RiskGauge used={Math.max(0, -todayNet) + pos.risk} limit={2000} tradesToday={today.length + 1} maxTrades={6} />
-            </Cell>
           </div>
 
           {/* journal */}
           <div className={s.row1}>
-            <Cell i={12} label="Journal" aside={day ? dayLabel(day, { weekday: "long", month: "long", day: "numeric" }) : `${trades.length} trades · ${meta.long}`}>
+            <Cell i={11} label="Journal" aside={day ? dayLabel(day, { weekday: "long", month: "long", day: "numeric" }) : `${trades.length} trades · ${meta.long}`}>
               <Journal key={day ?? period} trades={trades} day={day} onClearDay={() => setDay(null)} />
             </Cell>
           </div>
