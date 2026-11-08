@@ -10,7 +10,7 @@ import { fmt, money, signed } from "@/lib/format";
 import { LAST_DAY, PERIODS, TRADES, computeStats, dayLabel, tradesFor, type Period } from "@/lib/journal";
 import { Calendar } from "./Calendar";
 import { EquityChart } from "./EquityChart";
-import { Journal, Markets, RiskGauge, SessionDots } from "./Panels";
+import { Distribution, Journal, Markets, RiskGauge, SessionDots } from "./Panels";
 import { Cell, LineMeter, Money, Odometer, Spark } from "./parts";
 import s from "./trader.module.css";
 
@@ -88,11 +88,12 @@ function TopBar({ clock }: { clock: Clock | null }) {
         <span className={s.brandName}>Altron</span>
       </Link>
       <div className={s.navRight}>
-        <div className={s.navLinks}>
-          <span className={s.navOn} aria-current="page">
+        <div className={s.seg} role="tablist" aria-label="Views">
+          <span className={s.segGlass} aria-hidden="true" />
+          <span role="tab" aria-selected="true" className={s.segBtn}>
             Dashboard
           </span>
-          <span className={s.navSoon} aria-disabled="true" title="The trading desk is next">
+          <span role="tab" aria-selected="false" aria-disabled="true" className={s.segBtn} title="The trading desk is next">
             Desk<em>Soon</em>
           </span>
         </div>
@@ -136,31 +137,6 @@ export function Dashboard() {
             </Cell>
           </div>
 
-          {/* account strip */}
-          <div className={s.row1}>
-            <Cell i={0} className={s.strip}>
-              <div className={s.acct}>
-                <span className={s.label}>
-                  Paper-01 <i className={s.okDot} /> <span className={s.ok}>Connected</span>
-                </span>
-                <span className={s.mono}>ACCT ALT-P-0001 · CME GLOBEX</span>
-              </div>
-              <div className={s.acctSide}>
-                <div className={s.acctRight}>
-                  <span className={s.label}>
-                    <i className={`${s.statusDot} ${clock?.open ? s.statusOpen : ""}`} />
-                    {clock?.status ?? "\u00a0"}
-                  </span>
-                  <span className={s.mono}>{clock?.detail ?? "\u00a0"}</span>
-                </div>
-                <div className={s.acctRight}>
-                  <span className={s.label}>{dayLabel(LAST_DAY, { weekday: "short", month: "short", day: "2-digit" })}</span>
-                  <span className={s.mono}>Last session</span>
-                </div>
-              </div>
-            </Cell>
-          </div>
-
           {/* headline number + equity */}
           <div className={s.row1}>
             <Cell i={1} className={s.hero}>
@@ -171,15 +147,21 @@ export function Dashboard() {
                   </span>
                   <Money value={money(net)} className={`${s.big} ${net >= 0 ? s.bigPos : s.bigNeg}`} />
                 </div>
-                <div className={s.periods} role="tablist" aria-label="Period" style={{ "--pi": pi, "--pn": PERIODS.length } as CSSProperties}>
-                  <span className={s.periodPill} aria-hidden="true" />
-                  {PERIODS.map((p) => (
-                    <button key={p.id} type="button" role="tab" aria-selected={p.id === period} onClick={() => setPeriod(p.id)}>
-                      {p.label}
-                    </button>
-                  ))}
+                <div className={s.acctSide}>
+                  <div className={s.acctRight}>
+                    <span className={s.label}>
+                      <i className={`${s.statusDot} ${clock?.open ? s.statusOpen : ""}`} />
+                      {clock?.status ?? "\u00a0"}
+                    </span>
+                    <span className={s.mono}>{clock?.detail ?? "\u00a0"}</span>
+                  </div>
+                  <div className={s.acctRight}>
+                    <span className={s.label}>{dayLabel(LAST_DAY, { weekday: "short", month: "short", day: "2-digit" })}</span>
+                    <span className={s.mono}>Last session</span>
+                  </div>
                 </div>
               </div>
+              <div className={s.factsRow}>
               <dl className={s.facts}>
                 <div>
                   <dt>Realized</dt>
@@ -206,6 +188,15 @@ export function Dashboard() {
                   <dd>{Math.round(st.avgHold)}m</dd>
                 </div>
               </dl>
+                <div className={s.periods} role="tablist" aria-label="Period" style={{ "--pi": pi, "--pn": PERIODS.length } as CSSProperties}>
+                  <span className={s.periodPill} aria-hidden="true" />
+                  {PERIODS.map((p) => (
+                    <button key={p.id} type="button" role="tab" aria-selected={p.id === period} onClick={() => setPeriod(p.id)}>
+                      {p.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
               <EquityChart curve={curve} trades={trades} />
             </Cell>
           </div>
@@ -273,27 +264,30 @@ export function Dashboard() {
 
           {/* calendar + risk */}
           <div className={s.row2}>
-            <Cell i={7} label="Daily P&L" aside={day ? "Showing that day below" : "26 weeks · pick a day"}>
+            <Cell i={7} label="Daily P&L" aside={day ? "Day below" : "26 weeks"}>
               <Calendar period={period} selected={day} onSelect={setDay} />
             </Cell>
-            <Cell i={8} label="Risk today" aside={`Session ${k(todayNet)}`}>
+            <Cell i={8} label="R distribution" aside={meta.long}>
+              <Distribution key={period} trades={trades} />
+            </Cell>
+            <Cell i={9} label="Risk today" aside={`Session ${k(todayNet)}`}>
               <RiskGauge used={Math.max(0, -todayNet) + pos.risk} limit={2000} tradesToday={today.length + 1} maxTrades={6} />
             </Cell>
           </div>
 
           {/* markets + time of day */}
           <div className={s.row3}>
-            <Cell i={9} label="By market" aside={meta.long}>
+            <Cell i={10} label="By market" aside={meta.long}>
               <Markets trades={trades} />
             </Cell>
-            <Cell i={10} label="Time of day" aside="ET · 30 min">
+            <Cell i={11} label="Time of day" aside="ET · 30 min">
               <SessionDots trades={trades} />
             </Cell>
           </div>
 
           {/* journal */}
           <div className={s.row1}>
-            <Cell i={11} label="Journal" aside={day ? dayLabel(day, { weekday: "long", month: "long", day: "numeric" }) : `${trades.length} trades · ${meta.long}`}>
+            <Cell i={12} label="Journal" aside={day ? dayLabel(day, { weekday: "long", month: "long", day: "numeric" }) : `${trades.length} trades · ${meta.long}`}>
               <Journal key={day ?? period} trades={trades} day={day} onClearDay={() => setDay(null)} />
             </Cell>
           </div>

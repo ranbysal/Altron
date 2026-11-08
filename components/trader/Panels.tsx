@@ -245,3 +245,64 @@ export function Journal({ trades, day, onClearDay }: { trades: Trade[]; day: str
     </div>
   );
 }
+
+/** How trades land in R, a quarter R per bar, with the average marked. */
+export function Distribution({ trades }: { trades: Trade[] }) {
+  const STEP = 0.25;
+  const rs = trades.map((t) => t.r);
+  const [hover, setHover] = useState<number | null>(null);
+  if (!rs.length) return <p className={s.dotNote}>No trades in this period.</p>;
+  const lo = Math.floor(Math.min(-1.25, ...rs) / STEP);
+  const hi = Math.ceil(Math.max(1.25, ...rs) / STEP);
+  const bins = Array.from({ length: hi - lo }, (_, i) => {
+    const a = (lo + i) * STEP;
+    return { a, b: a + STEP, n: rs.filter((r) => r >= a && r < a + STEP).length };
+  });
+  const max = Math.max(1, ...bins.map((b) => b.n));
+  const span = (hi - lo) * STEP;
+  const xOf = (r: number) => ((r - lo * STEP) / span) * 100;
+  const mean = rs.reduce((a, b) => a + b, 0) / rs.length;
+  const sorted = rs.slice().sort((a, b) => a - b);
+  const median = sorted[Math.floor(sorted.length / 2)];
+  const ticks = [];
+  for (let r = Math.ceil(lo * STEP); r <= Math.floor(hi * STEP); r++) ticks.push(r);
+  const h = hover !== null ? bins[hover] : null;
+
+  return (
+    <div className={s.dist}>
+      <div className={s.distPlot} onPointerLeave={() => setHover(null)}>
+        {bins.map((b, i) => {
+          const mid = b.a + STEP / 2;
+          const tone = Math.abs(mid) < 0.2 ? s.dFlat : mid > 0 ? s.dPos : s.dNeg;
+          return (
+            <div key={b.a} className={`${s.distCol} ${hover === i ? s.distHot : ""}`} onPointerEnter={() => setHover(i)}>
+              <i className={tone} style={{ height: `${b.n ? Math.max(3, (b.n / max) * 100) : 0}%`, "--k": i } as CSSProperties} />
+            </div>
+          );
+        })}
+        <span className={s.distZero} style={{ left: `${xOf(0)}%` }} aria-hidden="true" />
+        <span className={s.distMean} style={{ left: `${xOf(mean)}%` }} aria-hidden="true">
+          <span>avg {signed(mean, 2, "R")}</span>
+        </span>
+      </div>
+      <div className={s.distAxis} aria-hidden="true">
+        {ticks.map((r) => (
+          <span key={r} style={{ left: `${xOf(r)}%` }}>
+            {r === 0 ? "0" : signed(r, 0, "R")}
+          </span>
+        ))}
+      </div>
+      <p className={s.dotNote}>
+        {h ? (
+          <>
+            {signed(h.a, 2, "R")} to {signed(h.b, 2, "R")} · {h.n} {h.n === 1 ? "trade" : "trades"} · {Math.round((h.n / rs.length) * 100)}%
+          </>
+        ) : (
+          <>
+            Median {signed(median, 2, "R")} · best {signed(sorted[sorted.length - 1], 1, "R")} · worst {signed(sorted[0], 1, "R")}
+          </>
+        )}
+      </p>
+    </div>
+  );
+}

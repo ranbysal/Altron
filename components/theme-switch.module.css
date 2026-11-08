@@ -1,75 +1,95 @@
+/* A small recessed track with a glass knob. The knob's rim catches a colour:
+   blue at night, magenta by day, lit from the side it slides towards. */
 .switch {
+  --rim: #6eb6ff;
   position: relative;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 44px;
-  min-width: 44px;
-  padding: 0 10px;
+  flex: none;
+  width: 48px;
+  height: 28px;
+  padding: 0;
   border: 0;
-  background: transparent;
-  color: var(--text);
-  font-family: var(--sans);
-  font-size: 20px;
-  font-weight: 400;
-  line-height: 1;
+  border-radius: 10px;
+  background: #050608;
+  box-shadow:
+    inset 0 1px 3px rgba(0, 0, 0, 0.75),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.06),
+    0 1px 0 rgba(255, 255, 255, 0.04);
+  color: #eef1f4;
   cursor: pointer;
-  isolation: isolate;
-  transition: color 0.35s cubic-bezier(0.2, 0.8, 0.2, 1);
+  -webkit-tap-highlight-color: transparent;
 }
-/* the disc that grows in behind on hover */
-.switch::before {
+:global([data-theme="light"]) .switch {
+  --rim: #fd50bc;
+  background: #e6e9ed;
+  box-shadow:
+    inset 0 1px 3px rgba(12, 18, 28, 0.16),
+    inset 0 0 0 1px rgba(12, 18, 28, 0.05),
+    0 1px 0 #ffffff;
+  color: #11151b;
+}
+.switch:focus-visible { outline: 2px solid color-mix(in srgb, var(--rim) 70%, transparent); outline-offset: 3px; }
+
+.knob {
+  position: absolute;
+  left: 2px;
+  top: 2px;
+  width: 26px;
+  height: 24px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(155deg, rgba(255, 255, 255, 0.2), rgba(255, 255, 255, 0.05) 55%, rgba(255, 255, 255, 0.1));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.28),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.1),
+    -2px 3px 10px -2px color-mix(in srgb, var(--rim) 75%, transparent),
+    0 4px 10px -4px rgba(0, 0, 0, 0.8);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+  transition:
+    transform 0.6s cubic-bezier(0.3, 1.35, 0.45, 1),
+    box-shadow 0.5s ease,
+    background 0.5s ease;
+}
+/* the lit edge */
+.knob::before {
   content: "";
   position: absolute;
-  left: 50%;
-  top: 50%;
-  width: 48px;
-  height: 48px;
-  margin: -24px 0 0 -24px;
-  border-radius: 50%;
-  background: var(--text);
-  transform: scale(0);
-  transition: transform 0.45s cubic-bezier(0.2, 0.8, 0.2, 1);
-  z-index: -1;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1.2px;
+  background: linear-gradient(225deg, transparent 42%, var(--rim) 100%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+  opacity: 0.95;
+  pointer-events: none;
 }
-.switch:hover,
-.switch:focus-visible {
-  color: var(--bg);
+.switch[data-on="light"] .knob {
+  transform: translateX(18px);
+  background: linear-gradient(155deg, #ffffff, #f1f2f5 60%, #fafbfc);
+  box-shadow:
+    inset 0 1px 0 #ffffff,
+    inset 0 0 0 1px rgba(12, 18, 28, 0.06),
+    2px -3px 10px -2px color-mix(in srgb, var(--rim) 60%, transparent),
+    0 3px 8px -3px rgba(12, 18, 28, 0.28);
 }
-.switch:hover::before,
-.switch:focus-visible::before {
-  transform: scale(1);
+.switch[data-on="light"] .knob::before { background: linear-gradient(45deg, transparent 42%, var(--rim) 100%); }
+.switch:hover .knob { filter: brightness(1.08); }
+.switch:active .knob { transform: scale(0.94); }
+.switch[data-on="light"]:active .knob { transform: translateX(18px) scale(0.94); }
+
+.icon { position: relative; width: 16.5px; height: 16.5px; }
+.icon i {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1.2px;
+  height: 1.2px;
+  background: currentColor;
+  will-change: transform;
 }
-.switch:focus-visible {
-  outline: none;
-}
-.window {
-  display: inline-block;
-  height: 1em;
-  overflow: hidden;
-}
-.strip {
-  display: flex;
-  flex-direction: column;
-  transition: transform 0.6s cubic-bezier(0.65, 0, 0.2, 1);
-}
-.strip > span {
-  display: block;
-  height: 1em;
-  line-height: 1;
-  text-align: center;
-}
-.strip[data-theme-active="light"] {
-  transform: translateY(-1em);
-}
-.dot {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  border: 1px solid currentColor;
-  background: transparent;
-  flex: none;
-}
+
 @media (prefers-reduced-motion: reduce) {
-  .strip, .switch::before { transition: none; }
+  .knob { transition: none; }
 }
