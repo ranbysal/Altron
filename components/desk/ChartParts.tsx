@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode, type Ref } from "react";
+import { createPortal } from "react-dom";
 import { fmt } from "@/lib/format";
 import { INSTRUMENTS, type Sym } from "@/lib/desk/instruments";
 import { setSettings, useDesk } from "@/lib/desk/store";
-import { TOOL_NAMES, setTool, toggleDraw, useDraw, type Tool } from "@/lib/desk/drawings";
+import { FIB_COMMON, FIB_DEFAULT, TOOL_NAMES, addFibLevel, removeFibLevel, resetFibLevels, setTool, toggleDraw, useDraw, type Drawing, type Tool } from "@/lib/desk/drawings";
 import s from "./desk.module.css";
 
 /* ------------------------------------------------------------------ */
@@ -126,6 +127,57 @@ const ICONS: Record<Tool | "magnet" | "keep" | "locked" | "hidden" | "trash", Re
   ),
 };
 
+/** The drawing tools toggle: a wrench, drawn in the desk's line weight. */
+export function ToolsIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M6.47 20.07 12.87 13.67A5.5 5.5 0 0 0 20.4 6L17.55 8.85 15.15 6.45 18 3.6A5.5 5.5 0 0 0 10.33 11.13L3.93 17.53A1.8 1.8 0 0 0 6.47 20.07Z" />
+    </svg>
+  );
+}
+
+/**
+ * Tooltips for the rail, drawn in a portal on top of everything: the rail scrolls when the
+ * chart is short, and anything inside it would be clipped or sit under the chart.
+ */
+function useRailTips() {
+  const [tip, setTip] = useState<null | { text: string; x: number; y: number }>(null);
+  const timer = useRef(0);
+  const warm = useRef(0);
+  const showing = useRef(false);
+  useEffect(() => () => window.clearTimeout(timer.current), []);
+  const over = (e: React.PointerEvent) => {
+    const el = (e.target as HTMLElement).closest<HTMLElement>("[data-tip]");
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const next = { text: el.dataset.tip ?? "", x: r.right + 8, y: r.top + r.height / 2 };
+    window.clearTimeout(timer.current);
+    // the first tip waits a beat; once one is showing, the next follows the pointer at once
+    const show = () => {
+      showing.current = true;
+      setTip(next);
+    };
+    if (showing.current || performance.now() - warm.current < 600) show();
+    else timer.current = window.setTimeout(show, 380);
+  };
+  const out = () => {
+    window.clearTimeout(timer.current);
+    if (showing.current) warm.current = performance.now();
+    showing.current = false;
+    setTip(null);
+  };
+  const node =
+    tip && typeof document !== "undefined"
+      ? createPortal(
+          <div className={s.tipFloat} role="tooltip" style={{ transform: `translate(${Math.round(tip.x)}px, ${Math.round(tip.y)}px) translateY(-50%)` }}>
+            {tip.text}
+          </div>,
+          document.body,
+        )
+      : null;
+  return { over, out, node };
+}
+
 const GROUPS: Tool[][] = [["cursor"], ["trend", "ray"], ["hline", "vline"], ["rect", "fib"], ["brush", "text", "arrow"], ["measure", "zoom"]];
 
 /** The drawing tools, down the left side of the chart. */
@@ -141,8 +193,10 @@ export function ToolRail({ onClear, count }: { onClear: () => void; count: numbe
     { key: "locked", on: locked, name: "Lock all drawings" },
     { key: "hidden", on: hidden, name: hidden ? "Show drawings" : "Hide all drawings" },
   ];
+  const tips = useRailTips();
   return (
-    <div className={s.rail} role="toolbar" aria-label="Drawing tools" aria-orientation="vertical">
+    <div className={s.rail} role="toolbar" aria-label="Drawing tools" aria-orientation="vertical" onPointerOver={tips.over} onPointerOut={tips.out} onPointerDown={tips.out}>
+      {tips.node}
       {GROUPS.map((g, k) => (
         <div key={k} className={s.railGroup}>
           {g.map((t) => (
@@ -164,6 +218,140 @@ export function ToolRail({ onClear, count }: { onClear: () => void; count: numbe
           {ICONS.trash}
         </button>
       </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* the pop-up over a selected drawing                                  */
+/* ------------------------------------------------------------------ */
+
+const EyeOpen = () => (
+  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M1.5 8s2.4-4.3 6.5-4.3S14.5 8 14.5 8s-2.4 4.3-6.5 4.3S1.5 8 1.5 8Z" />
+    <circle cx="8" cy="8" r="1.9" />
+  </svg>
+);
+const EyeShut = () => (
+  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M1.8 6.6C3.4 8.9 5.5 10 8 10s4.6-1.1 6.2-3.4" />
+    <path d="M4 9.1 2.9 10.7M8 10.2v1.9M12 9.1l1.1 1.6" />
+  </svg>
+);
+
+/**
+ * A small bar that rides above the selected drawing: hide or show it, fib levels for a
+ * fib, and delete. The chart places it each frame through the ref.
+ */
+export function DrawPop({ ref, kind, hidden, onHide, onDelete }: { ref: Ref<HTMLDivElement>; kind: Drawing["kind"]; hidden: boolean; onHide: () => void; onDelete: () => void }) {
+  const [levels, setLevels] = useState<null | { up: boolean; align: "l" | "c" | "r" }>(null);
+  const stop = (e: React.SyntheticEvent) => e.stopPropagation();
+  useEffect(() => {
+    if (!levels) return;
+    const key = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopImmediatePropagation();
+        setLevels(null);
+      }
+    };
+    window.addEventListener("keydown", key, true);
+    return () => window.removeEventListener("keydown", key, true);
+  }, [levels]);
+  return (
+    <div ref={ref} className={s.drawPop} role="toolbar" aria-label={`${TOOL_NAMES[kind as Tool] ?? "Drawing"} options`} onPointerDown={stop} onDoubleClick={stop} onContextMenu={stop} onWheel={stop}>
+      <button type="button" aria-pressed={hidden} aria-label={hidden ? "Show drawing" : "Hide drawing"} title={hidden ? "Hidden: tap to show" : "Hide"} onClick={onHide}>
+        {hidden ? <EyeShut /> : <EyeOpen />}
+      </button>
+      {kind === "fib" && (
+        <button
+          type="button"
+          aria-expanded={!!levels}
+          aria-label="Fib levels"
+          title="Fib levels"
+          onClick={(e) => {
+            if (levels) return setLevels(null);
+            const pop = (e.currentTarget as HTMLElement).parentElement!;
+            const r = pop.getBoundingClientRect();
+            const host = (pop.offsetParent as HTMLElement | null)?.getBoundingClientRect() ?? r;
+            setLevels({ up: host.bottom - r.bottom < 236 && r.top - host.top > host.bottom - r.bottom, align: r.left - host.left < 110 ? "l" : host.right - r.right < 110 ? "r" : "c" });
+          }}
+        >
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" aria-hidden="true">
+            <path d="M2 3.5h12M2 6.8h12M2 12.5h12" />
+            <path d="M5 9.6h9" opacity=".45" />
+          </svg>
+        </button>
+      )}
+      <i className={s.popSep} aria-hidden="true" />
+      <button type="button" className={s.popDel} aria-label="Delete drawing" title="Delete" onClick={onDelete}>
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" aria-hidden="true">
+          <path d="M4 4l8 8M12 4l-8 8" />
+        </svg>
+      </button>
+      {levels && (
+        <div className={s.popLevels} data-up={levels.up ? "1" : ""} data-align={levels.align}>
+          <FibLevels />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** The fib levels every fib uses: remove one, add a common one, or type your own. */
+export function FibLevels() {
+  const fib = useDraw((st) => st.fib);
+  const [val, setVal] = useState("");
+  const extra = FIB_COMMON.filter((r) => !fib.includes(r));
+  const isDefault = fib.length === FIB_DEFAULT.length && fib.every((r, i) => r === FIB_DEFAULT[i]);
+  const add = () => {
+    const raw = val.trim();
+    let n = parseFloat(raw.replace(",", "."));
+    if (!Number.isFinite(n)) return;
+    if (raw.endsWith("%") || Math.abs(n) > 5) n /= 100; // 61.8 or 61.8% means 0.618
+    addFibLevel(n);
+    setVal("");
+  };
+  return (
+    <div className={s.fibs} onPointerDown={(e) => e.stopPropagation()}>
+      <div className={s.fibHead}>
+        <span className={s.label}>Fib levels</span>
+        {!isDefault && (
+          <button type="button" onClick={resetFibLevels}>
+            Reset
+          </button>
+        )}
+      </div>
+      <div className={s.fibChips}>
+        {fib.map((r) => (
+          <span key={r} className={s.fibChip}>
+            {r}
+            <button type="button" aria-label={`Remove level ${r}`} onClick={() => removeFibLevel(r)} disabled={fib.length <= 1}>
+              ×
+            </button>
+          </span>
+        ))}
+      </div>
+      {extra.length > 0 && (
+        <div className={s.fibAdd}>
+          {extra.map((r) => (
+            <button key={r} type="button" onClick={() => addFibLevel(r)}>
+              + {r}
+            </button>
+          ))}
+        </div>
+      )}
+      <form
+        className={s.fibForm}
+        onSubmit={(e) => {
+          e.preventDefault();
+          add();
+        }}
+      >
+        <input value={val} onChange={(e) => setVal(e.target.value)} inputMode="decimal" placeholder="Another level, e.g. 0.65" aria-label="Add a fib level" />
+        <button type="submit" disabled={!val.trim()}>
+          Add
+        </button>
+      </form>
     </div>
   );
 }
@@ -344,6 +532,9 @@ export function ChartSettings({ onClose }: { onClose: () => void }) {
             ))}
           </div>
         ))}
+      </div>
+      <div className={s.csFib}>
+        <FibLevels />
       </div>
     </div>
   );

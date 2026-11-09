@@ -52,7 +52,8 @@
 /* the chart over the blotter; the blotter can rise over the whole chart or drop out of sight */
 .center { grid-area: center; position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .aChart { flex: 1 1 0; min-height: 0; }
-.aBlotter { flex: none; height: min(var(--bl), 100%); min-height: 0; overflow: hidden; transition: height 0.45s var(--ease); }
+/* at its tallest the blotter stops under the chart's toolbar and range bar (46 + 30px) */
+.aBlotter { flex: none; height: min(var(--bl), calc(100% - var(--chart-chrome, 76px))); min-height: 0; overflow: hidden; transition: height 0.45s var(--ease); }
 .desk[data-blot="shut"] .aBlotter { visibility: hidden; transition: height 0.45s var(--ease), visibility 0s 0.45s; }
 .resizing, .resizing * { transition: none !important; user-select: none; }
 .resizing .aChart { pointer-events: none; }
@@ -116,6 +117,29 @@
 @keyframes float-up {
   from { opacity: 0; transform: translate(-50%, 10px); }
 }
+
+/* ---------- full screen chart ----------
+ * The side panels slide out while the chart grows into their space, redrawn at its real
+ * size every frame. Quick on the way in, the panels' content fades as it goes. */
+.sideIn { display: contents; }
+.desk { --fx: 0.38s; --fx-ease: cubic-bezier(0.32, 0.72, 0, 1); }
+.desk[data-fx] { transition: grid-template-columns var(--fx) var(--fx-ease), height var(--fx) var(--fx-ease); }
+.desk[data-fx] .aBlotter { transition: height var(--fx) var(--fx-ease), opacity 0.24s ease; }
+.aTicket, .aPos, .aMarkets { transition: opacity 0.28s ease 0.06s; }
+.desk[data-full="on"] {
+  grid-template-columns: 0px minmax(0, 1fr) 0px;
+  height: calc(100vh - 14px);
+}
+.desk[data-full="on"] :is(.aTicket, .aPos, .aMarkets) { opacity: 0; transition: opacity 0.16s ease; }
+.desk[data-full="on"] .aBlotter { height: 0; opacity: 0; transition: height var(--fx) var(--fx-ease), opacity 0.16s ease; }
+/* the content keeps its width while its column closes, so it slides away instead of squeezing */
+.desk:is([data-full="on"], [data-fx]) :is(.aTicket, .aPos) { overflow: hidden; }
+.desk:is([data-full="on"], [data-fx]) :is(.aTicket, .aPos) > div { min-width: var(--rw); }
+.desk[data-full="on"] :is(.blotGrip, .colGrip, .blotOpen) { opacity: 0; pointer-events: none; }
+.barFull g { transform-origin: 8px 8px; transition: opacity 0.22s ease, transform 0.38s var(--ease); }
+.barFull[aria-pressed="true"] .fullOut { opacity: 0; transform: scale(0.6); }
+.barFull[aria-pressed="false"] .fullIn { opacity: 0; transform: scale(1.4); }
+.barFull[aria-pressed="true"] { color: var(--text-strong); }
 .desk .body { padding: 16px 16px 16px; gap: 14px; min-height: 0; overflow: hidden; }
 .desk .bodyFlush { padding: 0; gap: 0; min-height: 0; overflow: hidden; }
 .aTicket .body { overflow-y: auto; scrollbar-width: none; }
@@ -369,25 +393,25 @@
 .barBtn em { font-style: normal; min-width: 16px; height: 16px; padding: 0 4px; display: inline-grid; place-items: center; border-radius: 8px; background: color-mix(in srgb, var(--text) 9%, transparent); color: var(--text); font-size: 9.5px; }
 
 /* the toolbar gives up words first, then the day change, then the timeframe strip */
-@container chart (max-width: 1060px) {
+@container chart (max-width: 1096px) {
   .barBtn { font-size: 0; gap: 0; padding: 0 9px; }
   .barBtn em { margin-left: 5px; font-size: 9.5px; }
 }
-@container chart (max-width: 960px) {
+@container chart (max-width: 996px) {
   .seg { --cw: 31px; }
   .quoteChg span { display: none; }
 }
-@container chart (max-width: 860px) {
+@container chart (max-width: 896px) {
   .quoteChg { display: none; }
 }
-@container chart (max-width: 790px) {
+@container chart (max-width: 826px) {
   .seg { display: none; }
   .tfPick { display: inline-flex; }
 }
 @container chart (max-width: 760px) {
   .legName { display: none; }
 }
-@container chart (max-width: 600px) {
+@container chart (max-width: 636px) {
   .bar { gap: 8px; }
   .bar > .barSep, .barKeys, .barRight > .barSep { display: none; }
   .syms { grid-template-columns: repeat(4, 38px); }
@@ -402,7 +426,7 @@
 .drawing, .drawing:active { cursor: crosshair; }
 /* while a drawing tool is out, the chart is all canvas: order tags don't catch the pointer */
 .drawing .line, .drawing .lineTag, .drawing .lineRule::after { pointer-events: none !important; }
-.canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.canvas { position: absolute; left: 0; top: 0; display: block; }
 .rail {
   --rail-bg: var(--page);
   flex: none;
@@ -414,7 +438,7 @@
   border-right: 1px solid var(--tl);
   overflow-y: auto;
   scrollbar-width: none;
-  animation: rail-in 0.35s var(--ease) both;
+  animation: rail-in 0.35s var(--ease) backwards;
 }
 @keyframes rail-in {
   from { opacity: 0; transform: translateX(-6px); }
@@ -438,36 +462,40 @@
 .railBtn[aria-pressed="true"] { background: color-mix(in srgb, var(--text) 9%, transparent); color: var(--text-strong); }
 .railBtn:disabled { opacity: 0.3; cursor: default; background: none; }
 .railDanger:not(:disabled):hover { color: var(--ember-soft); background: var(--ember-wash); }
-.railBtn::after {
-  content: attr(data-tip);
+/* rail tooltips live in a portal on <body>, above the chart and anything that clips */
+.tipFloat {
   position: fixed;
-  z-index: 80;
-  transform: translate(26px, 0);
+  left: 0;
+  top: 0;
+  z-index: 1000;
   padding: 5px 9px;
   border-radius: 7px;
   background: var(--text);
   color: var(--bg);
-  font-family: var(--mono);
+  font-family: var(--font-geist-mono, ui-monospace, monospace);
   font-size: 10.5px;
+  line-height: 1.3;
   white-space: nowrap;
   pointer-events: none;
-  opacity: 0;
-  transition: opacity 0.12s;
+  animation: tip-in 0.14s ease-out backwards;
 }
-.railBtn:hover::after { opacity: 1; transition-delay: 0.35s; }
+@keyframes tip-in {
+  from { opacity: 0; margin-left: -3px; }
+}
 .textEdit {
   position: absolute;
   left: 0;
   top: 0;
   z-index: 5;
-  width: 220px;
+  width: 260px;
   height: 26px;
-  padding: 0 8px;
-  border: 1px solid var(--dim);
-  border-radius: 7px;
-  background: var(--page);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   font: 500 13px var(--font-geist-sans, system-ui);
   color: var(--text-strong);
+  caret-color: var(--text-strong);
   outline: none;
 }
 .legend {
@@ -476,7 +504,7 @@
   top: 8px;
   z-index: 1;
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 12px;
   font-size: 10.5px;
   color: var(--muted);
@@ -484,6 +512,8 @@
   white-space: nowrap;
   pointer-events: none;
 }
+/* the text sits on one baseline; the tools toggle centres on that row */
+.legRow { display: flex; align-items: baseline; gap: 12px; }
 .legC[data-tone="pos"] { color: var(--pos); }
 .legC[data-tone="neg"] { color: var(--neg); }
 .railToggle {
@@ -507,8 +537,98 @@
 .legTime { min-width: 58px; color: var(--dim); }
 .legend i { font-style: normal; margin-right: 4px; color: var(--dim); }
 .legend b { font-weight: 400; }
+.textEdit::placeholder { color: var(--dim); }
+/* typing on the chart looks like the text it makes: no ring, no box */
+.textEdit:focus-visible { border-color: transparent !important; box-shadow: none; }
 
-.line { --lc: var(--muted); position: absolute; left: 0; top: 0; height: 0; z-index: 2; pointer-events: none; animation: line-in 0.6s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+/* ---------- as the plot gets short, the extras fade before they can crowd each other ---------- */
+.chartBody { --fit: 1; --fit-c: 1; }
+.canvas { opacity: var(--fit-c, 1); }
+.legend, .rail, .textEdit, .plot .line:not(.line_ghost) { opacity: var(--fit, 1); }
+.chartBody[data-fit="0"] :is(.legend, .rail, .line, .drawPop, .textEdit) { visibility: hidden; }
+
+/* ---------- the pop-up over a selected drawing ---------- */
+.drawPop {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--line-2);
+  border-radius: 11px;
+  background: var(--page);
+  box-shadow: 0 12px 28px -16px var(--shadow), 0 1px 2px color-mix(in srgb, var(--text) 8%, transparent);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.16s ease-out;
+}
+.drawPop[data-on="1"] { opacity: var(--fit, 1); pointer-events: auto; }
+.drawPop > button {
+  width: 30px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.drawPop > button:hover { background: var(--hover); color: var(--text); }
+.drawPop > button[aria-pressed="true"], .drawPop > button[aria-expanded="true"] { background: color-mix(in srgb, var(--text) 9%, transparent); color: var(--text-strong); }
+.drawPop > .popDel:hover { color: var(--ember-soft); background: var(--ember-wash); }
+.popSep { width: 1px; height: 16px; margin: 0 2px; background: var(--tl); }
+.popLevels { position: absolute; top: calc(100% + 8px); left: 50%; transform: translateX(-50%); }
+.popLevels[data-up="1"] { top: auto; bottom: calc(100% + 8px); }
+.popLevels[data-align="l"] { left: 0; transform: none; }
+.popLevels[data-align="r"] { left: auto; right: 0; transform: none; }
+.popLevels .fibs {
+  width: 252px;
+  padding: 12px;
+  border: 1px solid var(--line-2);
+  border-radius: 12px;
+  background: var(--page);
+  box-shadow: 0 18px 40px -22px var(--shadow);
+  animation: rise 0.2s var(--ease) backwards;
+}
+
+/* ---------- fib levels ---------- */
+.fibs { display: flex; flex-direction: column; gap: 10px; font-family: var(--mono); }
+.fibHead { display: flex; align-items: center; justify-content: space-between; }
+.fibHead button { border: 0; background: none; padding: 0; font: inherit; font-size: 10px; letter-spacing: 0.06em; color: var(--muted); cursor: pointer; }
+.fibHead button:hover { color: var(--text); }
+.fibChips { display: flex; flex-wrap: wrap; gap: 5px; }
+.fibChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 4px 0 9px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+  font-size: 11px;
+  color: var(--text-strong);
+  font-variant-numeric: tabular-nums;
+}
+.fibChip button { width: 18px; height: 18px; display: grid; place-items: center; border: 0; border-radius: 5px; background: none; color: var(--dim); font-size: 13px; line-height: 1; cursor: pointer; }
+.fibChip button:hover:not(:disabled) { background: var(--hover); color: var(--text); }
+.fibChip button:disabled { opacity: 0.3; cursor: default; }
+.fibAdd { display: flex; flex-wrap: wrap; gap: 5px; }
+.fibAdd button { height: 22px; padding: 0 8px; border: 1px dashed var(--line-2); border-radius: 7px; background: none; font: inherit; font-size: 10.5px; color: var(--muted); cursor: pointer; transition: color 0.15s, border-color 0.15s; }
+.fibAdd button:hover { color: var(--text); border-color: var(--dim); border-style: solid; }
+.fibForm { display: flex; gap: 6px; }
+.fibForm input { flex: 1; min-width: 0; height: 28px; padding: 0 9px; border: 1px solid var(--line-2); border-radius: 8px; background: none; font: inherit; font-size: 11px; color: var(--text); }
+.fibForm input::placeholder { color: var(--dim); }
+.fibForm input:focus, .fibForm input:focus-visible { outline: none; border-color: var(--dim) !important; box-shadow: none; }
+.fibForm button { height: 28px; padding: 0 11px; border: 0; border-radius: 8px; background: var(--text); color: var(--bg); font: inherit; font-size: 10.5px; cursor: pointer; }
+.fibForm button:disabled { opacity: 0.35; cursor: default; }
+.csFib { padding-top: 12px; border-top: 1px solid var(--tl); }
+
+.line { --lc: var(--muted); position: absolute; left: 0; top: 0; height: 0; z-index: 2; pointer-events: none; animation: line-in 0.6s cubic-bezier(0.2, 0.8, 0.2, 1) backwards; }
 @keyframes line-in {
   from { opacity: 0; }
 }
@@ -1270,6 +1390,7 @@
   .barBtn { padding: 0 8px; }
 }
 @media (max-width: 1020px) {
+  .barFull { display: none; }
   .desk {
     height: auto;
     grid-template-columns: minmax(0, 1fr) !important;

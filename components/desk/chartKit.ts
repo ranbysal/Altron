@@ -1,6 +1,6 @@
 import { fmt } from "@/lib/format";
 import { nyOffset, nyParts, sessionDay, type Bar } from "@/lib/desk/market";
-import { FIB, type Drawing, type Pt } from "@/lib/desk/drawings";
+import { FIB_DEFAULT, type Drawing, type Pt } from "@/lib/desk/drawings";
 import { BAYER4 } from "@/lib/noise";
 
 /* ------------------------------------------------------------------ */
@@ -200,8 +200,17 @@ function extend(f: Frame, a: { x: number; y: number }, b: { x: number; y: number
   return { x: a.x + dx * tx, y: a.y + dy * tx };
 }
 
-export function paintDrawing(ctx: CanvasRenderingContext2D, f: Frame, d: Drawing, ink: Ink, hot = false) {
+/** The band a fib shades: the levels either side of the midpoint, inside the swing. */
+function fibBand(levels: number[]): [number, number] | null {
+  const lo = levels.filter((r) => r > 0 && r < 0.5);
+  const hi = levels.filter((r) => r > 0.5 && r < 1);
+  if (!lo.length || !hi.length) return null;
+  return [Math.max(...lo), Math.min(...hi)];
+}
+
+export function paintDrawing(ctx: CanvasRenderingContext2D, f: Frame, d: Drawing, ink: Ink, hot = false, fib: number[] = FIB_DEFAULT) {
   ctx.save();
+  ctx.textAlign = "left"; // whatever the caller last used, labels start at their anchor
   ctx.lineWidth = hot ? 2 : 1.4;
   ctx.strokeStyle = ink.line;
   ctx.fillStyle = ink.line;
@@ -252,26 +261,35 @@ export function paintDrawing(ctx: CanvasRenderingContext2D, f: Frame, d: Drawing
       const x0 = Math.min(a.x, b.x);
       const x1 = Math.max(a.x, b.x);
       const lv = (r: number) => d.b.p + (d.a.p - d.b.p) * r;
-      // the golden pocket, softly filled
-      const y382 = yOf(f, lv(0.382));
-      const y618 = yOf(f, lv(0.618));
-      ctx.fillStyle = ink.fill;
-      ctx.fillRect(x0, Math.min(y382, y618), x1 - x0, Math.abs(y618 - y382));
+      const base = ctx.globalAlpha;
+      // the zone between the middle levels, softly filled
+      const band = fibBand(fib);
+      if (band) {
+        const ya = yOf(f, lv(band[0]));
+        const yb = yOf(f, lv(band[1]));
+        ctx.fillStyle = ink.fill;
+        ctx.fillRect(x0, Math.min(ya, yb), x1 - x0, Math.abs(yb - ya));
+      }
       ctx.font = `10px ${ink.mono}`;
       ctx.textBaseline = "bottom";
-      for (const r of FIB) {
-        const y = Math.round(yOf(f, lv(r))) + 0.5;
-        ctx.globalAlpha = r === 0 || r === 1 ? 1 : 0.65;
+      // labels only where there's room for them, so a squeezed fib never piles its text up
+      let lastLabel = -Infinity;
+      const rows = fib.map((r) => ({ r, y: Math.round(yOf(f, lv(r))) + 0.5 })).sort((p, q) => p.y - q.y);
+      for (const { r, y } of rows) {
+        ctx.globalAlpha = base * (r === 0 || r === 1 ? 1 : 0.65);
         ctx.beginPath();
         ctx.moveTo(x0, y);
         ctx.lineTo(x1, y);
         ctx.stroke();
-        ctx.globalAlpha = 1;
-        ctx.fillStyle = ink.dim;
-        ctx.fillText(`${r} (${fmt(lv(r))})`, x0 + 4, y - 2);
+        ctx.globalAlpha = base;
+        if (y - lastLabel >= 13 && x1 - x0 > 60) {
+          ctx.fillStyle = ink.dim;
+          ctx.fillText(`${r} (${fmt(lv(r))})`, x0 + 4, y - 2);
+          lastLabel = y;
+        }
       }
       ctx.setLineDash([3, 4]);
-      ctx.globalAlpha = 0.5;
+      ctx.globalAlpha = base * 0.5;
       ctx.beginPath();
       ctx.moveTo(a.x, a.y);
       ctx.lineTo(b.x, b.y);
@@ -291,17 +309,20 @@ export function paintDrawing(ctx: CanvasRenderingContext2D, f: Frame, d: Drawing
       break;
     }
     case "text": {
+      // plain text, no box: a thin halo in the page colour keeps it readable over candles
       const p = pt(f, d.a);
       ctx.font = `500 13px ${ink.sans}`;
       ctx.textBaseline = "middle";
-      const w = ctx.measureText(d.text).width;
-      ctx.fillStyle = ink.bg;
-      ctx.globalAlpha = 0.86;
-      ctx.fillRect(p.x - 4, p.y - 11, w + 8, 22);
-      ctx.globalAlpha = 1;
-      if (hot) ctx.strokeRect(p.x - 4.5, p.y - 11.5, w + 9, 23);
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = ink.bg;
+      ctx.strokeText(d.text, p.x, p.y + 0.5);
       ctx.fillStyle = ink.text;
       ctx.fillText(d.text, p.x, p.y + 0.5);
+      if (hot) {
+        const w = ctx.measureText(d.text).width;
+        ctx.fillStyle = ink.dim;
+        ctx.fillRect(p.x, Math.round(p.y + 9), w, 1);
+      }
       break;
     }
     case "arrow": {
@@ -345,7 +366,7 @@ function segDist(px: number, py: number, ax: number, ay: number, bx: number, by:
 }
 
 /** Is (x, y) on this drawing? Generous enough to grab a one-pixel line. */
-export function hits(ctx: CanvasRenderingContext2D, f: Frame, d: Drawing, x: number, y: number, sans: string): boolean {
+export function hits(ctx: CanvasRenderingContext2D, f: Frame, d: Drawing, x: number, y: number, sans: string, fib: number[] = FIB_DEFAULT): boolean {
   const near = 6;
   switch (d.kind) {
     case "trend":
@@ -368,7 +389,7 @@ export function hits(ctx: CanvasRenderingContext2D, f: Frame, d: Drawing, x: num
       const a = pt(f, d.a);
       const b = pt(f, d.b);
       if (x < Math.min(a.x, b.x) - near || x > Math.max(a.x, b.x) + near) return false;
-      return FIB.some((r) => Math.abs(y - yOf(f, d.b.p + (d.a.p - d.b.p) * r)) < near);
+      return fib.some((r) => Math.abs(y - yOf(f, d.b.p + (d.a.p - d.b.p) * r)) < near);
     }
     case "brush":
       for (let i = 1; i < d.pts.length; i++) {
@@ -386,6 +407,48 @@ export function hits(ctx: CanvasRenderingContext2D, f: Frame, d: Drawing, x: num
     case "arrow": {
       const p = pt(f, d.a);
       return Math.abs(x - p.x) < 9 && (d.up ? y >= p.y - 3 && y <= p.y + 19 : y <= p.y + 3 && y >= p.y - 19);
+    }
+  }
+}
+
+/** The on-screen box a drawing covers, for placing its pop-up. */
+export function boxOf(ctx: CanvasRenderingContext2D, f: Frame, d: Drawing, sans: string, fib: number[] = FIB_DEFAULT): { x0: number; y0: number; x1: number; y1: number } {
+  const span = (ps: { x: number; y: number }[]) => ({
+    x0: Math.min(...ps.map((q) => q.x)),
+    y0: Math.min(...ps.map((q) => q.y)),
+    x1: Math.max(...ps.map((q) => q.x)),
+    y1: Math.max(...ps.map((q) => q.y)),
+  });
+  switch (d.kind) {
+    case "trend":
+    case "ray":
+    case "rect":
+      return span([pt(f, d.a), pt(f, d.b)]);
+    case "fib": {
+      const a = pt(f, d.a);
+      const b = pt(f, d.b);
+      const ys = fib.map((r) => yOf(f, d.b.p + (d.a.p - d.b.p) * r));
+      return { x0: Math.min(a.x, b.x), x1: Math.max(a.x, b.x), y0: Math.min(...ys, a.y, b.y), y1: Math.max(...ys, a.y, b.y) };
+    }
+    case "hline": {
+      const y = yOf(f, d.a.p);
+      return { x0: 0, x1: f.plotW, y0: y, y1: y };
+    }
+    case "vline": {
+      const x = xOfTime(f, d.a.t);
+      return { x0: x, x1: x, y0: 0, y1: f.plotH };
+    }
+    case "brush":
+      return span(d.pts.map((q) => pt(f, q)));
+    case "text": {
+      const p = pt(f, d.a);
+      ctx.font = `500 13px ${sans}`;
+      const w = ctx.measureText(d.text).width;
+      return { x0: p.x, x1: p.x + w, y0: p.y - 9, y1: p.y + 9 };
+    }
+    case "arrow": {
+      const p = pt(f, d.a);
+      return d.up ? { x0: p.x - 7, x1: p.x + 7, y0: p.y, y1: p.y + 17 } : { x0: p.x - 7, x1: p.x + 7, y0: p.y - 17, y1: p.y };
     }
   }
 }

@@ -9,12 +9,16 @@ import type { Under } from "./instruments";
 
 export type Pt = { t: number; p: number };
 
-export type Drawing =
+export type Drawing = (
   | { id: string; kind: "trend" | "ray" | "rect" | "fib"; a: Pt; b: Pt }
   | { id: string; kind: "hline" | "vline"; a: Pt }
   | { id: string; kind: "brush"; pts: Pt[] }
   | { id: string; kind: "text"; a: Pt; text: string }
-  | { id: string; kind: "arrow"; a: Pt; up: boolean };
+  | { id: string; kind: "arrow"; a: Pt; up: boolean }
+) & {
+  /** hidden from the chart; shows faintly while the drawing tools are open, so it can be found again */
+  hidden?: boolean;
+};
 
 export type Tool = "cursor" | "trend" | "ray" | "hline" | "vline" | "rect" | "fib" | "brush" | "text" | "arrow" | "measure" | "zoom";
 
@@ -33,7 +37,10 @@ export const TOOL_NAMES: Record<Tool, string> = {
   zoom: "Zoom in",
 };
 
-export const FIB = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
+/** The levels Yazan uses; more can be added from a fib's pop-up or chart settings. */
+export const FIB_DEFAULT = [0, 0.382, 0.786, 1];
+/** Offered as one-tap additions. */
+export const FIB_COMMON = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1, 1.272, 1.618];
 
 type DrawState = {
   rail: boolean;
@@ -44,6 +51,7 @@ type DrawState = {
   hidden: boolean;
   byUnder: Record<Under, Drawing[]>;
   selected: string | null;
+  fib: number[];
 };
 
 const KEY = "altron-drawings-v1";
@@ -53,7 +61,16 @@ function load(): Partial<DrawState> {
   try {
     const raw = JSON.parse(localStorage.getItem(KEY) ?? "null");
     if (!raw || typeof raw !== "object") return {};
-    return { rail: !!raw.rail, magnet: !!raw.magnet, keep: !!raw.keep, locked: !!raw.locked, hidden: !!raw.hidden, byUnder: { NQ: raw.byUnder?.NQ ?? [], ES: raw.byUnder?.ES ?? [] } };
+    const fib = Array.isArray(raw.fib) ? raw.fib.filter((x: unknown) => typeof x === "number" && Number.isFinite(x)) : null;
+    return {
+      rail: !!raw.rail,
+      magnet: !!raw.magnet,
+      keep: !!raw.keep,
+      locked: !!raw.locked,
+      hidden: !!raw.hidden,
+      byUnder: { NQ: raw.byUnder?.NQ ?? [], ES: raw.byUnder?.ES ?? [] },
+      fib: fib && fib.length ? fib : FIB_DEFAULT,
+    };
   } catch {
     return {};
   }
@@ -68,6 +85,7 @@ export const useDraw = create<DrawState>(() => ({
   hidden: false,
   byUnder: { NQ: [], ES: [] },
   selected: null,
+  fib: FIB_DEFAULT,
 }));
 
 let loaded = false;
@@ -78,12 +96,12 @@ export function startDrawings() {
   loaded = true;
   useDraw.setState(load());
   useDraw.subscribe((s, prev) => {
-    if (s.byUnder === prev.byUnder && s.rail === prev.rail && s.magnet === prev.magnet && s.keep === prev.keep && s.locked === prev.locked && s.hidden === prev.hidden) return;
+    if (s.byUnder === prev.byUnder && s.rail === prev.rail && s.magnet === prev.magnet && s.keep === prev.keep && s.locked === prev.locked && s.hidden === prev.hidden && s.fib === prev.fib) return;
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
       try {
-        const { rail, magnet, keep, locked, hidden, byUnder } = useDraw.getState();
-        localStorage.setItem(KEY, JSON.stringify({ rail, magnet, keep, locked, hidden, byUnder }));
+        const { rail, magnet, keep, locked, hidden, byUnder, fib } = useDraw.getState();
+        localStorage.setItem(KEY, JSON.stringify({ rail, magnet, keep, locked, hidden, byUnder, fib }));
       } catch {
         /* storage full or blocked */
       }
@@ -124,4 +142,24 @@ export function clearDrawings(u: Under): number {
 }
 export function selectDrawing(id: string | null) {
   set({ selected: id });
+}
+
+/** Hides or shows one drawing. */
+export function toggleHidden(u: Under, id: string) {
+  const by = get().byUnder;
+  set({ byUnder: { ...by, [u]: by[u].map((x) => (x.id === id ? { ...x, hidden: !x.hidden } : x)) } });
+}
+
+/* ---------- fib levels, shared by every fib ---------- */
+const tidy = (levels: number[]) => [...new Set(levels.map((x) => Math.round(x * 10000) / 10000))].sort((a, b) => a - b);
+export function addFibLevel(r: number) {
+  if (!Number.isFinite(r) || r < -5 || r > 10) return;
+  set({ fib: tidy([...get().fib, r]) });
+}
+export function removeFibLevel(r: number) {
+  const next = get().fib.filter((x) => x !== r);
+  if (next.length) set({ fib: next });
+}
+export function resetFibLevels() {
+  set({ fib: FIB_DEFAULT });
 }

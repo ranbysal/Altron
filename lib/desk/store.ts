@@ -91,6 +91,8 @@ export type DeskState = {
   shortcuts: boolean;
   /** the notes pop-up; always starts closed */
   notesOpen: boolean;
+  /** the chart fills the window; the order column and blotter step aside */
+  full: boolean;
   alerts: Alert[];
   /** a deal button is hovered: the chart previews that side's bracket */
   preview: 0 | 1 | -1;
@@ -137,6 +139,7 @@ export const useDesk = create<DeskState>(() => ({
   pick: null,
   shortcuts: false,
   notesOpen: false,
+  full: false,
   alerts: [],
   preview: 0,
   tick: 0,
@@ -598,6 +601,9 @@ export function setPreview(side: 0 | 1 | -1) {
   if (get().preview !== side) set({ preview: side });
 }
 
+export function toggleFull(on?: boolean) {
+  set({ full: on ?? !get().full });
+}
 export function toggleNotes(open?: boolean) {
   set({ notesOpen: open ?? !get().notesOpen });
 }

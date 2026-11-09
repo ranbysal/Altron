@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { fmt, money } from "@/lib/format";
 import { INSTRUMENTS, RANGES, SYMS, TIMEFRAMES, snap, tfSec, type Range, type Timeframe } from "@/lib/desk/instruments";
@@ -18,16 +18,17 @@ import {
   setSettings,
   setTicket,
   showShortcuts,
+  toggleFull,
   toggleNotes,
   togglePanel,
   useDesk,
   type Order,
 } from "@/lib/desk/store";
-import { addDrawing, clearDrawings, drawId, removeDrawing, replaceDrawing, selectDrawing, setTool, startDrawings, toggleDraw, useDraw, type Drawing, type Pt } from "@/lib/desk/drawings";
+import { addDrawing, clearDrawings, drawId, removeDrawing, replaceDrawing, selectDrawing, setTool, startDrawings, toggleDraw, toggleHidden, useDraw, type Drawing, type Pt } from "@/lib/desk/drawings";
 import { BAYER4 } from "@/lib/noise";
 import { onThemeChange } from "@/lib/theme";
 import { Odometer } from "@/components/trader/parts";
-import { ChartMenu, ChartSettings, ToolRail, type MenuAt } from "./ChartParts";
+import { ChartMenu, ChartSettings, DrawPop, ToolRail, ToolsIcon, type MenuAt } from "./ChartParts";
 import { Toaster } from "./Toaster";
 import * as K from "./chartKit";
 import s from "./desk.module.css";
@@ -42,6 +43,7 @@ function ChartBar() {
   const pnl = useDesk((st) => st.settings.panels.pnl);
   const markets = useDesk((st) => st.settings.panels.markets);
   const notesOpen = useDesk((st) => st.notesOpen);
+  const full = useDesk((st) => st.full);
   const quote = useDesk((st) => st.quotes[sym]);
   const held = useDesk(useShallow((st) => SYMS.map((x) => Math.sign(st.positions[x]?.qty ?? 0))));
   const noteCount = useDesk((st) => {
@@ -117,6 +119,23 @@ function ChartBar() {
           <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
             <rect x="1.5" y="4" width="13" height="8.5" rx="2" fill="none" stroke="currentColor" strokeWidth="1.2" />
             <path d="M4 7h.01M6.5 7h.01M9 7h.01M11.5 7h.01M5 9.8h6" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          className={`${s.barIcon} ${s.barFull}`}
+          aria-pressed={full}
+          onClick={() => toggleFull()}
+          title={full ? "Exit full screen (Esc)" : "Full screen (Shift F)"}
+          aria-label={full ? "Exit full screen" : "Full screen chart"}
+        >
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <g className={s.fullOut}>
+              <path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10" />
+            </g>
+            <g className={s.fullIn}>
+              <path d="M6 2.5V6H2.5M13.5 6H10V2.5M10 13.5V10h3.5M2.5 10H6v3.5" />
+            </g>
           </svg>
         </button>
       </div>
@@ -214,6 +233,9 @@ export function Chart() {
   const rail = useDraw((st) => st.rail);
   const tool = useDraw((st) => st.tool);
   const drawCount = useDraw((st) => st.byUnder[INSTRUMENTS[sym].under].length);
+  const selId = useDraw((st) => (st.hidden ? null : st.selected));
+  const selKind = useDraw((st) => (st.selected ? st.byUnder[INSTRUMENTS[sym].under].find((d) => d.id === st.selected)?.kind ?? null : null));
+  const selHidden = useDraw((st) => (st.selected ? !!st.byUnder[INSTRUMENTS[sym].under].find((d) => d.id === st.selected)?.hidden : false));
   const inst = INSTRUMENTS[sym];
 
   const [auto, setAuto] = useState(true);
@@ -231,6 +253,7 @@ export function Chart() {
   }, [textOpen]);
 
   const wrapRef = useRef<HTMLDivElement>(null);
+  const popRef = useRef<HTMLDivElement>(null);
   const baseRef = useRef<HTMLCanvasElement>(null);
   const overRef = useRef<HTMLCanvasElement>(null);
   const lineEls = useRef(new Map<string, HTMLDivElement>());
@@ -263,6 +286,13 @@ export function Chart() {
     flash: 0,
     lastPx: 0,
     ink: null as Ink | null,
+    /** how much of the chart's extras show (1) or have faded out (0) as the plot gets short */
+    fo: 1,
+    /** where the selected drawing was grabbed, for placing its pop-up on long lines */
+    selX: 0,
+    selY: 0,
+    popW: 0,
+    popH: 0,
   });
 
   /* ---------- lines on the chart, from the book ---------- */
@@ -412,13 +442,26 @@ export function Chart() {
     return f;
   };
 
+  /**
+   * The backing store grows in steps and is kept while the plot changes size, so a chart
+   * that's resizing in motion (full screen, the blotter rising) repaints every frame without
+   * reallocating its canvases every frame. Whatever lies past the plot is clipped.
+   */
   const sizeCanvas = (c: HTMLCanvasElement, W: number, H: number) => {
     const dpr = Math.min(2, window.devicePixelRatio || 1);
-    const w = Math.round(W * dpr);
-    const h = Math.round(H * dpr);
-    if (c.width !== w || c.height !== h) {
-      c.width = w;
-      c.height = h;
+    const step = (n: number) => Math.ceil(n / 160) * 160;
+    const cw = Number(c.dataset.w) || 0;
+    const ch = Number(c.dataset.h) || 0;
+    if (cw < W || ch < H || cw > step(W) * 1.6 || ch > step(H) * 1.6 || c.dataset.dpr !== String(dpr)) {
+      const w = step(W);
+      const h = step(H);
+      c.width = Math.round(w * dpr);
+      c.height = Math.round(h * dpr);
+      c.style.width = `${w}px`;
+      c.style.height = `${h}px`;
+      c.dataset.w = String(w);
+      c.dataset.h = String(h);
+      c.dataset.dpr = String(dpr);
     }
     const ctx = c.getContext("2d")!;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -441,6 +484,18 @@ export function Chart() {
     const { bars, first, last, plotW, plotH } = f;
     const bodyW = Math.max(1, Math.round(f.bw * 0.64));
     const yl = Math.round(K.yOf(f, quote.last));
+
+    // as the blotter rises over the chart, the extras (legend, tags, drawings, tools) fade out
+    // well before they could crowd each other, then the chart itself goes
+    const fo = Math.max(0, Math.min(1, (plotH - 90) / 80));
+    const fc = Math.max(0, Math.min(1, (plotH - 10) / 50));
+    st.fo = fo;
+    const body = wrapRef.current?.parentElement;
+    if (body) {
+      put(body, "--fit", fo.toFixed(3));
+      put(body, "--fit-c", fc.toFixed(3));
+      putData(body, "fit", fo <= 0.02 ? "0" : "1");
+    }
 
     ctx.font = `10.5px ${C.mono}`;
     ctx.textBaseline = "middle";
@@ -615,7 +670,15 @@ export function Chart() {
     // drawings
     const dr = useDraw.getState();
     const mine = dr.byUnder[ins.under];
-    if (!dr.hidden) for (const d of mine) K.paintDrawing(ctx, f, d, C, d.id === dr.selected);
+    if (!dr.hidden && fo > 0) {
+      for (const d of mine) {
+        // a hidden drawing only shows, faintly, while the tools are open or it's selected
+        if (d.hidden && !dr.rail && d.id !== dr.selected) continue;
+        ctx.globalAlpha = fo * (d.hidden ? 0.26 : 1);
+        K.paintDrawing(ctx, f, d, C, d.id === dr.selected, dr.fib);
+      }
+      ctx.globalAlpha = 1;
+    }
 
     // the bracket a hovered deal button would send
     if (ds.preview) {
@@ -630,7 +693,7 @@ export function Chart() {
       for (const r of rows) {
         const y = Math.round(K.yOf(f, r.p)) + 0.5;
         ctx.strokeStyle = r.color;
-        ctx.globalAlpha = 0.7;
+        ctx.globalAlpha = 0.7 * fo;
         ctx.setLineDash([6, 4]);
         ctx.lineWidth = 1;
         ctx.beginPath();
@@ -638,18 +701,21 @@ export function Chart() {
         ctx.lineTo(plotW, y);
         ctx.stroke();
         ctx.setLineDash([]);
-        ctx.globalAlpha = 1;
+        ctx.globalAlpha = fo;
         ctx.fillStyle = r.color;
         ctx.fillText(`${r.label.toUpperCase()} ${fmt(r.p)}`, plotW - 10, y - 8);
       }
+      ctx.globalAlpha = 1;
       ctx.textAlign = "left";
     }
     ctx.restore();
 
     // axis tags for horizontal and vertical lines
-    if (!dr.hidden) {
+    if (!dr.hidden && fo > 0) {
       ctx.font = `10.5px ${C.mono}`;
+      ctx.globalAlpha = fo;
       for (const d of mine) {
+        if (d.hidden) continue;
         if (d.kind === "hline") {
           const y = K.yOf(f, d.a.p);
           if (y < 0 || y > plotH) continue;
@@ -675,6 +741,7 @@ export function Chart() {
           ctx.fillText(label, x, plotH + 13.5);
         }
       }
+      ctx.globalAlpha = 1;
     }
 
     // the tape
@@ -825,11 +892,16 @@ export function Chart() {
     }
     // the hovered or selected drawing, lifted
     const mine = dr.byUnder[ins.under];
-    if (!dr.hidden) {
+    const sel = dr.hidden ? undefined : mine.find((d) => d.id === dr.selected);
+    if (!dr.hidden && st.fo > 0) {
       const hot = mine.find((d) => d.id === st.hover && d.id !== dr.selected);
-      if (hot) K.paintDrawing(ctx, f, hot, C, true);
-      const sel = mine.find((d) => d.id === dr.selected);
-      if (sel) {
+      if (hot) {
+        ctx.globalAlpha = st.fo * (hot.hidden ? 0.45 : 1);
+        K.paintDrawing(ctx, f, hot, C, true, dr.fib);
+        ctx.globalAlpha = st.fo;
+      }
+      if (sel && !dr.locked) {
+        ctx.globalAlpha = st.fo;
         for (const h of K.handlesOf(f, sel)) {
           ctx.fillStyle = C.bg;
           ctx.strokeStyle = C.strong;
@@ -840,8 +912,31 @@ export function Chart() {
           ctx.stroke();
         }
       }
+      ctx.globalAlpha = 1;
     }
     ctx.restore();
+
+    // the selected drawing's pop-up rides just above it (below, if there's no room)
+    const pop = popRef.current;
+    if (pop) {
+      const moving = st.drag?.kind === "move" || st.drag?.kind === "handle";
+      if (sel && !moving) {
+        const b = K.boxOf(ctx, f, sel, C.sans, dr.fib);
+        if (!st.popW) {
+          st.popW = pop.offsetWidth;
+          st.popH = pop.offsetHeight;
+        }
+        const cx = sel.kind === "hline" ? st.selX : (Math.max(0, b.x0) + Math.min(f.plotW, b.x1)) / 2;
+        const top = sel.kind === "vline" ? st.selY : b.y0;
+        const bot = sel.kind === "vline" ? st.selY : b.y1;
+        let y = top - 12 - st.popH;
+        if (y < 6) y = bot + 12;
+        y = Math.max(6, Math.min(f.plotH - st.popH - 6, y));
+        const x = Math.max(6, Math.min(f.plotW - st.popW - 6, cx - st.popW / 2));
+        put(pop, "transform", `translate(${Math.round(x)}px, ${Math.round(y)}px)`);
+      }
+      putData(pop, "on", sel && !moving ? "1" : "");
+    }
 
     // crosshair
     const busy = st.drag && (st.drag.kind === "pan" || st.drag.kind === "scaleX" || st.drag.kind === "scaleY");
@@ -926,7 +1021,18 @@ export function Chart() {
     startDrawings();
     const wrap = wrapRef.current;
     if (!wrap) return;
-    const ro = new ResizeObserver(() => invalidate(true));
+    // repaint inside the resize itself: while panels slide (fullscreen, the blotter) the
+    // chart is redrawn at its new size in the same frame, never shown stretched
+    const ro = new ResizeObserver(() => {
+      const st = v.current;
+      st.base = true;
+      st.over = true;
+      if (st.raf) {
+        cancelAnimationFrame(st.raf);
+        st.raf = 0;
+      }
+      paint.current();
+    });
     ro.observe(wrap);
     const offTheme = onThemeChange(() =>
       requestAnimationFrame(() => {
@@ -951,6 +1057,12 @@ export function Chart() {
 
   // lines re-rendered: place them
   useEffect(() => invalidate(true), [lines, invalidate]);
+
+  // a new pop-up (or one that gained a button) is measured again, then placed
+  useLayoutEffect(() => {
+    v.current.popW = 0;
+    invalidate(false);
+  }, [selId, selKind, invalidate]);
 
   // a new market or timeframe starts fitted and current
   useEffect(() => {
@@ -1052,10 +1164,14 @@ export function Chart() {
     const st = v.current;
     const f = st.frame;
     const dr = useDraw.getState();
-    if (!f || dr.hidden || dr.locked) return null;
+    if (!f || dr.hidden || st.fo <= 0.02) return null;
     const ctx = overRef.current!.getContext("2d")!;
     const mine = dr.byUnder[under()];
-    for (let i = mine.length - 1; i >= 0; i--) if (K.hits(ctx, f, mine[i], x, y, st.ink?.sans ?? "sans-serif")) return mine[i];
+    for (let i = mine.length - 1; i >= 0; i--) {
+      const d = mine[i];
+      if (d.hidden && !dr.rail && d.id !== dr.selected) continue;
+      if (K.hits(ctx, f, d, x, y, st.ink?.sans ?? "sans-serif", dr.fib)) return d;
+    }
     return null;
   };
   const handleAt = (x: number, y: number): { d: Drawing; idx: number } | null => {
@@ -1070,6 +1186,8 @@ export function Chart() {
     return null;
   };
   const finish = (d: Drawing) => {
+    v.current.selX = v.current.mx;
+    v.current.selY = v.current.my;
     addDrawing(under(), d);
     if (!useDraw.getState().keep) setTool("cursor");
   };
@@ -1186,6 +1304,9 @@ export function Chart() {
     const hit = hitAt(x, y);
     if (hit) {
       selectDrawing(hit.id);
+      st.selX = x;
+      st.selY = y;
+      if (dr.locked) return invalidate(false); // locked: it can be picked (hide, delete), not moved
       target.setPointerCapture(e.pointerId);
       st.drag = { kind: "move", orig: hit, x0: x, y0: y };
       return;
@@ -1463,9 +1584,9 @@ export function Chart() {
   };
 
   return (
-    <div className={s.chart}>
+    <div className={s.chart} data-chart="">
       <ChartBar />
-      <div className={s.chartBody}>
+      <div className={s.chartBody} data-chart-body="">
         {rail && (
           <ToolRail
             count={drawCount}
@@ -1500,11 +1621,9 @@ export function Chart() {
               title={rail ? "Hide drawing tools" : "Drawing tools"}
               aria-label="Drawing tools"
             >
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="m10.2 2.6 3.2 3.2-7.8 7.8H2.4v-3.2z" />
-                <path d="m8.6 4.2 3.2 3.2" />
-              </svg>
+              <ToolsIcon />
             </button>
+            <div className={s.legRow}>
             <span className={s.legName}>
               {inst.name} · {tf}
             </span>
@@ -1529,6 +1648,7 @@ export function Chart() {
               <i>V</i>
               <b ref={(el) => void (leg.current.v = el)} />
             </span>
+            </div>
           </div>
 
           {/* rules first, tags after: every tag sits above every line */}
@@ -1638,6 +1758,15 @@ export function Chart() {
               }}
             />
           )}
+          {selId && selKind && (
+            <DrawPop
+              ref={popRef}
+              kind={selKind}
+              hidden={selHidden}
+              onHide={() => toggleHidden(inst.under, selId)}
+              onDelete={() => removeDrawing(inst.under, selId)}
+            />
+          )}
           <Toaster inline />
           {menu && (
             <ChartMenu
@@ -1656,8 +1785,14 @@ export function Chart() {
                 else placeOrder({ sym, side, qty, type: "STP", stop: menu.price, bracket: true });
               }}
               onAlert={() => addAlert(sym, menu.price)}
-              onHLine={() => addDrawing(inst.under, { id: drawId(), kind: "hline", a: { t: menu.t, p: menu.price } })}
-              onVLine={() => addDrawing(inst.under, { id: drawId(), kind: "vline", a: { t: menu.t, p: menu.price } })}
+              onHLine={() => {
+                v.current.selX = menu.x;
+                addDrawing(inst.under, { id: drawId(), kind: "hline", a: { t: menu.t, p: menu.price } });
+              }}
+              onVLine={() => {
+                v.current.selY = menu.y;
+                addDrawing(inst.under, { id: drawId(), kind: "vline", a: { t: menu.t, p: menu.price } });
+              }}
               onClear={() => clearDrawings(inst.under)}
               onReset={resetView}
               onSettings={() => setSettingsOpen(true)}
