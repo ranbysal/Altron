@@ -1,17 +1,18 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { create } from "zustand";
 import { fmt, money } from "@/lib/format";
 import { INSTRUMENTS, type Sym } from "@/lib/desk/instruments";
-import { arm, closePercent, disarm, instant, keepArmed, openPnl, setSettings, togglePanel, useDesk, type Side } from "@/lib/desk/store";
+import { arm, closePercent, disarm, instant, keepArmed, openPnl, setSettings, toggleNotes, togglePanel, useDesk, type Side } from "@/lib/desk/store";
 import { onThemeChange } from "@/lib/theme";
 import { Odometer } from "@/components/trader/parts";
 import t from "@/components/trader/trader.module.css";
+import { Thread } from "./Thread";
 import s from "./desk.module.css";
 
-type Which = "instant" | "pnl";
+type Which = "instant" | "pnl" | "notes";
 
 /* ------------------------------------------------------------------ */
 /* the lock                                                            */
@@ -38,7 +39,7 @@ function Lock({ nudge }: { nudge: number }) {
       className={`${s.lock} ${armed ? s.lockOn : ""} ${nudge ? s.lockNudge : ""}`}
       onClick={() => (armed ? disarm() : arm())}
       aria-pressed={armed}
-      title={armed ? "Armed. Tap to lock" : "Locked. Tap to arm"}
+      title={armed ? `Armed for ${Math.ceil(left / 1000)}s more. Tap to lock` : "Locked. Tap to arm"}
     >
       <svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true">
         <circle cx="11" cy="11" r={r} className={s.lockTrack} />
@@ -46,7 +47,7 @@ function Lock({ nudge }: { nudge: number }) {
         <rect x="7.6" y="10" width="6.8" height="5" rx="1" fill="currentColor" />
         <path d={armed ? "M9 10V8.3a2 2 0 0 1 3.8-.9" : "M9 10V8.3a2 2 0 0 1 4 0V10"} fill="none" stroke="currentColor" strokeWidth="1.2" />
       </svg>
-      <span>{armed ? `Armed ${Math.ceil(left / 1000)}s` : "Locked"}</span>
+      <span>{armed ? "Armed" : "Locked"}</span>
     </button>
   );
 }
@@ -230,7 +231,7 @@ function PipApp() {
     <div className={s.pipApp}>
       <header className={s.pipHead}>
         <div className={s.pipTabs} role="tablist">
-          {(["instant", "pnl"] as Which[]).map((w) => (
+          {(["instant", "pnl"] as const).map((w) => (
             <button key={w} type="button" role="tab" aria-selected={tab === w} onClick={() => usePip.setState({ tab: w })}>
               {w === "instant" ? "Instant" : "Live P&L"}
             </button>
@@ -296,89 +297,116 @@ async function popOut(tab: Which) {
 /* the in-page floating card                                          */
 /* ------------------------------------------------------------------ */
 
-type Pos = { x: number; y: number };
-const W: Record<Which, number> = { instant: 300, pnl: 288 };
+/** Where a panel lives: an offset from the corner it was dropped nearest, so it
+ * stays put when the window resizes and grows away from the edge it sits on. */
+type Anchor = { ax: "l" | "r"; ay: "t" | "b"; x: number; y: number };
+const W: Record<Which, number> = { instant: 300, pnl: 288, notes: 356 };
+const KEY = (id: Which) => `altron-float-${id}-v3`;
 
-function Floating({ id, title, children, nudge, onNudge }: { id: Which; title: string; children: ReactNode; nudge: number; onNudge: () => void }) {
-  const sym = useDesk((st) => st.settings.sym);
-  const [pos, setPos] = useState<Pos | null>(null);
-  const [dragging, setDragging] = useState(false);
+/** First placement: notes at the top left of the chart, the trading panels at its
+ * bottom left, clear of the live candle, the price axis and the ticket. */
+function defaultAnchor(id: Which): Anchor {
+  const plot = document.querySelector("[data-plot]")?.getBoundingClientRect();
+  if (!plot) return id === "notes" ? { ax: "l", ay: "t", x: 24, y: 160 } : { ax: "r", ay: "b", x: id === "instant" ? 24 : 24 + W.instant + 12, y: 24 };
+  const x = Math.round(plot.left + 16);
+  const y = Math.round(window.innerHeight - plot.bottom + 38);
+  if (id === "notes") return { ax: "l", ay: "t", x, y: Math.round(plot.top + 38) };
+  if (id === "pnl") return { ax: "l", ay: "b", x, y };
+  return { ax: "l", ay: "b", x: x + W.pnl + 12, y };
+}
+
+function loadAnchor(id: Which): Anchor {
+  try {
+    const a = JSON.parse(localStorage.getItem(KEY(id)) ?? "null");
+    if (a && (a.ax === "l" || a.ax === "r") && (a.ay === "t" || a.ay === "b") && Number.isFinite(a.x) && Number.isFinite(a.y)) return a;
+  } catch {
+    /* fall through */
+  }
+  return defaultAnchor(id);
+}
+
+function Floating({ id, title, children, nudge, onClose, extra }: { id: Which; title: string; children: ReactNode; nudge?: number; onClose: () => void; extra?: ReactNode }) {
+  const [anchor, setAnchor] = useState<Anchor | null>(null);
+  const [box, setBox] = useState({ h: 0, vw: 0, vh: 0 });
+  const [drag, setDrag] = useState<{ left: number; top: number } | null>(null);
   const [gear, setGear] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-  const start = useRef<{ px: number; py: number; x: number; y: number } | null>(null);
+  const start = useRef<{ px: number; py: number; left: number; top: number } | null>(null);
+  const live = useRef<{ left: number; top: number } | null>(null);
   const canPop = !!docPip();
-  void onNudge;
+  const w = W[id];
+  const placed = anchor !== null;
 
-  useEffect(() => {
-    let p: Pos | null = null;
-    try {
-      p = JSON.parse(localStorage.getItem(`altron-float-${id}`) ?? "null");
-    } catch {
-      p = null;
-    }
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-    setPos(p ?? { x: id === "instant" ? vw - W.instant - 24 : vw - W.instant - W.pnl - 40, y: vh - (id === "instant" ? 300 : 236) - 24 });
-  }, [id]);
+  useEffect(() => setAnchor(loadAnchor(id)), [id]);
 
-  const clamp = (p: Pos): Pos => {
+  useLayoutEffect(() => {
     const el = ref.current;
-    const w = el?.offsetWidth ?? W[id];
-    const h = el?.offsetHeight ?? 200;
-    return { x: Math.max(8, Math.min(window.innerWidth - w - 8, p.x)), y: Math.max(8, Math.min(window.innerHeight - h - 8, p.y)) };
-  };
+    if (!el) return;
+    const measure = () => setBox({ h: el.offsetHeight, vw: window.innerWidth, vh: window.innerHeight });
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    window.addEventListener("resize", measure);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, [placed]);
 
-  // keep it on screen when the window changes size
-  useEffect(() => {
-    const onResize = () => setPos((p) => (p ? clamp(p) : p));
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const clampX = (l: number) => Math.max(8, Math.min(box.vw - w - 8, l));
+  const clampY = (t: number) => Math.max(8, Math.min(box.vh - box.h - 8, t));
+  let left = 0;
+  let top = 0;
+  if (drag) {
+    left = drag.left;
+    top = drag.top;
+  } else if (anchor) {
+    left = clampX(anchor.ax === "l" ? anchor.x : box.vw - w - anchor.x);
+    top = clampY(anchor.ay === "t" ? anchor.y : box.vh - box.h - anchor.y);
+  }
 
   const down = (e: React.PointerEvent) => {
     if ((e.target as Element).closest("button, input")) return;
-    if (!pos) return;
     (e.currentTarget as Element).setPointerCapture(e.pointerId);
-    start.current = { px: e.clientX, py: e.clientY, x: pos.x, y: pos.y };
-    setDragging(true);
+    start.current = { px: e.clientX, py: e.clientY, left, top };
+    live.current = { left, top };
+    setDrag({ left, top });
   };
   const move = (e: React.PointerEvent) => {
     const st = start.current;
     if (!st) return;
-    setPos(clamp({ x: st.x + e.clientX - st.px, y: st.y + e.clientY - st.py }));
+    const next = { left: clampX(st.left + e.clientX - st.px), top: clampY(st.top + e.clientY - st.py) };
+    live.current = next;
+    setDrag(next);
   };
   const up = () => {
-    if (!start.current) return;
+    const d = live.current;
+    if (!start.current || !d) return;
     start.current = null;
-    setDragging(false);
-    setPos((p) => {
-      if (!p) return p;
-      // settle against an edge when dropped close to one
-      const el = ref.current;
-      const w = el?.offsetWidth ?? W[id];
-      const h = el?.offsetHeight ?? 200;
-      let { x, y } = p;
-      if (x < 40) x = 16;
-      if (window.innerWidth - (x + w) < 40) x = window.innerWidth - w - 16;
-      if (y < 40) y = 16;
-      if (window.innerHeight - (y + h) < 40) y = window.innerHeight - h - 16;
-      const next = { x, y };
-      try {
-        localStorage.setItem(`altron-float-${id}`, JSON.stringify(next));
-      } catch {
-        /* ignore */
-      }
-      return next;
-    });
+    live.current = null;
+    const ax = d.left + w / 2 < box.vw / 2 ? "l" : "r";
+    const ay = d.top + box.h / 2 < box.vh / 2 ? "t" : "b";
+    let x = ax === "l" ? d.left : box.vw - w - d.left;
+    let y = ay === "t" ? d.top : box.vh - box.h - d.top;
+    // settle against an edge when dropped close to one
+    if (x < 40) x = 16;
+    if (y < 40) y = 16;
+    const next: Anchor = { ax, ay, x: Math.round(x), y: Math.round(y) };
+    setAnchor(next);
+    setDrag(null);
+    try {
+      localStorage.setItem(KEY(id), JSON.stringify(next));
+    } catch {
+      /* ignore */
+    }
   };
 
-  if (!pos) return null;
+  if (!anchor) return null;
   return (
     <div
       ref={ref}
-      className={`${s.float} ${dragging ? s.floatDrag : ""}`}
-      style={{ transform: `translate3d(${pos.x}px, ${pos.y}px, 0)`, width: W[id] } as CSSProperties}
+      className={`${s.float} ${box.h ? s.floatPlaced : ""} ${drag ? s.floatDrag : ""}`}
+      style={{ transform: `translate3d(${left}px, ${top}px, 0)`, width: w } as CSSProperties}
       role="dialog"
       aria-label={title}
     >
@@ -388,12 +416,10 @@ function Floating({ id, title, children, nudge, onNudge }: { id: Which; title: s
             <i key={i} />
           ))}
         </span>
-        <span className={s.floatTitle}>
-          {title}
-          <em>{INSTRUMENTS[sym].code}</em>
-        </span>
+        <span className={s.floatTitle}>{title}</span>
+        {extra}
         <span className={s.floatActions}>
-          <Lock nudge={nudge} />
+          {nudge !== undefined && <Lock nudge={nudge} />}
           {id === "instant" && (
             <button type="button" className={s.fBtn} aria-pressed={gear} onClick={() => setGear((v) => !v)} title="Button sizes" aria-label="Button sizes">
               <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
@@ -407,7 +433,7 @@ function Floating({ id, title, children, nudge, onNudge }: { id: Which; title: s
               </svg>
             </button>
           )}
-          {canPop && (
+          {canPop && id !== "notes" && (
             <button type="button" className={s.fBtn} onClick={() => popOut(id)} title="Pop out over other windows" aria-label="Pop out">
               <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
                 <rect x="1.5" y="3.5" width="10" height="9" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.2" />
@@ -415,7 +441,7 @@ function Floating({ id, title, children, nudge, onNudge }: { id: Which; title: s
               </svg>
             </button>
           )}
-          <button type="button" className={s.fBtn} onClick={() => togglePanel(id, false)} title="Close" aria-label="Close">
+          <button type="button" className={s.fBtn} onClick={onClose} title="Close" aria-label="Close">
             <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
               <path d="M2.5 2.5l7 7M9.5 2.5l-7 7" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
             </svg>
@@ -431,19 +457,27 @@ function Floating({ id, title, children, nudge, onNudge }: { id: Which; title: s
 export function FloatLayer() {
   const ready = useDesk((st) => st.ready);
   const panels = useDesk((st) => st.settings.panels);
+  const notesOpen = useDesk((st) => st.notesOpen);
   const pip = usePip();
   const [nudge, setNudge] = useState(0);
   const locked = useCallback(() => setNudge((n) => n + 1), []);
   if (!ready) return null;
   return (
     <div className={s.floatLayer}>
+      {notesOpen && (
+        <Floating id="notes" title="Notes" onClose={() => toggleNotes(false)} extra={<span className={s.members}>Members see these</span>}>
+          <div className={s.notesBody}>
+            <Thread autoFocus />
+          </div>
+        </Floating>
+      )}
       {panels.instant && !(pip.open && pip.tab === "instant") && (
-        <Floating id="instant" title="Instant" nudge={nudge} onNudge={locked}>
+        <Floating id="instant" title="Instant" nudge={nudge} onClose={() => togglePanel("instant", false)}>
           <InstantBody onLocked={locked} />
         </Floating>
       )}
       {panels.pnl && !(pip.open && pip.tab === "pnl") && (
-        <Floating id="pnl" title="Live P&L" nudge={nudge} onNudge={locked}>
+        <Floating id="pnl" title="Live P&L" nudge={nudge} onClose={() => togglePanel("pnl", false)}>
           <PnlBody onLocked={locked} />
         </Floating>
       )}

@@ -1,10 +1,10 @@
 "use client";
 
-import type { CSSProperties } from "react";
-import { fmt, money } from "@/lib/format";
+import { useMemo, type CSSProperties } from "react";
+import { fmt } from "@/lib/format";
 import { INSTRUMENTS, SYMS, type Sym } from "@/lib/desk/instruments";
-import { ACCOUNT, dayStart, openPnl, realizedSince, resetPaper, selectSym, useDesk } from "@/lib/desk/store";
-import { Odometer } from "@/components/trader/parts";
+import { getMarket, selectSym, useDesk } from "@/lib/desk/store";
+import { Odometer, Spark } from "@/components/trader/parts";
 import s from "./desk.module.css";
 
 function Row({ sym, i }: { sym: Sym; i: number }) {
@@ -16,6 +16,8 @@ function Row({ sym, i }: { sym: Sym; i: number }) {
   const pct = q.prev ? (chg / q.prev) * 100 : 0;
   const range = q.hi - q.lo || 1;
   const at = Math.max(0, Math.min(1, (q.last - q.lo) / range));
+  // the last two hours or so, every third minute
+  const path = useMemo(() => getMarket()?.closes(inst.under, 48, 3) ?? [], [q.at, inst.under]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <button type="button" className={`${s.wRow} ${selected ? s.wOn : ""}`} onClick={() => selectSym(sym)} style={{ "--k": i } as CSSProperties} aria-pressed={selected}>
@@ -36,6 +38,7 @@ function Row({ sym, i }: { sym: Sym; i: number }) {
           {Math.abs(pct).toFixed(2)}%
         </span>
       </span>
+      <Spark values={path} tone={chg >= 0 ? "pos" : "neg"} height={26} width={196} className={s.wSpark} delay={420 + i * 90} />
       <span className={s.wRange} aria-hidden="true">
         <i style={{ left: `${at * 100}%` }} />
       </span>
@@ -52,53 +55,14 @@ function Row({ sym, i }: { sym: Sym; i: number }) {
   );
 }
 
-/** Markets on the left, the account underneath. */
+/** The four markets, with the last two hours drawn in when there's room. */
 export function Watchlist() {
-  const positions = useDesk((st) => st.positions);
-  const quotes = useDesk((st) => st.quotes);
-  const trades = useDesk((st) => st.trades);
-  const open = openPnl({ positions, quotes });
-  const realized = trades.reduce((a, t) => a + t.pnl, 0);
-  const day = realizedSince(trades, dayStart()) + open;
-  const balance = ACCOUNT.start + realized;
-
   return (
     <div className={s.watch}>
       <div className={s.wList}>
         {SYMS.map((x, i) => (
           <Row key={x} sym={x} i={i} />
         ))}
-      </div>
-      <div className={s.acct}>
-        <div className={s.acctHead}>
-          <span className={s.label}>
-            {ACCOUNT.name}
-            <i className={s.okDot} />
-          </span>
-          <button
-            type="button"
-            className={s.reset}
-            onClick={() => {
-              if (window.confirm("Reset the paper account? Positions, orders, trades and notes on this browser are cleared.")) resetPaper();
-            }}
-          >
-            Reset
-          </button>
-        </div>
-        <dl className={s.acctStats}>
-          <div>
-            <dt>Balance</dt>
-            <dd>${fmt(balance)}</dd>
-          </div>
-          <div>
-            <dt>Day</dt>
-            <dd className={day >= 0 ? s.pos : s.neg}>{money(day)}</dd>
-          </div>
-          <div>
-            <dt>Open</dt>
-            <dd className={open >= 0 ? s.pos : s.neg}>{money(open)}</dd>
-          </div>
-        </dl>
       </div>
     </div>
   );

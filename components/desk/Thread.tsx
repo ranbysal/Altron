@@ -98,10 +98,11 @@ function Message({ n, i }: { n: Note; i: number }) {
 }
 
 /** The trade's notes as a small chat that members see live. */
-export function Thread() {
+export function Thread({ autoFocus = false }: { autoFocus?: boolean }) {
   const sym = useDesk((st) => st.settings.sym);
   const notes = useDesk((st) => st.notes);
   const trades = useDesk((st) => st.trades);
+  const fills = useDesk((st) => st.fills);
   const pinned = useDesk((st) => st.thread);
   const pos = useDesk((st) => st.positions[sym]);
   const quote = useDesk(useShallow((st) => ({ last: st.quotes[sym].last })));
@@ -110,6 +111,24 @@ export function Thread() {
   const [aim, setAim] = useState<"after" | "before" | null>(null);
   const [menu, setMenu] = useState(false);
   const listRef = useRef<HTMLOListElement>(null);
+  const boxRef = useRef<HTMLTextAreaElement>(null);
+  // the pop-up stays hidden for a frame while it measures itself, and a hidden
+  // field can't take focus, so keep trying until the note box has it
+  useEffect(() => {
+    if (!autoFocus) return;
+    let tries = 0;
+    let raf = 0;
+    const go = () => {
+      const el = boxRef.current;
+      if (el) {
+        el.focus({ preventScroll: true });
+        if (document.activeElement === el) return;
+      }
+      if (++tries < 30) raf = requestAnimationFrame(go);
+    };
+    go();
+    return () => cancelAnimationFrame(raf);
+  }, [autoFocus]);
 
   // which trade the thread is showing
   const open = pos ? trades.find((t) => t.id === pos.tradeId) : undefined;
@@ -120,6 +139,27 @@ export function Thread() {
 
   const shown = useMemo(() => notes.filter((n) => (viewing ? n.tradeId === viewing.id : false)), [notes, viewing]);
   const pending = useMemo(() => notes.filter((n) => n.tradeId === null && n.sym === sym), [notes, sym]);
+
+  // notes and every fill of the trade, in the order they happened, so members can
+  // follow the adds and the exits alongside what he wrote
+  type Item = { kind: "fill"; at: number; id: string; text: string; tail?: { pnl: number } } | { kind: "note"; at: number; note: Note };
+  const timeline = useMemo(() => {
+    const out: Item[] = shown.map((note) => ({ kind: "note" as const, at: note.at, note }));
+    if (viewing) {
+      const own = fills.filter((f) => f.tradeId === viewing.id);
+      const dir = viewing.side === "LONG" ? 1 : -1;
+      own.forEach((f, k) => {
+        const last = k === own.length - 1 && !!viewing.closedAt;
+        let text: string;
+        if (k === 0) text = `${dir > 0 ? "Bought" : "Sold"} ${f.qty} @ ${fmt(f.price)}`;
+        else if (f.side === dir) text = `Added ${f.qty} @ ${fmt(f.price)}`;
+        else if (last) text = `${f.role === "stop" ? "Stopped" : f.role === "target" ? "Target" : "Closed"} @ ${fmt(f.price)}`;
+        else text = `Took ${f.qty} off @ ${fmt(f.price)}`;
+        out.push({ kind: "fill", at: f.at, id: f.id, text, tail: last ? { pnl: viewing.pnl } : undefined });
+      });
+    }
+    return out.sort((a, b) => a.at - b.at);
+  }, [shown, viewing, fills]);
 
   // what a new note attaches to
   let phase: Phase = "before";
@@ -133,10 +173,25 @@ export function Thread() {
   }
   const canChoose = !pinnedOther && !!viewing?.closedAt;
 
+  // a chat: hold the newest note in view unless the reader has scrolled back
+  const stuck = useRef(true);
+  const firstScroll = useRef(true);
   useEffect(() => {
     const el = listRef.current;
-    if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: firstScroll.current ? "auto" : "smooth" });
+    firstScroll.current = false;
+    stuck.current = true;
   }, [shown.length, pending.length, viewing?.id]);
+  useEffect(() => {
+    const el = listRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => {
+      if (stuck.current) el.scrollTop = el.scrollHeight;
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   useEffect(() => setAim(null), [viewing?.id]);
 
@@ -207,25 +262,31 @@ export function Thread() {
         )}
       </div>
 
-      <ol ref={listRef} className={s.msgs}>
-        {viewing && (
-          <li className={s.tradeMark}>
-            <span>
-              {viewing.side === "LONG" ? "Bought" : "Sold"} {viewing.qty} @ {fmt(viewing.entryValue / viewing.entryQty)}
-            </span>
-            <time>{clock(viewing.openedAt)}</time>
-          </li>
-        )}
-        {shown.map((n, i) => (
-          <Message key={n.id} n={n} i={i} />
-        ))}
-        {viewing?.closedAt && (
-          <li className={s.tradeMark}>
-            <span>
-              Closed @ {fmt(viewing.exitValue / Math.max(1, viewing.exitQty))} · <b className={viewing.pnl >= 0 ? s.pos : s.neg}>{money(viewing.pnl)}</b>
-            </span>
-            <time>{clock(viewing.closedAt)}</time>
-          </li>
+      <ol
+        ref={listRef}
+        className={s.msgs}
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          stuck.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+        }}
+      >
+        {timeline.map((it, i) =>
+          it.kind === "note" ? (
+            <Message key={it.note.id} n={it.note} i={i} />
+          ) : (
+            <li key={it.id} className={s.tradeMark}>
+              <span>
+                {it.text}
+                {it.tail && (
+                  <>
+                    {" · "}
+                    <b className={it.tail.pnl >= 0 ? s.pos : s.neg}>{money(it.tail.pnl)}</b>
+                  </>
+                )}
+              </span>
+              <time>{clock(it.at)}</time>
+            </li>
+          ),
         )}
         {!pinnedOther && pending.length > 0 && (
           <>
@@ -257,18 +318,12 @@ export function Thread() {
           ) : (
             <span className={`${s.phase} ${s[`phase_${phase}`]}`}>{PHASE[phase]}</span>
           )}
-          <span className={s.members}>
-            <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true">
-              <path d="M1 8s2.6-4.5 7-4.5S15 8 15 8s-2.6 4.5-7 4.5S1 8 1 8Z" fill="none" stroke="currentColor" strokeWidth="1.2" />
-              <circle cx="8" cy="8" r="2" fill="currentColor" />
-            </svg>
-            Members see this
-          </span>
         </div>
         <div className={s.composeBox}>
           <textarea
+            ref={boxRef}
             value={text}
-            rows={2}
+            rows={1}
             placeholder={phase === "before" ? "The plan, before you take it…" : phase === "during" ? "What's changed…" : "How it went…"}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
@@ -276,6 +331,7 @@ export function Thread() {
                 e.preventDefault();
                 post();
               }
+              if (e.key === "Escape") e.currentTarget.blur();
             }}
           />
           <button type="button" className={s.send} disabled={!text.trim()} onClick={post} aria-label="Post note">

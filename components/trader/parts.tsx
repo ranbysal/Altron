@@ -12,7 +12,10 @@ export function Cell({
   label,
   aside,
   bodyClass,
+  noTop = false,
 }: {
+  /** leave out the top edge and its two nodes */
+  noTop?: boolean;
   bodyClass?: string;
   children?: ReactNode;
   i?: number;
@@ -23,10 +26,10 @@ export function Cell({
 }) {
   return (
     <section className={`${s.cell} ${className ?? ""}`} style={{ "--i": i, ...style } as CSSProperties}>
-      <i className={s.lineT} aria-hidden="true" />
+      {!noTop && <i className={s.lineT} aria-hidden="true" />}
       <i className={s.lineL} aria-hidden="true" />
-      <i className={`${s.node} ${s.nTL}`} aria-hidden="true" />
-      <i className={`${s.node} ${s.nTR}`} aria-hidden="true" />
+      {!noTop && <i className={`${s.node} ${s.nTL}`} aria-hidden="true" />}
+      {!noTop && <i className={`${s.node} ${s.nTR}`} aria-hidden="true" />}
       <i className={`${s.node} ${s.nBL}`} aria-hidden="true" />
       <i className={`${s.node} ${s.nBR}`} aria-hidden="true" />
       <div className={`${s.cellIn} ${bodyClass ?? ""}`}>

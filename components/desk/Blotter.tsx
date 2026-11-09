@@ -3,7 +3,7 @@
 import { useState, type CSSProperties } from "react";
 import { fmt, money } from "@/lib/format";
 import { INSTRUMENTS, SYMS } from "@/lib/desk/instruments";
-import { cancelAll, cancelOrder, closePercent, describe, flatten, selectSym, setThread, useDesk } from "@/lib/desk/store";
+import { ACCOUNT, cancelAll, cancelOrder, closePercent, dayStart, describe, flatten, openPnl, realizedSince, selectSym, setThread, toggleBlotter, toggleNotes, useDesk } from "@/lib/desk/store";
 import s from "./desk.module.css";
 
 type Tab = "positions" | "orders" | "fills" | "trades";
@@ -12,8 +12,9 @@ function clock(t: number): string {
   return new Date(t).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit", second: "2-digit" });
 }
 
-/** Positions, working orders, fills and the day's trades. */
+/** Positions, working orders, fills and the day's trades, with the account alongside. */
 export function Blotter() {
+  const shown = useDesk((st) => st.settings.blotter);
   const positions = useDesk((st) => st.positions);
   const quotes = useDesk((st) => st.quotes);
   const orders = useDesk((st) => st.orders);
@@ -30,24 +31,61 @@ export function Blotter() {
     { id: "trades", label: "Trades", n: trades.length },
   ];
   const ti = tabs.findIndex((t) => t.id === tab);
+  const unreal = openPnl({ positions, quotes });
+  const day = realizedSince(trades, dayStart()) + unreal;
+  const balance = ACCOUNT.start + trades.reduce((a, t) => a + t.pnl, 0);
 
   return (
     <div className={s.blotter}>
       <div className={s.blotHead}>
         <div className={s.blotTabs} role="tablist" style={{ "--i": ti } as CSSProperties}>
           {tabs.map((t) => (
-            <button key={t.id} type="button" role="tab" aria-selected={t.id === tab} onClick={() => setTab(t.id)}>
+            <button
+              key={t.id}
+              type="button"
+              role="tab"
+              aria-selected={t.id === tab}
+              onClick={() => {
+                setTab(t.id);
+                if (!shown) toggleBlotter(true);
+              }}
+            >
               {t.label}
               <em>{t.n}</em>
             </button>
           ))}
         </div>
+        <dl className={s.acctLine}>
+          <div className={s.acctName}>
+            <dt>{ACCOUNT.name}</dt>
+            <dd>
+              <i className={s.okDot} aria-label="Connected" />
+            </dd>
+          </div>
+          <div>
+            <dt>Balance</dt>
+            <dd>${fmt(balance)}</dd>
+          </div>
+          <div>
+            <dt>Day</dt>
+            <dd className={day >= 0 ? s.pos : s.neg}>{money(day)}</dd>
+          </div>
+          <div>
+            <dt>Open</dt>
+            <dd className={unreal >= 0 ? s.pos : s.neg}>{money(unreal)}</dd>
+          </div>
+        </dl>
         <div className={s.blotActions}>
           <button type="button" onClick={() => cancelAll()} disabled={!orders.some((o) => !o.reduceOnly)}>
             Cancel orders
           </button>
           <button type="button" className={s.flat} onClick={() => flatten()} disabled={!open.length && !orders.length}>
             Flatten all
+          </button>
+          <button type="button" className={s.fold} aria-expanded={shown} onClick={() => toggleBlotter()} title={shown ? "Fold the blotter away" : "Show the blotter"} aria-label={shown ? "Fold the blotter away" : "Show the blotter"}>
+            <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
+              <path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
           </button>
         </div>
       </div>
@@ -218,7 +256,10 @@ export function Blotter() {
                 const pos = positions[t.sym];
                 const pnl = live && pos ? t.pnl + ((quotes[t.sym].last - pos.avg) * pos.qty * INSTRUMENTS[t.sym].pv) : t.pnl;
                 return (
-                  <tr key={t.id} style={{ "--k": Math.min(i, 8) } as CSSProperties} className={thread === t.id ? s.rowOn : undefined} onClick={() => setThread(t.id)}>
+                  <tr key={t.id} style={{ "--k": Math.min(i, 8) } as CSSProperties} className={thread === t.id ? s.rowOn : undefined} onClick={() => {
+                      setThread(t.id);
+                      toggleNotes(true);
+                    }}>
                     <td className={s.dimCell}>{clock(t.openedAt)}</td>
                     <td className={s.sym}>{INSTRUMENTS[t.sym].code}</td>
                     <td>

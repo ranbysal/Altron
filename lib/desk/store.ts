@@ -60,7 +60,8 @@ export type Settings = {
   stopTicks: Record<Sym, number>;
   targetTicks: Record<Sym, number>;
   hotkeys: boolean;
-  panels: { instant: boolean; pnl: boolean };
+  panels: { instant: boolean; pnl: boolean; markets: boolean };
+  blotter: boolean;
 };
 
 export type Ticket = { type: OrderType; limit: number | null; stop: number | null; trail: number };
@@ -81,6 +82,8 @@ export type DeskState = {
   thread: string | null;
   pick: null | "limit" | "stop";
   shortcuts: boolean;
+  /** the notes pop-up; always starts closed */
+  notesOpen: boolean;
   tick: number;
 };
 
@@ -98,7 +101,8 @@ const DEFAULT_SETTINGS: Settings = {
   stopTicks: { NQ: 80, ES: 24, MNQ: 80, MES: 24 },
   targetTicks: { NQ: 160, ES: 48, MNQ: 160, MES: 48 },
   hotkeys: true,
-  panels: { instant: false, pnl: false },
+  panels: { instant: false, pnl: false, markets: false },
+  blotter: true,
 };
 
 const blankQuote = (): Quote => ({ last: 0, bid: 0, ask: 0, prev: 0, hi: 0, lo: 0, dir: 0, at: 0 });
@@ -119,6 +123,7 @@ export const useDesk = create<DeskState>(() => ({
   thread: null,
   pick: null,
   shortcuts: false,
+  notesOpen: false,
   tick: 0,
 }));
 
@@ -494,9 +499,16 @@ export function setThread(id: string | null) {
 export function setPick(p: DeskState["pick"]) {
   set({ pick: p });
 }
-export function togglePanel(which: "instant" | "pnl", open?: boolean) {
+export function togglePanel(which: "instant" | "pnl" | "markets", open?: boolean) {
   const s = get().settings;
   set({ settings: { ...s, panels: { ...s.panels, [which]: open ?? !s.panels[which] } } });
+}
+export function toggleNotes(open?: boolean) {
+  set({ notesOpen: open ?? !get().notesOpen });
+}
+export function toggleBlotter(open?: boolean) {
+  const s = get().settings;
+  set({ settings: { ...s, blotter: open ?? !s.blotter } });
 }
 export function showShortcuts(v: boolean) {
   set({ shortcuts: v });
@@ -522,9 +534,11 @@ export function openPnl(s: Pick<DeskState, "positions" | "quotes">, sym?: Sym): 
   return sum;
 }
 
+/** The futures day: it opens with Globex at 6:00 PM New York time. */
 export function dayStart(now = Date.now()): number {
   const { min } = nyClock(now);
-  return Math.floor(now / 60000) * 60000 - min * 60000;
+  const midnight = Math.floor(now / 60000) * 60000 - min * 60000;
+  return min >= 18 * 60 ? midnight + 18 * 3_600_000 : midnight - 6 * 3_600_000;
 }
 
 export function realizedSince(trades: Trade[], since: number): number {
@@ -582,42 +596,45 @@ function seed(): Partial<DeskState> {
     const stopTicks = DEFAULT_SETTINGS.stopTicks[sym];
     const targetTicks = DEFAULT_SETTINGS.targetTicks[sym];
     let ei = n - 1 - entryAgo;
+    let stopT = stopTicks;
+    let tgtT = targetTicks;
     if (outcome === "open") {
-      // pick a recent bar that leaves the position a little in profit and inside its bracket
-      // a recent entry whose bracket the tape hasn't touched since, a little in profit now
+      // a recent entry that is a little in profit now, with the stop tucked past the
+      // swing since (never tighter than the default) and the target at least 2R out,
+      // so nothing on the tape has touched the bracket yet
       const last = bars[n - 1].c;
-      const stopD = stopTicks * inst.tick;
-      const tgtD = targetTicks * inst.tick;
       let best = -1;
       let score = Infinity;
-      for (let i = n - 60; i < n - 10; i++) {
+      for (let i = n - 45; i < n - 12; i++) {
         const e = snap(sym, (bars[i].h + bars[i].l) / 2);
         let hi = -Infinity;
         let lo = Infinity;
-        for (let j = i + 1; j < n; j++) {
+        for (let j = i; j < n; j++) {
           hi = Math.max(hi, bars[j].h);
           lo = Math.min(lo, bars[j].l);
         }
-        const safe = side > 0 ? lo > e - stopD * 0.9 && hi < e + tgtD * 0.85 : hi < e + stopD * 0.9 && lo > e - tgtD * 0.85;
-        if (!safe) continue;
+        const against = side > 0 ? e - lo : hi - e;
+        const toward = side > 0 ? hi - e : e - lo;
+        const stopD = Math.max(stopTicks * inst.tick, against + 6 * inst.tick);
+        const tgtD = Math.max(2 * stopD, toward + 8 * inst.tick);
         const gain = (last - e) * side;
-        const sc = Math.abs(gain - stopD * 0.4) + (gain < 0 ? stopD : 0);
+        if (gain <= 0) continue;
+        const sc = Math.abs(gain / stopD - 0.4) + Math.abs(n - i - 25) / 120;
         if (sc < score) {
           score = sc;
           best = i;
+          stopT = Math.round(stopD / inst.tick);
+          tgtT = Math.round(tgtD / inst.tick);
         }
       }
-      if (best < 0) {
-        // nothing clean in the last hour: open it on the last closed bar instead
-        best = n - 3;
-      }
-      ei = best;
+      ei = best >= 0 ? best : n - 3;
     }
     const eb = bars[ei];
     const entry = snap(sym, (eb.h + eb.l) / 2);
     const tAt = eb.t + 20_000;
-    for (const [phase, text, ago] of notes) if (phase === "before") d.notes.push({ id: uid("n"), tradeId: null, sym, phase, text, at: Math.min(tAt - 60_000, now - ago * 60_000), edits: [] });
-    const o: Order = { id: uid("o"), sym, side, qty, type: "MKT", role: "entry", attach: { stopTicks, targetTicks }, at: tAt };
+    // a "before" note's number is how many minutes ahead of the entry it was written
+    for (const [phase, text, ahead] of notes) if (phase === "before") d.notes.push({ id: uid("n"), tradeId: null, sym, phase, text, at: tAt - ahead * 60_000, edits: [] });
+    const o: Order = { id: uid("o"), sym, side, qty, type: "MKT", role: "entry", attach: { stopTicks: stopT, targetTicks: tgtT }, at: tAt };
     applyFill(d, o, qty, entry, tAt);
     const tradeId = d.positions[sym]!.tradeId;
     let closeAt = now;
@@ -647,18 +664,33 @@ function seed(): Partial<DeskState> {
   };
 
   trade("ES", -1, 2, 170, "win", [
-    ["before", "Failed auction at the highs. Short back to the mid, out if it reclaims.", 175],
+    ["before", "Failed auction at the highs. Short back to the mid, out if it reclaims.", 6],
     ["during", "Halfway there. Leaving the stop where it is.", 0.5],
     ["after", "Paid near the mid. Clean.", 1],
   ]);
   trade("NQ", 1, 1, 110, "loss", [
-    ["before", "Testing the overnight low from above. Small size.", 113],
+    ["before", "Testing the overnight low from above. Small size.", 3],
     ["after", "Wrong. It never held, and that was the plan if it broke.", 2],
   ]);
-  trade("NQ", 1, 2, 30, "open", [
-    ["before", "Reclaim of the overnight high on volume. Wrong below the 10:15 low.", 34],
-    ["during", "Holding. Stop stays under the low.", 0.6],
-  ]);
+  // the open trade goes with the last half hour, so it starts a little in profit
+  const nq = m.bars("NQ", 1);
+  const up = nq[nq.length - 1].c >= nq[Math.max(0, nq.length - 30)].c;
+  trade(
+    "NQ",
+    up ? 1 : -1,
+    2,
+    30,
+    "open",
+    up
+      ? [
+          ["before", "Reclaim of the overnight high on volume. Wrong below the swing low.", 4],
+          ["during", "Holding. Stop stays under the low.", 0.6],
+        ]
+      : [
+          ["before", "Rejected at the overnight high. Short while it stays under, wrong above the swing high.", 4],
+          ["during", "Holding. Stop stays over the high.", 0.6],
+        ],
+  );
   d.notes.sort((a, b) => a.at - b.at);
   return { positions: d.positions, orders: d.orders, fills: d.fills, trades: d.trades, notes: d.notes };
 }
