@@ -1,9 +1,6 @@
 "use client";
 
-import Link from "next/link";
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
-import { Mark } from "@/components/Mark";
-import { ThemeSwitch } from "@/components/ThemeSwitch";
+import { useMemo, useState, type CSSProperties } from "react";
 import { useFeed } from "@/components/landing/FeedProvider";
 import { POSITION, positionStats } from "@/lib/feed";
 import { fmt, money, signed } from "@/lib/format";
@@ -12,100 +9,13 @@ import { Calendar } from "./Calendar";
 import { EquityChart } from "./EquityChart";
 import { Journal, LongShort, Markets, RiskGauge, SessionDots } from "./Panels";
 import { Cell, LineMeter, Money, Odometer, Spark } from "./parts";
+import { useMarketClock } from "./clock";
 import s from "./trader.module.css";
 
 function k(n: number): string {
   const a = Math.abs(n);
   const v = a >= 1000 ? `$${(a / 1000).toFixed(1)}k` : `$${a.toFixed(0)}`;
   return (n < 0 ? "−" : "+") + v;
-}
-
-type Clock = { time: string; greeting: string; status: string; detail: string; open: boolean };
-
-/** New York clock and where the CME session stands. */
-function useMarketClock(): Clock | null {
-  const [c, setC] = useState<Clock | null>(null);
-  useEffect(() => {
-    const tick = () => {
-      const now = new Date();
-      const parts = Object.fromEntries(
-        new Intl.DateTimeFormat("en-US", {
-          timeZone: "America/New_York",
-          weekday: "short",
-          hour: "2-digit",
-          minute: "2-digit",
-          second: "2-digit",
-          hour12: false,
-        })
-          .formatToParts(now)
-          .map((p) => [p.type, p.value]),
-      );
-      const h = Number(parts.hour) % 24;
-      const m = Number(parts.minute);
-      const sec = Number(parts.second);
-      const wd = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(parts.weekday);
-      const mins = h * 60 + m;
-      const weekMin = wd * 1440 + mins;
-      const until = (target: number) => {
-        const d = (target - weekMin + 10080) % 10080;
-        const total = d * 60 - sec;
-        const hh = Math.floor(total / 3600);
-        const mm = Math.floor((total % 3600) / 60);
-        return hh >= 24 ? `${Math.floor(hh / 24)}d ${hh % 24}h` : `${hh}h ${String(mm).padStart(2, "0")}m`;
-      };
-      let status = "Globex open";
-      let detail = "Overnight session";
-      let open = true;
-      const weekend = wd === 6 || (wd === 0 && mins < 1080) || (wd === 5 && mins >= 1020);
-      if (weekend) {
-        status = "Market closed";
-        detail = `Globex opens Sun 6:00 PM · in ${until(1080)}`;
-        open = false;
-      } else if (wd >= 1 && wd <= 4 && mins >= 1020 && mins < 1080) {
-        status = "Daily halt";
-        detail = `Reopens 6:00 PM · in ${until(wd * 1440 + 1080)}`;
-        open = false;
-      } else if (wd >= 1 && wd <= 5 && mins >= 570 && mins < 960) {
-        status = "RTH open";
-        detail = `Cash close 4:00 PM · in ${until(wd * 1440 + 960)}`;
-      }
-      const greeting = h < 5 ? "Good evening" : h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
-      setC({ time: `${h % 12 || 12}:${parts.minute} ${h < 12 ? "AM" : "PM"}`, greeting, status, detail, open });
-    };
-    tick();
-    const id = window.setInterval(tick, 1000);
-    return () => window.clearInterval(id);
-  }, []);
-  return c;
-}
-
-/** Same shape as the public nav: wide-tracked wordmark left, mono links right. */
-function TopBar({ clock }: { clock: Clock | null }) {
-  return (
-    <nav className={s.nav} aria-label="Desk">
-      <Link href="/" className={s.brand} aria-label="Altron home">
-        <Mark size={26} />
-        <span className={s.brandName}>Altron</span>
-      </Link>
-      <div className={s.tabs} role="tablist" aria-label="Views">
-        <span role="tab" aria-selected="true" className={s.tab}>
-          Dashboard
-        </span>
-        <span role="tab" aria-selected="false" aria-disabled="true" className={s.tab} title="The trading desk is next">
-          Desk<em>Soon</em>
-        </span>
-      </div>
-      <div className={s.navRight}>
-        <span className={s.clock}>NY {clock?.time ?? "--:--"}</span>
-        <ThemeSwitch />
-        <span className={s.me} aria-label="Yazan, online">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/yazan.webp" alt="" width={36} height={36} />
-          <i />
-        </span>
-      </div>
-    </nav>
-  );
 }
 
 export function Dashboard() {
@@ -125,9 +35,7 @@ export function Dashboard() {
   const curve = st.curve;
 
   return (
-    <div className={s.root}>
-      <main className={s.page}>
-        <TopBar clock={clock} />
+    <>
 
           {/* headline number + equity */}
             <section className={s.hero}>
@@ -287,7 +195,6 @@ export function Dashboard() {
           </div>
         </div>
 
-      </main>
-    </div>
+    </>
   );
 }

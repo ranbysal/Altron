@@ -11,7 +11,9 @@ export function Cell({
   style,
   label,
   aside,
+  bodyClass,
 }: {
+  bodyClass?: string;
   children?: ReactNode;
   i?: number;
   className?: string;
@@ -27,7 +29,7 @@ export function Cell({
       <i className={`${s.node} ${s.nTR}`} aria-hidden="true" />
       <i className={`${s.node} ${s.nBL}`} aria-hidden="true" />
       <i className={`${s.node} ${s.nBR}`} aria-hidden="true" />
-      <div className={s.cellIn}>
+      <div className={`${s.cellIn} ${bodyClass ?? ""}`}>
         {(label || aside) && (
           <header className={s.cellHead}>
             <div className={s.label}>{label}</div>
