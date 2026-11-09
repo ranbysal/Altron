@@ -1,18 +1,14 @@
 .switch {
   position: relative;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 44px;
-  min-width: 44px;
-  padding: 0 10px;
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
   border: 0;
   background: transparent;
   color: var(--text);
-  font-family: var(--sans);
-  font-size: 20px;
-  font-weight: 400;
-  line-height: 1;
   cursor: pointer;
   isolation: isolate;
   transition: color 0.35s cubic-bezier(0.2, 0.8, 0.2, 1);
@@ -21,11 +17,7 @@
 .switch::before {
   content: "";
   position: absolute;
-  left: 50%;
-  top: 50%;
-  width: 48px;
-  height: 48px;
-  margin: -24px 0 0 -24px;
+  inset: 0;
   border-radius: 50%;
   background: var(--text);
   transform: scale(0);
@@ -33,43 +25,32 @@
   z-index: -1;
 }
 .switch:hover,
-.switch:focus-visible {
-  color: var(--bg);
-}
+.switch:focus-visible { color: var(--bg); }
 .switch:hover::before,
-.switch:focus-visible::before {
-  transform: scale(1);
-}
-.switch:focus-visible {
-  outline: none;
-}
-.window {
-  display: inline-block;
-  height: 1em;
-  overflow: hidden;
-}
-.strip {
-  display: flex;
-  flex-direction: column;
-  transition: transform 0.6s cubic-bezier(0.65, 0, 0.2, 1);
-}
-.strip > span {
-  display: block;
-  height: 1em;
-  line-height: 1;
-  text-align: center;
-}
-.strip[data-theme-active="light"] {
-  transform: translateY(-1em);
-}
+.switch:focus-visible::before { transform: scale(1); }
+.switch:focus-visible { outline: none; }
+
+/* a circle with one half filled; the fill turns over with the theme */
 .dot {
-  width: 12px;
-  height: 12px;
+  position: relative;
+  width: 14px;
+  height: 14px;
   border-radius: 50%;
   border: 1px solid currentColor;
-  background: transparent;
-  flex: none;
+  overflow: hidden;
+  transition: transform 0.7s cubic-bezier(0.65, 0, 0.2, 1);
 }
+.dot::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 50%;
+  background: currentColor;
+}
+.switch[data-on="dark"] .dot { transform: rotate(180deg); }
+
 @media (prefers-reduced-motion: reduce) {
-  .strip, .switch::before { transition: none; }
+  .dot, .switch::before { transition: none; }
 }

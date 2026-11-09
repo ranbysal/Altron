@@ -6,7 +6,8 @@ export function Sparkline({ values, className, up }: { values: number[]; classNa
   const min = Math.min(...values);
   const max = Math.max(...values);
   const span = max - min || 1;
-  const pts = values.map((v, i) => [(i / (values.length - 1)) * w, h - 3 - ((v - min) / span) * (h - 6)]);
+  // the live point always sits a little inside the right edge, never on it
+  const pts = values.map((v, i) => [(i / (values.length - 1)) * (w - 10), h - 4 - ((v - min) / span) * (h - 8)]);
   const d = pts.map((p, i) => `${i ? "L" : "M"}${p[0].toFixed(1)} ${p[1].toFixed(1)}`).join(" ");
   const last = pts[pts.length - 1];
   const color = up ? "var(--blue)" : "var(--ember)";
@@ -18,7 +19,7 @@ export function Sparkline({ values, className, up }: { values: number[]; classNa
           <stop offset="1" stopColor={color} stopOpacity="0" />
         </linearGradient>
       </defs>
-      <path d={`${d} L${w} ${h} L0 ${h} Z`} fill="url(#altSparkFill)" />
+      <path d={`${d} L${last[0]} ${h} L0 ${h} Z`} fill="url(#altSparkFill)" />
       <path d={d} fill="none" stroke={color} strokeWidth="1.25" strokeLinejoin="round" strokeLinecap="round" />
       <circle cx={last[0]} cy={last[1]} r="2.5" fill={color} />
     </svg>

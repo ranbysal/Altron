@@ -7,8 +7,8 @@ import { THEME_KEY } from "./theme-boot";
 export type Theme = "dark" | "light";
 
 export function currentTheme(): Theme {
-  if (typeof document === "undefined") return "dark";
-  return document.documentElement.dataset.theme === "light" ? "light" : "dark";
+  if (typeof document === "undefined") return "light";
+  return document.documentElement.dataset.theme === "dark" ? "dark" : "light";
 }
 
 export function setTheme(t: Theme) {
@@ -29,9 +29,9 @@ export function onThemeChange(cb: (t: Theme) => void): () => void {
   return () => mo.disconnect();
 }
 
-/** Current theme as React state; "dark" during SSR, then the real value after mount. */
+/** Current theme as React state; "light" during SSR, then the real value after mount. */
 export function useTheme(): Theme {
-  const [t, setT] = useState<Theme>("dark");
+  const [t, setT] = useState<Theme>("light");
   useEffect(() => {
     setT(currentTheme());
     return onThemeChange(setT);

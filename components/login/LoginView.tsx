@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { Mark } from "@/components/Mark";
 import { ThemeSwitch } from "@/components/ThemeSwitch";
@@ -45,6 +46,7 @@ export function LoginView() {
   }, []);
 
   const desk = role === "desk";
+  const router = useRouter();
   const pick = (r: Role) => {
     setRole(r);
     setNotice(false);
@@ -82,6 +84,11 @@ export function LoginView() {
               setNotice(false);
               window.clearTimeout(timer.current);
               timer.current = window.setTimeout(() => {
+                // no auth yet: the desk side goes straight to Yazan's dashboard
+                if (desk) {
+                  router.push("/trader");
+                  return;
+                }
                 setBusy(false);
                 setNotice(true);
               }, 1400);
