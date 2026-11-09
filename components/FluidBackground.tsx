@@ -1,5 +1,6 @@
 "use client";
 
+import { usePathname } from "next/navigation";
 import { useEffect, useRef } from "react";
 import { prefersReducedMotion } from "@/lib/canvas";
 import { cssVar, onThemeChange } from "@/lib/theme";
@@ -119,7 +120,17 @@ function hexToRgb(hex: string): [number, number, number] {
   return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
 }
 
+/**
+ * The trader pages paint an opaque page over the whole window, so the fluid
+ * would simulate every frame for nothing. It only mounts where it can be seen.
+ */
 export function FluidBackground() {
+  const path = usePathname() ?? "/";
+  if (path.startsWith("/trader")) return null;
+  return <Fluid />;
+}
+
+function Fluid() {
   const ref = useRef<HTMLCanvasElement>(null);
   const fallbackRef = useRef<HTMLDivElement>(null);
 
@@ -450,6 +461,7 @@ export function FluidBackground() {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("resize", onResize);
       offTheme();
+      gl.getExtension("WEBGL_lose_context")?.loseContext();
     };
   }, []);
 

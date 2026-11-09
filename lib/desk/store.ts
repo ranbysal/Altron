@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { INSTRUMENTS, SYMS, snap, tickValue, type Sym, type Timeframe } from "./instruments";
+import { INSTRUMENTS, SYMS, TIMEFRAMES, snap, tickValue, type Sym, type Timeframe } from "./instruments";
 import { Market, nyClock, type Quote } from "./market";
 
 /**
@@ -60,9 +60,16 @@ export type Settings = {
   stopTicks: Record<Sym, number>;
   targetTicks: Record<Sym, number>;
   hotkeys: boolean;
-  panels: { instant: boolean; pnl: boolean; markets: boolean };
+  panels: { pnl: boolean; markets: boolean };
+  /** the blotter is showing; its height and the right column's width are in `layout` */
   blotter: boolean;
+  layout: { blot: number; right: number };
+  chart: { volume: boolean; fills: boolean; zone: boolean; grid: boolean; log: boolean };
+  /** how the bracket distances are entered */
+  unit: "t" | "pts" | "$";
 };
+
+export type Alert = { id: string; sym: Sym; price: number; above: boolean; at: number };
 
 export type Ticket = { type: OrderType; limit: number | null; stop: number | null; trail: number };
 
@@ -84,6 +91,9 @@ export type DeskState = {
   shortcuts: boolean;
   /** the notes pop-up; always starts closed */
   notesOpen: boolean;
+  alerts: Alert[];
+  /** a deal button is hovered: the chart previews that side's bracket */
+  preview: 0 | 1 | -1;
   tick: number;
 };
 
@@ -101,8 +111,11 @@ const DEFAULT_SETTINGS: Settings = {
   stopTicks: { NQ: 80, ES: 24, MNQ: 80, MES: 24 },
   targetTicks: { NQ: 160, ES: 48, MNQ: 160, MES: 48 },
   hotkeys: true,
-  panels: { instant: false, pnl: false, markets: false },
+  panels: { pnl: false, markets: false },
   blotter: true,
+  layout: { blot: 158, right: 300 },
+  chart: { volume: true, fills: true, zone: true, grid: true, log: false },
+  unit: "t",
 };
 
 const blankQuote = (): Quote => ({ last: 0, bid: 0, ask: 0, prev: 0, hi: 0, lo: 0, dir: 0, at: 0 });
@@ -124,6 +137,8 @@ export const useDesk = create<DeskState>(() => ({
   pick: null,
   shortcuts: false,
   notesOpen: false,
+  alerts: [],
+  preview: 0,
   tick: 0,
 }));
 
@@ -131,6 +146,7 @@ let market: Market | null = null;
 export const getMarket = () => market;
 
 let seq = 0;
+const fmtPrice = (p: number) => p.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const uid = (p: string) => `${p}${Date.now().toString(36)}${(seq++).toString(36)}`;
 const set = useDesk.setState;
 const get = useDesk.getState;
@@ -313,6 +329,33 @@ function work(d: Draft, sym: Sym, q: Quote, at: number) {
       break;
     }
   }
+}
+
+/** True when two lists hold the same items in the same order. */
+function sameList<T>(a: readonly T[], b: readonly T[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
+function sameBook(a: Draft["positions"], b: Draft["positions"]): boolean {
+  if (a === b) return true;
+  const ka = Object.keys(a) as Sym[];
+  if (ka.length !== Object.keys(b).length) return false;
+  return ka.every((k) => a[k] === b[k]);
+}
+
+/** Only the parts of a draft that actually changed, so a quiet tick re-renders nothing. */
+function changes(d: Draft, s: Draft): Partial<Draft> {
+  const out: Partial<Draft> = {};
+  if (!sameBook(d.positions, s.positions)) out.positions = d.positions;
+  if (!sameList(d.orders, s.orders)) out.orders = d.orders;
+  if (!sameList(d.fills, s.fills)) out.fills = d.fills;
+  if (!sameList(d.trades, s.trades)) out.trades = d.trades;
+  if (!sameList(d.notes, s.notes)) out.notes = d.notes;
+  if (!sameList(d.toasts, s.toasts)) out.toasts = d.toasts;
+  return out;
 }
 
 function commit(d: Draft) {
@@ -499,16 +542,71 @@ export function setThread(id: string | null) {
 export function setPick(p: DeskState["pick"]) {
   set({ pick: p });
 }
-export function togglePanel(which: "instant" | "pnl" | "markets", open?: boolean) {
+export function togglePanel(which: "pnl" | "markets", open?: boolean) {
   const s = get().settings;
   set({ settings: { ...s, panels: { ...s.panels, [which]: open ?? !s.panels[which] } } });
 }
+/* ------------------------------------------------------------------ */
+/* price alerts                                                        */
+/* ------------------------------------------------------------------ */
+
+export function addAlert(sym: Sym, price: number) {
+  const p = snap(sym, price);
+  const last = get().quotes[sym].last;
+  if (p === last) return;
+  const a: Alert = { id: uid("a"), sym, price: p, above: p > last, at: Date.now() };
+  set({ alerts: [...get().alerts, a], toasts: [...get().toasts, { id: uid("t"), tone: "plain", title: `Alert set at ${fmtPrice(p)}`, body: `${INSTRUMENTS[sym].code} · ${p > last ? "crossing up" : "crossing down"}`, at: Date.now() }] });
+}
+export function moveAlert(id: string, price: number) {
+  const s = get();
+  set({
+    alerts: s.alerts.map((a) => {
+      if (a.id !== id) return a;
+      const p = snap(a.sym, price);
+      return { ...a, price: p, above: p > s.quotes[a.sym].last };
+    }),
+  });
+}
+export function removeAlert(id: string) {
+  set({ alerts: get().alerts.filter((a) => a.id !== id) });
+}
+
+let audio: AudioContext | null = null;
+/** A soft two-note chime; quiet enough to live with. */
+function chime() {
+  try {
+    audio = audio ?? new AudioContext();
+    const t = audio.currentTime;
+    [880, 1320].forEach((f, i) => {
+      const o = audio!.createOscillator();
+      const g = audio!.createGain();
+      o.type = "sine";
+      o.frequency.value = f;
+      g.gain.setValueAtTime(0, t + i * 0.12);
+      g.gain.linearRampToValueAtTime(0.06, t + i * 0.12 + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + i * 0.12 + 0.5);
+      o.connect(g).connect(audio!.destination);
+      o.start(t + i * 0.12);
+      o.stop(t + i * 0.12 + 0.55);
+    });
+  } catch {
+    /* no audio */
+  }
+}
+
+export function setPreview(side: 0 | 1 | -1) {
+  if (get().preview !== side) set({ preview: side });
+}
+
 export function toggleNotes(open?: boolean) {
   set({ notesOpen: open ?? !get().notesOpen });
 }
 export function toggleBlotter(open?: boolean) {
   const s = get().settings;
-  set({ settings: { ...s, blotter: open ?? !s.blotter } });
+  const next = open ?? !s.blotter;
+  // coming back from out of sight: a working height, not one that hides the chart
+  const blot = next && !s.blotter && s.layout.blot >= 10000 ? 158 : s.layout.blot;
+  set({ settings: { ...s, blotter: next, layout: { ...s.layout, blot } } });
 }
 export function showShortcuts(v: boolean) {
   set({ shortcuts: v });
@@ -549,7 +647,7 @@ export function realizedSince(trades: Trade[], since: number): number {
 /* boot, tape and persistence                                          */
 /* ------------------------------------------------------------------ */
 
-type Saved = Pick<DeskState, "positions" | "orders" | "fills" | "trades" | "notes" | "settings"> & { prices?: { NQ: number; ES: number }; v: 1 };
+type Saved = Pick<DeskState, "positions" | "orders" | "fills" | "trades" | "notes" | "settings"> & { alerts?: Alert[] } & { prices?: { NQ: number; ES: number }; v: 1 };
 
 function load(): Saved | null {
   try {
@@ -572,6 +670,7 @@ function save() {
     fills: s.fills.slice(-400),
     trades: s.trades.slice(-300),
     notes: s.notes,
+    alerts: s.alerts,
     settings: s.settings,
     prices: { NQ: market.quote("NQ").last, ES: market.quote("ES").last },
   };
@@ -591,7 +690,7 @@ function seed(): Partial<DeskState> {
 
   const trade = (sym: Sym, side: Side, qty: number, entryAgo: number, outcome: "win" | "loss" | "open", notes: [Phase, string, number][]) => {
     const inst = INSTRUMENTS[sym];
-    const bars: Bars = m.bars(inst.under, 1);
+    const bars: Bars = m.bars(inst.under, 60);
     const n = bars.length;
     const stopTicks = DEFAULT_SETTINGS.stopTicks[sym];
     const targetTicks = DEFAULT_SETTINGS.targetTicks[sym];
@@ -703,7 +802,22 @@ export function startDesk() {
   const saved = load();
   market = new Market(saved?.prices);
   const base: Partial<DeskState> = saved
-    ? { positions: saved.positions, orders: saved.orders, fills: saved.fills, trades: saved.trades, notes: saved.notes, settings: { ...DEFAULT_SETTINGS, ...saved.settings, panels: { ...DEFAULT_SETTINGS.panels, ...saved.settings?.panels } } }
+    ? {
+        positions: saved.positions,
+        orders: saved.orders,
+        fills: saved.fills,
+        trades: saved.trades,
+        notes: saved.notes,
+        alerts: saved.alerts ?? [],
+        settings: {
+          ...DEFAULT_SETTINGS,
+          ...saved.settings,
+          tf: TIMEFRAMES.some((x) => x.id === saved.settings?.tf) ? saved.settings.tf : DEFAULT_SETTINGS.tf,
+          panels: { pnl: !!saved.settings?.panels?.pnl, markets: !!saved.settings?.panels?.markets },
+          layout: { ...DEFAULT_SETTINGS.layout, ...saved.settings?.layout },
+          chart: { ...DEFAULT_SETTINGS.chart, ...saved.settings?.chart },
+        },
+      }
     : {};
   set({ quotes: readQuotes(), ready: true, ...base });
   if (!saved) set(seed());
@@ -721,7 +835,19 @@ export function startDesk() {
       if (s.orders.length) {
         const d = draft();
         for (const sym of SYMS) if (d.orders.some((o) => o.sym === sym)) work(d, sym, quotes[sym], now);
-        Object.assign(patch, { positions: d.positions, orders: d.orders, fills: d.fills, trades: d.trades, notes: d.notes, toasts: d.toasts });
+        Object.assign(patch, changes(d, s));
+      }
+    }
+    if (moved && s.alerts.length) {
+      const quotes = patch.quotes ?? s.quotes;
+      const hit = s.alerts.filter((a) => (a.above ? quotes[a.sym].last >= a.price : quotes[a.sym].last <= a.price));
+      if (hit.length) {
+        patch.alerts = s.alerts.filter((a) => !hit.includes(a));
+        patch.toasts = [
+          ...(patch.toasts ?? s.toasts),
+          ...hit.map((a) => ({ id: uid("t"), tone: a.above ? ("pos" as const) : ("neg" as const), title: `${INSTRUMENTS[a.sym].code} crossed ${fmtPrice(a.price)}`, body: "Alert", at: now })),
+        ];
+        chime();
       }
     }
     if (s.armedUntil && s.armedUntil < now) patch.armedUntil = 0;
@@ -729,12 +855,15 @@ export function startDesk() {
     set(patch);
   }, 250);
 
-  // persist the book when it changes, and prices now and then
+  // persist the book soon after it changes (never starved by a busy tape), and prices now and then
   let timer = 0;
   useDesk.subscribe((s, prev) => {
-    if (s.positions === prev.positions && s.orders === prev.orders && s.trades === prev.trades && s.notes === prev.notes && s.settings === prev.settings) return;
-    window.clearTimeout(timer);
-    timer = window.setTimeout(save, 400);
+    if (s.positions === prev.positions && s.orders === prev.orders && s.trades === prev.trades && s.notes === prev.notes && s.settings === prev.settings && s.alerts === prev.alerts) return;
+    if (timer) return;
+    timer = window.setTimeout(() => {
+      timer = 0;
+      save();
+    }, 400);
   });
   window.setInterval(save, 15_000);
   window.addEventListener("pagehide", save);

@@ -12,7 +12,7 @@ import t from "@/components/trader/trader.module.css";
 import { Thread } from "./Thread";
 import s from "./desk.module.css";
 
-type Which = "instant" | "pnl" | "notes";
+type Which = "pnl" | "notes";
 
 /* ------------------------------------------------------------------ */
 /* the lock                                                            */
@@ -56,30 +56,6 @@ function Lock({ nudge }: { nudge: number }) {
 /* panel bodies (shared by the floating card and the pop-out window)   */
 /* ------------------------------------------------------------------ */
 
-function Sizes({ onDone }: { onDone: () => void }) {
-  const sizes = useDesk((st) => st.settings.sizes);
-  const edit = (kind: "mini" | "micro", i: number, v: string) => {
-    const n = Math.max(1, Math.min(99, parseInt(v, 10) || 1));
-    const next = { ...sizes, [kind]: sizes[kind].map((x, k) => (k === i ? n : x)) };
-    setSettings({ sizes: next });
-  };
-  return (
-    <div className={s.sizes}>
-      {(["mini", "micro"] as const).map((kind) => (
-        <div key={kind} className={s.sizesRow}>
-          <span>{kind === "mini" ? "Minis" : "Micros"}</span>
-          {sizes[kind].map((n, i) => (
-            <input key={i} inputMode="numeric" aria-label={`${kind} size ${i + 1}`} defaultValue={n} onBlur={(e) => edit(kind, i, e.target.value)} />
-          ))}
-        </div>
-      ))}
-      <button type="button" className={s.sizesDone} onClick={onDone}>
-        Done
-      </button>
-    </div>
-  );
-}
-
 function useFire(sym: Sym, onLocked: () => void) {
   const { armed } = useArmed();
   /** The bypass-confirmation path: direction and size straight to a market order. */
@@ -91,65 +67,6 @@ function useFire(sym: Sym, onLocked: () => void) {
       keepArmed();
     },
     [armed, sym, onLocked],
-  );
-}
-
-export function InstantBody({ onLocked, compact = false }: { onLocked: () => void; compact?: boolean }) {
-  const sym = useDesk((st) => st.settings.sym);
-  const pos = useDesk((st) => st.positions[sym]);
-  const sizes = useDesk((st) => st.settings.sizes);
-  const positions = useDesk((st) => st.positions);
-  const quotes = useDesk((st) => st.quotes);
-  const { armed } = useArmed();
-  const fire = useFire(sym, onLocked);
-  const inst = INSTRUMENTS[sym];
-  const list = inst.micro ? sizes.micro : sizes.mini;
-  const size = pos ? Math.abs(pos.qty) : 0;
-  const dir = pos ? (-Math.sign(pos.qty) as Side) : -1;
-  const open = openPnl({ positions, quotes }, sym);
-
-  return (
-    <div className={`${s.inst} ${armed ? s.isArmed : s.isLocked} ${compact ? s.instCompact : ""}`}>
-      <div className={s.instCols}>
-        <div className={s.instCol}>
-          <span className={s.instHead}>
-            Buy <em>{inst.code}</em>
-          </span>
-          {list.map((n, i) => (
-            <button key={i} type="button" className={s.instBuy} onClick={() => fire(1, n)}>
-              <span>+{n}</span>
-            </button>
-          ))}
-        </div>
-        <div className={s.instCol}>
-          <span className={s.instHead}>
-            {pos && pos.qty < 0 ? "Cover" : "Sell"} <em>of {size || 0}</em>
-          </span>
-          {[0.25, 0.5, 1].map((p) => {
-            const q = p >= 1 ? size : Math.max(1, Math.min(size, Math.round(size * p)));
-            return (
-              <button key={p} type="button" className={s.instSell} disabled={!pos} onClick={() => fire(dir, q)}>
-                <span>{p * 100}%</span>
-                {pos && <em>{q}</em>}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-      <div className={s.instFoot}>
-        {pos ? (
-          <>
-            <span className={`${s.side} ${pos.qty > 0 ? s.sideL : s.sideS}`}>{pos.qty > 0 ? "Long" : "Short"}</span>
-            <span>
-              {size} @ {fmt(pos.avg)}
-            </span>
-            <b className={open >= 0 ? s.pos : s.neg}>{money(open)}</b>
-          </>
-        ) : (
-          <span className={s.dim}>Flat in {inst.code}</span>
-        )}
-      </div>
-    </div>
   );
 }
 
@@ -219,41 +136,33 @@ export function PnlBody({ onLocked, compact = false }: { onLocked: () => void; c
 type DocPip = { requestWindow: (o: { width: number; height: number }) => Promise<Window>; window: Window | null };
 const docPip = (): DocPip | null => (typeof window !== "undefined" && "documentPictureInPicture" in window ? (window as unknown as { documentPictureInPicture: DocPip }).documentPictureInPicture : null);
 
-const usePip = create<{ open: boolean; tab: Which }>(() => ({ open: false, tab: "instant" }));
+const usePip = create<{ open: boolean }>(() => ({ open: false }));
 let pipRoot: Root | null = null;
 
 function PipApp() {
-  const tab = usePip((st) => st.tab);
   const sym = useDesk((st) => st.settings.sym);
   const [nudge, setNudge] = useState(0);
   const locked = useCallback(() => setNudge((n) => n + 1), []);
   return (
     <div className={s.pipApp}>
       <header className={s.pipHead}>
-        <div className={s.pipTabs} role="tablist">
-          {(["instant", "pnl"] as const).map((w) => (
-            <button key={w} type="button" role="tab" aria-selected={tab === w} onClick={() => usePip.setState({ tab: w })}>
-              {w === "instant" ? "Instant" : "Live P&L"}
-            </button>
-          ))}
-        </div>
+        <span className={s.floatTitle}>Live P&amp;L</span>
         <span className={s.pipSym}>{INSTRUMENTS[sym].code}</span>
         <Lock nudge={nudge} />
       </header>
-      {tab === "instant" ? <InstantBody onLocked={locked} compact /> : <PnlBody onLocked={locked} compact />}
+      <PnlBody onLocked={locked} compact />
     </div>
   );
 }
 
-async function popOut(tab: Which) {
+async function popOut() {
   const api = docPip();
   if (!api) return false;
-  usePip.setState({ tab });
   if (api.window) {
     api.window.focus();
     return true;
   }
-  const w = await api.requestWindow({ width: 300, height: tab === "instant" ? 268 : 214 });
+  const w = await api.requestWindow({ width: 300, height: 214 });
   for (const sheet of Array.from(document.styleSheets)) {
     try {
       const css = Array.from(sheet.cssRules)
@@ -300,19 +209,17 @@ async function popOut(tab: Which) {
 /** Where a panel lives: an offset from the corner it was dropped nearest, so it
  * stays put when the window resizes and grows away from the edge it sits on. */
 type Anchor = { ax: "l" | "r"; ay: "t" | "b"; x: number; y: number };
-const W: Record<Which, number> = { instant: 300, pnl: 288, notes: 356 };
+const W: Record<Which, number> = { pnl: 288, notes: 356 };
 const KEY = (id: Which) => `altron-float-${id}-v3`;
 
 /** First placement: notes at the top left of the chart, the trading panels at its
  * bottom left, clear of the live candle, the price axis and the ticket. */
 function defaultAnchor(id: Which): Anchor {
   const plot = document.querySelector("[data-plot]")?.getBoundingClientRect();
-  if (!plot) return id === "notes" ? { ax: "l", ay: "t", x: 24, y: 160 } : { ax: "r", ay: "b", x: id === "instant" ? 24 : 24 + W.instant + 12, y: 24 };
+  if (!plot) return id === "notes" ? { ax: "l", ay: "t", x: 24, y: 160 } : { ax: "r", ay: "b", x: 24, y: 24 };
   const x = Math.round(plot.left + 16);
-  const y = Math.round(window.innerHeight - plot.bottom + 38);
   if (id === "notes") return { ax: "l", ay: "t", x, y: Math.round(plot.top + 38) };
-  if (id === "pnl") return { ax: "l", ay: "b", x, y };
-  return { ax: "l", ay: "b", x: x + W.pnl + 12, y };
+  return { ax: "l", ay: "b", x, y: Math.round(window.innerHeight - plot.bottom + 38) };
 }
 
 function loadAnchor(id: Which): Anchor {
@@ -325,25 +232,49 @@ function loadAnchor(id: Which): Anchor {
   return defaultAnchor(id);
 }
 
+/**
+ * A card that floats over the desk. While it's dragged it moves by writing its
+ * transform straight to the element, so React does nothing until it's dropped.
+ */
 function Floating({ id, title, children, nudge, onClose, extra }: { id: Which; title: string; children: ReactNode; nudge?: number; onClose: () => void; extra?: ReactNode }) {
   const [anchor, setAnchor] = useState<Anchor | null>(null);
-  const [box, setBox] = useState({ h: 0, vw: 0, vh: 0 });
-  const [drag, setDrag] = useState<{ left: number; top: number } | null>(null);
-  const [gear, setGear] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const box = useRef({ h: 0, vw: 0, vh: 0 });
+  const at = useRef({ left: 0, top: 0 });
   const start = useRef<{ px: number; py: number; left: number; top: number } | null>(null);
-  const live = useRef<{ left: number; top: number } | null>(null);
-  const canPop = !!docPip();
+  const anchorRef = useRef<Anchor | null>(null);
+  anchorRef.current = anchor;
+  const canPop = !!docPip() && id === "pnl";
   const w = W[id];
   const placed = anchor !== null;
 
   useEffect(() => setAnchor(loadAnchor(id)), [id]);
 
+  const place = useCallback(
+    (smooth: boolean) => {
+      const el = ref.current;
+      const a = anchorRef.current;
+      if (!el || !a) return;
+      const b = box.current;
+      const left = Math.max(8, Math.min(b.vw - w - 8, a.ax === "l" ? a.x : b.vw - w - a.x));
+      const top = Math.max(8, Math.min(b.vh - b.h - 8, a.ay === "t" ? a.y : b.vh - b.h - a.y));
+      at.current = { left, top };
+      el.style.transition = smooth ? "" : "none";
+      el.style.transform = `translate3d(${left}px, ${top}px, 0)`;
+      el.classList.add(s.floatPlaced);
+    },
+    [w],
+  );
+
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const measure = () => setBox({ h: el.offsetHeight, vw: window.innerWidth, vh: window.innerHeight });
-    measure();
+    const measure = () => {
+      box.current = { h: el.offsetHeight, vw: window.innerWidth, vh: window.innerHeight };
+      if (!start.current) place(true);
+    };
+    box.current = { h: el.offsetHeight, vw: window.innerWidth, vh: window.innerHeight };
+    place(false);
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     window.addEventListener("resize", measure);
@@ -351,49 +282,48 @@ function Floating({ id, title, children, nudge, onClose, extra }: { id: Which; t
       ro.disconnect();
       window.removeEventListener("resize", measure);
     };
-  }, [placed]);
+  }, [placed, place]);
 
-  const clampX = (l: number) => Math.max(8, Math.min(box.vw - w - 8, l));
-  const clampY = (t: number) => Math.max(8, Math.min(box.vh - box.h - 8, t));
-  let left = 0;
-  let top = 0;
-  if (drag) {
-    left = drag.left;
-    top = drag.top;
-  } else if (anchor) {
-    left = clampX(anchor.ax === "l" ? anchor.x : box.vw - w - anchor.x);
-    top = clampY(anchor.ay === "t" ? anchor.y : box.vh - box.h - anchor.y);
-  }
+  useEffect(() => {
+    if (anchor) place(true);
+  }, [anchor, place]);
 
   const down = (e: React.PointerEvent) => {
-    if ((e.target as Element).closest("button, input")) return;
+    if ((e.target as Element).closest("button, input, textarea")) return;
+    const el = ref.current;
+    if (!el) return;
     (e.currentTarget as Element).setPointerCapture(e.pointerId);
-    start.current = { px: e.clientX, py: e.clientY, left, top };
-    live.current = { left, top };
-    setDrag({ left, top });
+    start.current = { px: e.clientX, py: e.clientY, ...at.current };
+    el.style.transition = "none";
+    el.classList.add(s.floatDrag);
   };
   const move = (e: React.PointerEvent) => {
     const st = start.current;
-    if (!st) return;
-    const next = { left: clampX(st.left + e.clientX - st.px), top: clampY(st.top + e.clientY - st.py) };
-    live.current = next;
-    setDrag(next);
+    const el = ref.current;
+    if (!st || !el) return;
+    const b = box.current;
+    const left = Math.max(8, Math.min(b.vw - w - 8, st.left + e.clientX - st.px));
+    const top = Math.max(8, Math.min(b.vh - b.h - 8, st.top + e.clientY - st.py));
+    at.current = { left, top };
+    el.style.transform = `translate3d(${left}px, ${top}px, 0)`;
   };
   const up = () => {
-    const d = live.current;
-    if (!start.current || !d) return;
+    const el = ref.current;
+    if (!start.current || !el) return;
     start.current = null;
-    live.current = null;
-    const ax = d.left + w / 2 < box.vw / 2 ? "l" : "r";
-    const ay = d.top + box.h / 2 < box.vh / 2 ? "t" : "b";
-    let x = ax === "l" ? d.left : box.vw - w - d.left;
-    let y = ay === "t" ? d.top : box.vh - box.h - d.top;
+    el.classList.remove(s.floatDrag);
+    el.style.transition = "";
+    const b = box.current;
+    const d = at.current;
+    const ax = d.left + w / 2 < b.vw / 2 ? "l" : "r";
+    const ay = d.top + b.h / 2 < b.vh / 2 ? "t" : "b";
+    let x = ax === "l" ? d.left : b.vw - w - d.left;
+    let y = ay === "t" ? d.top : b.vh - b.h - d.top;
     // settle against an edge when dropped close to one
     if (x < 40) x = 16;
     if (y < 40) y = 16;
     const next: Anchor = { ax, ay, x: Math.round(x), y: Math.round(y) };
     setAnchor(next);
-    setDrag(null);
     try {
       localStorage.setItem(KEY(id), JSON.stringify(next));
     } catch {
@@ -403,13 +333,7 @@ function Floating({ id, title, children, nudge, onClose, extra }: { id: Which; t
 
   if (!anchor) return null;
   return (
-    <div
-      ref={ref}
-      className={`${s.float} ${box.h ? s.floatPlaced : ""} ${drag ? s.floatDrag : ""}`}
-      style={{ transform: `translate3d(${left}px, ${top}px, 0)`, width: w } as CSSProperties}
-      role="dialog"
-      aria-label={title}
-    >
+    <div ref={ref} className={s.float} style={{ width: w } as CSSProperties} role="dialog" aria-label={title}>
       <div className={s.floatHandle} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}>
         <span className={s.grip} aria-hidden="true">
           {Array.from({ length: 6 }, (_, i) => (
@@ -420,21 +344,8 @@ function Floating({ id, title, children, nudge, onClose, extra }: { id: Which; t
         {extra}
         <span className={s.floatActions}>
           {nudge !== undefined && <Lock nudge={nudge} />}
-          {id === "instant" && (
-            <button type="button" className={s.fBtn} aria-pressed={gear} onClick={() => setGear((v) => !v)} title="Button sizes" aria-label="Button sizes">
-              <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
-                <circle cx="8" cy="8" r="2.2" fill="none" stroke="currentColor" strokeWidth="1.2" />
-                <path
-                  d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4"
-                  stroke="currentColor"
-                  strokeWidth="1.2"
-                  strokeLinecap="round"
-                />
-              </svg>
-            </button>
-          )}
-          {canPop && id !== "notes" && (
-            <button type="button" className={s.fBtn} onClick={() => popOut(id)} title="Pop out over other windows" aria-label="Pop out">
+          {canPop && (
+            <button type="button" className={s.fBtn} onClick={() => popOut()} title="Pop out over other windows" aria-label="Pop out">
               <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
                 <rect x="1.5" y="3.5" width="10" height="9" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.2" />
                 <path d="M8.5 1.5h6v6M14.5 1.5 8 8" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
@@ -448,7 +359,7 @@ function Floating({ id, title, children, nudge, onClose, extra }: { id: Which; t
           </button>
         </span>
       </div>
-      {gear && id === "instant" ? <Sizes onDone={() => setGear(false)} /> : children}
+      {children}
     </div>
   );
 }
@@ -456,9 +367,9 @@ function Floating({ id, title, children, nudge, onClose, extra }: { id: Which; t
 /** Floating panels for the whole trader area, plus the pop-out window. */
 export function FloatLayer() {
   const ready = useDesk((st) => st.ready);
-  const panels = useDesk((st) => st.settings.panels);
+  const pnl = useDesk((st) => st.settings.panels.pnl);
   const notesOpen = useDesk((st) => st.notesOpen);
-  const pip = usePip();
+  const pipOpen = usePip((st) => st.open);
   const [nudge, setNudge] = useState(0);
   const locked = useCallback(() => setNudge((n) => n + 1), []);
   if (!ready) return null;
@@ -471,12 +382,7 @@ export function FloatLayer() {
           </div>
         </Floating>
       )}
-      {panels.instant && !(pip.open && pip.tab === "instant") && (
-        <Floating id="instant" title="Instant" nudge={nudge} onClose={() => togglePanel("instant", false)}>
-          <InstantBody onLocked={locked} />
-        </Floating>
-      )}
-      {panels.pnl && !(pip.open && pip.tab === "pnl") && (
+      {pnl && !pipOpen && (
         <Floating id="pnl" title="Live P&L" nudge={nudge} onClose={() => togglePanel("pnl", false)}>
           <PnlBody onLocked={locked} />
         </Floating>

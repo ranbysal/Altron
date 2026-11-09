@@ -121,7 +121,7 @@ export function Position() {
     if (pos) {
       const m = getMarket();
       if (!m) return { path: [] as number[], mfe: 0, mae: 0 };
-      const bars = m.bars(inst.under, 1);
+      const bars = m.bars(inst.under, 60);
       const out = [0];
       let best = Math.max(0, open);
       let worst = Math.min(0, open);

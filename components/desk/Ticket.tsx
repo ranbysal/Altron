@@ -2,8 +2,8 @@
 
 import { useEffect, useState, type CSSProperties } from "react";
 import { fmt } from "@/lib/format";
-import { INSTRUMENTS, snap, tickValue } from "@/lib/desk/instruments";
-import { placeOrder, setPick, setSettings, setTicket, useDesk, type OrderType, type Side } from "@/lib/desk/store";
+import { DAY_MARGIN, INSTRUMENTS, snap, tickValue } from "@/lib/desk/instruments";
+import { ACCOUNT, openPnl, placeOrder, setPick, setPreview, setSettings, setTicket, useDesk, type OrderType, type Side } from "@/lib/desk/store";
 import { Odometer } from "@/components/trader/parts";
 import { BAYER4 } from "@/lib/noise";
 import s from "./desk.module.css";
@@ -149,17 +149,41 @@ export function Ticket() {
   const risk = stopT * tv * qty;
   const reward = tgtT * tv * qty;
   const ti = TYPES.findIndex((x) => x.id === t);
+  const preview = useDesk((st) => st.preview);
+  const positions = useDesk((st) => st.positions);
+  const trades = useDesk((st) => st.trades);
+  const quotes = useDesk((st) => st.quotes);
+  const unit = settings.unit;
+
+  // what the order would tie up, as on a broker's ticket
+  const notional = quote.last * inst.pv * qty;
+  const used = Object.values(positions).reduce((a, p) => a + (p ? Math.abs(p.qty) * DAY_MARGIN[p.sym] : 0), 0);
+  const equity = ACCOUNT.start + trades.reduce((a, x) => a + x.pnl, 0) + openPnl({ positions, quotes });
+  const avail = equity - used;
+
+  // bracket distances in the chosen unit; stored as ticks
+  const perTick = { t: 1, pts: inst.tick, $: tv * qty }[unit];
+  const toTicks = (v: number) => Math.max(1, Math.round(v / perTick));
+  const shown = (ticks: number) => +(ticks * perTick).toFixed(2);
+  const stepOf = { t: 4, pts: 4 * inst.tick, $: 4 * tv * qty }[unit];
+  const entryFor = (side: Side) => (side > 0 ? quote.ask : quote.bid);
+  const hover = (side: 0 | Side) => ({
+    onMouseEnter: () => setPreview(side),
+    onMouseLeave: () => setPreview(0),
+    onFocus: () => setPreview(side),
+    onBlur: () => setPreview(0),
+  });
 
   return (
     <div className={s.ticket}>
       <div className={s.deal} style={tex ? ({ "--dither": `url(${tex})` } as CSSProperties) : undefined}>
-        <button type="button" className={`${s.dealBtn} ${s.dealSell}`} onClick={() => send(-1)} disabled={!quote.last}>
+        <button type="button" className={`${s.dealBtn} ${s.dealSell}`} onClick={() => send(-1)} disabled={!quote.last} {...hover(-1)}>
           <span className={s.dealTop}>
             Sell<em>{verb}</em>
           </span>
           <Odometer value={fmt(priceFor(-1))} className={s.dealPx} delay={0} />
         </button>
-        <button type="button" className={`${s.dealBtn} ${s.dealBuy}`} onClick={() => send(1)} disabled={!quote.last}>
+        <button type="button" className={`${s.dealBtn} ${s.dealBuy}`} onClick={() => send(1)} disabled={!quote.last} {...hover(1)}>
           <span className={s.dealTop}>
             Buy<em>{verb}</em>
           </span>
@@ -206,27 +230,87 @@ export function Ticket() {
         </div>
       )}
 
+      <dl className={s.facts}>
+        <div>
+          <dt>Value ×{inst.pv}</dt>
+          <dd>${fmt(notional, 0)}</dd>
+        </div>
+        <div>
+          <dt>Margin</dt>
+          <dd>${fmt(DAY_MARGIN[sym] * qty, 0)}</dd>
+        </div>
+        <div>
+          <dt>Available</dt>
+          <dd className={avail < DAY_MARGIN[sym] * qty ? s.neg : undefined}>${fmt(avail, 0)}</dd>
+        </div>
+        <div>
+          <dt>Tick</dt>
+          <dd>${fmt(tv)}</dd>
+        </div>
+      </dl>
+
       <div className={s.bracket}>
         <div className={s.bracketHead}>
-          <span className={s.tLabel}>Bracket</span>
+          <span className={s.tLabel}>Exits</span>
           {settings.stopOn && settings.targetOn && <span className={s.rr}>{(tgtT / stopT).toFixed(1)}R</span>}
+          <div className={s.units} role="group" aria-label="Enter exits in">
+            {(["t", "pts", "$"] as const).map((u) => (
+              <button key={u} type="button" aria-pressed={unit === u} onClick={() => setSettings({ unit: u })} title={u === "t" ? "Ticks" : u === "pts" ? "Points" : "Dollars at this size"}>
+                {u === "t" ? "Ticks" : u === "pts" ? "Pts" : "$"}
+              </button>
+            ))}
+          </div>
         </div>
         <div className={`${s.bRow} ${settings.stopOn ? "" : s.bOff}`}>
-          <button type="button" role="switch" aria-checked={settings.stopOn} className={`${s.bDot} ${s.bDotStop}`} onClick={() => setSettings({ stopOn: !settings.stopOn })} aria-label="Attach a stop" />
+          <button type="button" role="switch" aria-checked={settings.stopOn} className={`${s.bDot} ${s.bDotStop}`} onClick={() => setSettings({ stopOn: !settings.stopOn })} aria-label="Attach a stop loss" />
           <span className={`${s.bName} ${s.neg}`}>Stop</span>
-          <Stepper label="Stop distance in ticks" value={stopT} step={4} min={1} unit="t" onChange={(v) => setSettings({ stopTicks: { ...settings.stopTicks, [sym]: Math.max(1, Math.round(v)) } })} />
+          <Stepper
+            label="Stop distance"
+            value={shown(stopT)}
+            step={stepOf}
+            min={perTick}
+            digits={unit === "t" ? undefined : 2}
+            unit={unit === "t" ? "t" : undefined}
+            onChange={(v) => setSettings({ stopTicks: { ...settings.stopTicks, [sym]: toTicks(v) } })}
+          />
           <span className={s.bVal}>
-            <em className={s.neg}>−${fmt(risk, 0)}</em>
-            {fmt(stopT * inst.tick)} pts
+            {preview ? (
+              <>
+                <em className={s.neg}>{fmt(entryFor(preview) - preview * stopT * inst.tick)}</em>
+                {preview > 0 ? "if bought" : "if sold"}
+              </>
+            ) : (
+              <>
+                <em className={s.neg}>−${fmt(risk, 0)}</em>
+                {unit === "pts" ? `${stopT} ticks` : `${fmt(stopT * inst.tick)} pts`}
+              </>
+            )}
           </span>
         </div>
         <div className={`${s.bRow} ${settings.targetOn ? "" : s.bOff}`}>
-          <button type="button" role="switch" aria-checked={settings.targetOn} className={`${s.bDot} ${s.bDotTarget}`} onClick={() => setSettings({ targetOn: !settings.targetOn })} aria-label="Attach a target" />
+          <button type="button" role="switch" aria-checked={settings.targetOn} className={`${s.bDot} ${s.bDotTarget}`} onClick={() => setSettings({ targetOn: !settings.targetOn })} aria-label="Attach a take profit" />
           <span className={`${s.bName} ${s.pos}`}>Target</span>
-          <Stepper label="Target distance in ticks" value={tgtT} step={4} min={1} unit="t" onChange={(v) => setSettings({ targetTicks: { ...settings.targetTicks, [sym]: Math.max(1, Math.round(v)) } })} />
+          <Stepper
+            label="Target distance"
+            value={shown(tgtT)}
+            step={stepOf}
+            min={perTick}
+            digits={unit === "t" ? undefined : 2}
+            unit={unit === "t" ? "t" : undefined}
+            onChange={(v) => setSettings({ targetTicks: { ...settings.targetTicks, [sym]: toTicks(v) } })}
+          />
           <span className={s.bVal}>
-            <em className={s.pos}>+${fmt(reward, 0)}</em>
-            {fmt(tgtT * inst.tick)} pts
+            {preview ? (
+              <>
+                <em className={s.pos}>{fmt(entryFor(preview) + preview * tgtT * inst.tick)}</em>
+                {preview > 0 ? "if bought" : "if sold"}
+              </>
+            ) : (
+              <>
+                <em className={s.pos}>+${fmt(reward, 0)}</em>
+                {unit === "pts" ? `${tgtT} ticks` : `${fmt(tgtT * inst.tick)} pts`}
+              </>
+            )}
           </span>
         </div>
       </div>

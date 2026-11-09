@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef, type CSSProperties } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { Cell } from "@/components/trader/parts";
 import t from "@/components/trader/trader.module.css";
 import { INSTRUMENTS, SYMS, TIMEFRAMES } from "@/lib/desk/instruments";
-import { ACCOUNT, cancelAll, flatten, placeOrder, resetPaper, selectSym, setPick, setSettings, showShortcuts, toggleNotes, togglePanel, useDesk } from "@/lib/desk/store";
+import { ACCOUNT, cancelAll, flatten, placeOrder, resetPaper, selectSym, setPick, setSettings, showShortcuts, toggleBlotter, toggleNotes, togglePanel, useDesk } from "@/lib/desk/store";
 import { Blotter } from "./Blotter";
 import { Chart } from "./Chart";
 import { Position } from "./Position";
@@ -21,8 +22,9 @@ const KEYS: [string, string][] = [
   ["T", "Next timeframe"],
   ["M", "Markets panel"],
   ["N", "Notes (other keys pause while it's open)"],
-  ["I", "Instant trade panel"],
   ["L", "Live P&L panel"],
+  ["Del", "Remove the selected drawing"],
+  ["Shift", "Hold and drag on the chart to measure"],
   ["?", "These shortcuts"],
 ];
 
@@ -71,12 +73,19 @@ function Shortcuts() {
   );
 }
 
+const COL = { min: 280, def: 300, max: 360 }; // the right column moves only a little
+
 export function Desk() {
   const ready = useDesk((st) => st.ready);
   const sym = useDesk((st) => st.settings.sym);
   const markets = useDesk((st) => st.settings.panels.markets);
   const blotter = useDesk((st) => st.settings.blotter);
+  const layout = useDesk((st) => st.settings.layout);
+  const counts = useDesk(useShallow((st) => [Object.keys(st.positions).length, st.orders.length]));
   const shortcuts = useDesk((st) => st.shortcuts);
+  const deskRef = useRef<HTMLDivElement>(null);
+  const centerRef = useRef<HTMLDivElement>(null);
+  const grab = useRef<null | { kind: "blot" | "col"; start: number; from: number; now: number }>(null);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -104,7 +113,6 @@ export function Desk() {
         if (k.length === 1) e.preventDefault();
         return;
       }
-      if (lower === "i") return togglePanel("instant");
       if (lower === "l") return togglePanel("pnl");
       if (lower === "m") return togglePanel("markets");
       if (lower === "n") {
@@ -127,8 +135,61 @@ export function Desk() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  /* ---------- resizing: CSS variables while dragging, settings once dropped ---------- */
+  const startGrab = (kind: "blot" | "col") => (e: React.PointerEvent) => {
+    const desk = deskRef.current;
+    if (!desk) return;
+    (e.currentTarget as Element).setPointerCapture(e.pointerId);
+    const st = useDesk.getState().settings;
+    const center = centerRef.current?.clientHeight ?? 600;
+    const from = kind === "blot" ? (st.blotter ? Math.min(st.layout.blot, center) : 0) : st.layout.right;
+    grab.current = { kind, start: kind === "blot" ? e.clientY : e.clientX, from, now: from };
+    desk.classList.add(s.resizing);
+  };
+  const moveGrab = (e: React.PointerEvent) => {
+    const g = grab.current;
+    const desk = deskRef.current;
+    if (!g || !desk) return;
+    if (g.kind === "blot") {
+      const center = centerRef.current?.clientHeight ?? 600;
+      g.now = Math.max(0, Math.min(center, g.from + (g.start - e.clientY)));
+      desk.style.setProperty("--bl", `${g.now}px`);
+    } else {
+      g.now = Math.max(COL.min, Math.min(COL.max, g.from + (g.start - e.clientX)));
+      desk.style.setProperty("--rw", `${g.now}px`);
+    }
+  };
+  const endGrab = () => {
+    const g = grab.current;
+    const desk = deskRef.current;
+    grab.current = null;
+    if (!g || !desk) return;
+    desk.classList.remove(s.resizing);
+    const st = useDesk.getState().settings;
+    if (g.kind === "blot") {
+      const center = centerRef.current?.clientHeight ?? 600;
+      if (g.now < 56) {
+        // dropped near the bottom: put it away, keep the last useful height
+        setSettings({ blotter: false });
+        desk.style.removeProperty("--bl");
+      } else {
+        const blot = g.now > center - 56 ? 10000 : Math.round(g.now);
+        setSettings({ blotter: true, layout: { ...st.layout, blot } });
+        desk.style.removeProperty("--bl");
+      }
+    } else {
+      setSettings({ layout: { ...st.layout, right: Math.round(g.now) } });
+      desk.style.removeProperty("--rw");
+    }
+  };
+
+  const style = {
+    "--rw-set": `${Math.max(COL.min, Math.min(COL.max, layout.right))}px`,
+    "--bl-set": blotter ? `${layout.blot}px` : "0px",
+  } as CSSProperties;
+
   return (
-    <div className={s.desk} data-mk={markets ? "on" : "off"} data-blot={blotter ? "open" : "shut"}>
+    <div ref={deskRef} className={s.desk} data-mk={markets ? "on" : "off"} data-blot={blotter ? "open" : "shut"} style={style}>
       <i className={t.sheetR} aria-hidden="true" />
       <i className={t.sheetB} aria-hidden="true" />
       <Cell i={0} noTop className={s.aMarkets} label="Markets" aside="CME Globex" bodyClass={s.body}>
@@ -136,18 +197,50 @@ export function Desk() {
           {ready && <Watchlist />}
         </div>
       </Cell>
-      <Cell i={1} noTop className={s.aChart} bodyClass={s.bodyFlush}>
-        {ready && <Chart />}
-      </Cell>
+      <div ref={centerRef} className={s.center}>
+        <Cell i={1} noTop className={s.aChart} bodyClass={s.bodyFlush}>
+          {ready && <Chart />}
+        </Cell>
+        <div
+          className={s.blotGrip}
+          role="separator"
+          aria-orientation="horizontal"
+          aria-label="Drag to resize the blotter"
+          onPointerDown={startGrab("blot")}
+          onPointerMove={moveGrab}
+          onPointerUp={endGrab}
+          onPointerCancel={endGrab}
+          onDoubleClick={() => setSettings({ blotter: true, layout: { ...layout, blot: 158 } })}
+        />
+        <Cell i={4} className={s.aBlotter} bodyClass={s.bodyFlush}>
+          {ready && <Blotter />}
+        </Cell>
+        {!blotter && ready && (
+          <button type="button" className={s.blotOpen} onClick={() => toggleBlotter(true)}>
+            <svg width="10" height="10" viewBox="0 0 12 12" aria-hidden="true">
+              <path d="M2.5 7.5 6 4l3.5 3.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            Positions <em>{counts[0]}</em> Orders <em>{counts[1]}</em>
+          </button>
+        )}
+      </div>
       <Cell i={2} noTop className={s.aTicket} label="Order" aside={INSTRUMENTS[sym].code} bodyClass={s.body}>
         {ready && <Ticket />}
       </Cell>
       <Cell i={3} className={s.aPos} label="Position" aside={INSTRUMENTS[sym].code} bodyClass={s.body}>
         {ready && <Position />}
       </Cell>
-      <Cell i={4} className={s.aBlotter} bodyClass={s.bodyFlush}>
-        {ready && <Blotter />}
-      </Cell>
+      <div
+        className={s.colGrip}
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Drag to widen the order column a little"
+        onPointerDown={startGrab("col")}
+        onPointerMove={moveGrab}
+        onPointerUp={endGrab}
+        onPointerCancel={endGrab}
+        onDoubleClick={() => setSettings({ layout: { ...layout, right: COL.def } })}
+      />
       {shortcuts && <Shortcuts />}
     </div>
   );

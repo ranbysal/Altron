@@ -1,15 +1,18 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { fmt, money } from "@/lib/format";
-import { INSTRUMENTS, SYMS, TIMEFRAMES, snap } from "@/lib/desk/instruments";
-import { nyClock, type Bar } from "@/lib/desk/market";
+import { INSTRUMENTS, RANGES, SYMS, TIMEFRAMES, snap, tfSec, type Range, type Timeframe } from "@/lib/desk/instruments";
 import {
+  addAlert,
   addBracket,
   cancelOrder,
   getMarket,
+  moveAlert,
   moveOrder,
+  placeOrder,
+  removeAlert,
   selectSym,
   setPick,
   setSettings,
@@ -20,93 +23,249 @@ import {
   useDesk,
   type Order,
 } from "@/lib/desk/store";
+import { addDrawing, clearDrawings, drawId, removeDrawing, replaceDrawing, selectDrawing, setTool, startDrawings, toggleDraw, useDraw, type Drawing, type Pt } from "@/lib/desk/drawings";
 import { BAYER4 } from "@/lib/noise";
 import { onThemeChange } from "@/lib/theme";
 import { Odometer } from "@/components/trader/parts";
+import { ChartMenu, ChartSettings, ToolRail, type MenuAt } from "./ChartParts";
 import { Toaster } from "./Toaster";
+import * as K from "./chartKit";
 import s from "./desk.module.css";
 
-const AXIS_W = 80;
-const TIME_H = 26;
-const RIGHT_PAD = 8; // bars of empty space ahead of the live candle
-const VOL_FRAC = 0.14;
-const STEPS = [0.25, 0.5, 1, 2, 2.5, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000];
+/* ------------------------------------------------------------------ */
+/* the toolbar over the chart                                          */
+/* ------------------------------------------------------------------ */
 
-type Line = {
-  id: string;
-  price: number;
-  kind: "entry" | "stop" | "target" | "order" | "ghost";
-  title: string;
-  value?: string;
-  tone?: "pos" | "neg";
-  order?: Order;
-  drag: boolean;
-};
-
-function hm(min: number): string {
-  const h = Math.floor(min / 60);
-  return `${h % 12 || 12}:${String(min % 60).padStart(2, "0")}`;
-}
-
-function timeLabel(t: number): string {
-  const { min, wd } = nyClock(t);
-  if (min === 0) return ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][wd];
-  return hm(min);
-}
-
-function fullTime(t: number): string {
-  const { min } = nyClock(t);
-  const h = Math.floor(min / 60);
-  return `${h % 12 || 12}:${String(min % 60).padStart(2, "0")} ${h < 12 ? "AM" : "PM"}`;
-}
-
-export function Chart() {
+function ChartBar() {
   const sym = useDesk((st) => st.settings.sym);
   const tf = useDesk((st) => st.settings.tf);
-  const panels = useDesk((st) => st.settings.panels);
-  const tick = useDesk((st) => st.tick);
-  const quote = useDesk((st) => st.quotes[sym]);
-  const pos = useDesk((st) => st.positions[sym]);
-  const orders = useDesk(useShallow((st) => st.orders.filter((o) => o.sym === sym)));
-  const fills = useDesk(useShallow((st) => st.fills.filter((f) => f.sym === sym)));
-  const pick = useDesk((st) => st.pick);
-  const ready = useDesk((st) => st.ready);
+  const pnl = useDesk((st) => st.settings.panels.pnl);
   const markets = useDesk((st) => st.settings.panels.markets);
   const notesOpen = useDesk((st) => st.notesOpen);
+  const quote = useDesk((st) => st.quotes[sym]);
   const held = useDesk(useShallow((st) => SYMS.map((x) => Math.sign(st.positions[x]?.qty ?? 0))));
   const noteCount = useDesk((st) => {
     const p = st.positions[st.settings.sym];
     return st.notes.filter((n) => (p && n.tradeId === p.tradeId) || (n.tradeId === null && n.sym === st.settings.sym)).length;
   });
+  const chg = quote.last - quote.prev;
+  const ti = TIMEFRAMES.findIndex((t) => t.id === tf);
+
+  return (
+    <header className={s.bar}>
+      <button type="button" className={s.barIcon} aria-pressed={markets} onClick={() => togglePanel("markets")} title={markets ? "Hide markets (M)" : "Show markets (M)"} aria-label="Markets panel">
+        <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+          <rect x="1.5" y="2.5" width="13" height="11" rx="2.2" fill="none" stroke="currentColor" strokeWidth="1.2" />
+          <path d="M6 2.5v11" stroke="currentColor" strokeWidth="1.2" />
+          <rect className={s.barIconFill} x="2.6" y="3.6" width="2.4" height="8.8" rx="0.8" />
+        </svg>
+      </button>
+      <div className={s.syms} role="tablist" aria-label="Market" style={{ "--i": SYMS.indexOf(sym) } as CSSProperties}>
+        <span className={s.symBar} aria-hidden="true" />
+        {SYMS.map((x, k) => (
+          <button key={x} type="button" role="tab" aria-selected={x === sym} onClick={() => selectSym(x)} title={`${INSTRUMENTS[x].name} (${k + 1})`}>
+            {x}
+            {held[k] !== 0 && <i className={held[k] > 0 ? s.symL : s.symS} />}
+          </button>
+        ))}
+      </div>
+      <span className={s.barSep} aria-hidden="true" />
+      <div className={s.quote}>
+        <Odometer value={quote.last ? fmt(quote.last) : "0.00"} className={s.quotePx} delay={0} />
+        <span className={`${s.quoteChg} ${chg >= 0 ? s.pos : s.neg}`}>
+          {chg >= 0 ? "+" : "−"}
+          {fmt(Math.abs(chg))}
+          <span>{quote.prev ? `${chg >= 0 ? "+" : "−"}${Math.abs((chg / quote.prev) * 100).toFixed(2)}%` : ""}</span>
+        </span>
+      </div>
+      <div className={s.barRight}>
+        <div className={s.seg} role="tablist" aria-label="Timeframe" style={{ "--i": ti, "--n": TIMEFRAMES.length } as CSSProperties}>
+          <span className={s.segPill} aria-hidden="true" />
+          {TIMEFRAMES.map((t) => (
+            <button key={t.id} type="button" role="tab" aria-selected={t.id === tf} onClick={() => setSettings({ tf: t.id })}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+        <label className={s.tfPick}>
+          <select aria-label="Timeframe" value={tf} onChange={(e) => setSettings({ tf: e.target.value as Timeframe })}>
+            {TIMEFRAMES.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.label}
+              </option>
+            ))}
+          </select>
+          <svg width="9" height="9" viewBox="0 0 10 10" aria-hidden="true">
+            <path d="M2 3.8l3 3 3-3" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </label>
+        <span className={s.barSep} aria-hidden="true" />
+        <button type="button" className={s.barBtn} aria-pressed={pnl} onClick={() => togglePanel("pnl")} title="Live P&L panel (L)">
+          <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M1.5 9h3l1.6-4 2.6 8 1.8-5H14.5" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" strokeLinecap="round" />
+          </svg>
+          Live P&amp;L
+        </button>
+        <button type="button" className={s.barBtn} aria-pressed={notesOpen} onClick={() => toggleNotes()} title="Notes (N)">
+          <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinejoin="round" />
+          </svg>
+          Notes
+          {noteCount > 0 && <em>{noteCount}</em>}
+        </button>
+        <button type="button" className={`${s.barIcon} ${s.barKeys}`} onClick={() => showShortcuts(true)} title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">
+          <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+            <rect x="1.5" y="4" width="13" height="8.5" rx="2" fill="none" stroke="currentColor" strokeWidth="1.2" />
+            <path d="M4 7h.01M6.5 7h.01M9 7h.01M11.5 7h.01M5 9.8h6" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+          </svg>
+        </button>
+      </div>
+    </header>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* the plot                                                            */
+/* ------------------------------------------------------------------ */
+
+type Line = {
+  id: string;
+  price: number;
+  kind: "entry" | "stop" | "target" | "order" | "alert";
+  title: string;
+  value?: string;
+  tone?: "pos" | "neg";
+  order?: Order;
+  alertId?: string;
+  drag: boolean;
+};
+
+type TwoPoint = "trend" | "ray" | "rect" | "fib" | "measure" | "zoom";
+type Drag =
+  | { kind: "pan"; x: number; y: number; off: number; lo: number; hi: number }
+  | { kind: "scaleY"; y: number; lo: number; hi: number }
+  | { kind: "scaleX"; x: number; bw: number; off: number }
+  | { kind: "draw"; tool: TwoPoint; x0: number; y0: number }
+  | { kind: "brush"; pts: Pt[] }
+  | { kind: "move"; orig: Drawing; x0: number; y0: number }
+  | { kind: "handle"; orig: Drawing; idx: number };
+
+type Ink = K.Ink & { blue: string; ember: string; strong: string; muted: string; tl: string; e1: string; e2: string };
+
+const TWO: TwoPoint[] = ["trend", "ray", "rect", "fib", "measure", "zoom"];
+
+/** Style writes that only touch the DOM when the value actually changes, so a quiet tick costs no style work. */
+const written = new WeakMap<HTMLElement, Record<string, string>>();
+function put(el: HTMLElement, prop: string, value: string) {
+  let w = written.get(el);
+  if (!w) written.set(el, (w = {}));
+  if (w[prop] === value) return;
+  w[prop] = value;
+  el.style.setProperty(prop, value);
+}
+function putData(el: HTMLElement, key: string, value: string) {
+  if (el.dataset[key] !== value) el.dataset[key] = value;
+}
+
+/** Any CSS colour as rgba with the given alpha; canvases don't all read color-mix(). */
+function withAlpha(color: string, a: number): string {
+  const c = document.createElement("canvas").getContext("2d");
+  if (!c) return color;
+  c.fillStyle = color;
+  const v = c.fillStyle; // normalised to #rrggbb or rgba(...)
+  if (v.startsWith("#")) {
+    const n = parseInt(v.slice(1), 16);
+    return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
+  }
+  const m = v.match(/[\d.]+/g);
+  return m ? `rgba(${m[0]}, ${m[1]}, ${m[2]}, ${a})` : color;
+}
+
+function rangeStart(r: Range, now: number): number {
+  const d = new Date(now);
+  const back = (m: number) => new Date(d.getFullYear(), d.getMonth() - m, d.getDate()).getTime();
+  if (r === "1D") return now - 86_400_000;
+  if (r === "5D") return now - 5 * 86_400_000;
+  if (r === "1M") return back(1);
+  if (r === "3M") return back(3);
+  if (r === "6M") return back(6);
+  if (r === "YTD") return new Date(d.getFullYear(), 0, 1).getTime();
+  if (r === "1Y") return back(12);
+  if (r === "5Y") return back(60);
+  return -Infinity;
+}
+
+function span(ms: number): string {
+  const m = Math.round(Math.abs(ms) / 60_000);
+  if (m < 60) return `${m}m`;
+  if (m < 1440) return `${Math.floor(m / 60)}h ${m % 60}m`;
+  return `${Math.round(m / 1440)}d`;
+}
+
+export function Chart() {
+  const sym = useDesk((st) => st.settings.sym);
+  const tf = useDesk((st) => st.settings.tf);
+  const pick = useDesk((st) => st.pick);
+  const pos = useDesk((st) => st.positions[sym]);
+  const orders = useDesk(useShallow((st) => st.orders.filter((o) => o.sym === sym)));
+  const alerts = useDesk(useShallow((st) => st.alerts.filter((a) => a.sym === sym)));
+  const log = useDesk((st) => st.settings.chart.log);
+  const chartCfg = useDesk((st) => st.settings.chart);
+  const rail = useDraw((st) => st.rail);
+  const tool = useDraw((st) => st.tool);
+  const drawCount = useDraw((st) => st.byUnder[INSTRUMENTS[sym].under].length);
   const inst = INSTRUMENTS[sym];
-  const tfMin = TIMEFRAMES.find((t) => t.id === tf)!.min;
+
+  const [auto, setAuto] = useState(true);
+  const [range, setRange] = useState<Range | null>(null);
+  const [menu, setMenu] = useState<MenuAt | null>(null);
+  const [settings, setSettingsOpen] = useState(false);
+  const [text, setText] = useState<null | { x: number; y: number; at: Pt; id?: string; value: string }>(null);
+  const textRef = useRef<HTMLInputElement>(null);
+  const textOpen = text !== null;
+  // focus once the click that placed it has finished, or the browser takes focus back
+  useEffect(() => {
+    if (!textOpen) return;
+    const id = window.setTimeout(() => textRef.current?.focus(), 0);
+    return () => window.clearTimeout(id);
+  }, [textOpen]);
 
   const wrapRef = useRef<HTMLDivElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const baseRef = useRef<HTMLCanvasElement>(null);
+  const overRef = useRef<HTMLCanvasElement>(null);
   const lineEls = useRef(new Map<string, HTMLDivElement>());
-  const view = useRef({
-    barW: 9,
-    offset: 0,
+  const ruleEls = useRef(new Map<string, HTMLDivElement>());
+  const leg = useRef<Record<string, HTMLElement | null>>({});
+  const v = useRef({
+    bw: K.DEFAULT_BW,
+    off: 0,
     lo: 0,
     hi: 1,
-    scaled: false,
+    auto: true,
+    fitted: false,
+    n: 0,
+    pendingRange: null as Range | null,
+    range: null as Range | null,
     mx: -1,
     my: -1,
-    pan: null as null | { x: number; offset: number },
-    drag: null as null | { id: string; price: number },
-    yToPrice: (y: number) => y,
-    pTop: 0,
-    pBot: 1,
+    inside: false,
+    region: "plot" as "plot" | "price" | "time",
+    drag: null as Drag | null,
+    draft: null as null | { tool: TwoPoint; a: Pt; b: Pt },
+    measure: null as null | { a: Pt; b: Pt },
+    zoom: null as null | { x0: number; y0: number; x1: number; y1: number },
+    hover: null as string | null,
+    lineDrag: null as null | { id: string; price: number },
+    frame: null as K.Frame | null,
     raf: 0,
+    base: true,
+    over: true,
     flash: 0,
     lastPx: 0,
-    colors: null as null | Record<string, string>,
-    entryIdx: -1,
+    ink: null as Ink | null,
   });
-  const [hoverBar, setHoverBar] = useState<Bar | null>(null);
-  const hoverIdx = useRef(-1);
 
-  // lines on the chart, from the book
+  /* ---------- lines on the chart, from the book ---------- */
   const lines = useMemo<Line[]>(() => {
     const out: Line[] = [];
     if (pos) {
@@ -125,189 +284,226 @@ export function Chart() {
       if (p === undefined) continue;
       out.push({ id: o.id, price: p, kind: "order", title: `${o.side > 0 ? "Buy" : "Sell"} ${o.type === "LMT" ? "lmt" : o.type === "STP" ? "stp" : o.type === "STPLMT" ? "stp lmt" : "trail"} ${o.qty}`, order: o, drag: o.type !== "TRAIL" });
     }
+    for (const a of alerts) out.push({ id: a.id, price: a.price, kind: "alert", title: "Alert", alertId: a.id, drag: true });
     return out;
-  }, [pos, orders, inst.pv]);
+  }, [pos, orders, alerts, inst.pv]);
   const linesRef = useRef(lines);
   linesRef.current = lines;
-  // the draw loop reads the newest render through these
-  const latest = useRef({ quote, pos, pick, sym, inst, tfMin, fills });
-  latest.current = { quote, pos, pick, sym, inst, tfMin, fills };
-  const drawRef = useRef<() => void>(() => {});
 
-  const schedule = () => {
-    const v = view.current;
-    if (!v.raf) v.raf = requestAnimationFrame(() => drawRef.current());
-  };
+  /* ---------- scheduling ---------- */
+  const paint = useRef<() => void>(() => {});
+  const invalidate = useCallback((base: boolean) => {
+    const st = v.current;
+    if (base) st.base = true;
+    st.over = true;
+    if (!st.raf) st.raf = requestAnimationFrame(() => paint.current());
+  }, []);
 
-  function readColors() {
+  const readInk = () => {
     const wrap = wrapRef.current;
     if (!wrap) return;
     const cs = getComputedStyle(wrap);
     const g = (n: string) => cs.getPropertyValue(n).trim();
-    view.current.colors = {
-      blue: g("--blue"),
-      ember: g("--ember"),
-      text: g("--text"),
-      strong: g("--text-strong"),
+    v.current.ink = {
+      line: g("--text-strong"),
+      fill: withAlpha(g("--text"), 0.07),
+      text: g("--text-strong"),
       dim: g("--dim"),
-      muted: g("--muted"),
-      tl: g("--tl"),
+      pos: g("--blue"),
+      neg: g("--ember"),
       bg: g("--page") || g("--bg"),
+      sans: getComputedStyle(document.body).fontFamily,
+      mono: cs.fontFamily,
       b1: g("--cv-dither-1"),
       b2: g("--cv-dither-2"),
+      blue: g("--blue"),
+      ember: g("--ember"),
+      strong: g("--text-strong"),
+      muted: g("--muted"),
+      tl: g("--tl"),
       e1: g("--cv-ember-1"),
       e2: g("--cv-ember-2"),
-      font: cs.fontFamily,
     };
-  }
+  };
 
-  function draw() {
-    const v = view.current;
-    v.raf = 0;
-    const { quote, pos, pick, sym, inst, tfMin, fills } = latest.current;
-    const m = getMarket();
+  /* ---------- the frame: bars, scales and geometry ---------- */
+  const frame = (): K.Frame | null => {
     const wrap = wrapRef.current;
-    const canvas = canvasRef.current;
-    if (!m || !wrap || !canvas) return;
-    if (!v.colors) readColors();
-    const C = v.colors!;
+    const m = getMarket();
+    if (!wrap || !m) return null;
+    const st = v.current;
+    const ds = useDesk.getState();
+    const symNow = ds.settings.sym;
+    const ins = INSTRUMENTS[symNow];
+    const sec = tfSec(ds.settings.tf);
+    const bars = m.bars(ins.under, sec);
     const W = wrap.clientWidth;
     const H = wrap.clientHeight;
-    if (!W || !H) return;
-    const dpr = Math.min(2, window.devicePixelRatio || 1);
-    if (canvas.width !== Math.round(W * dpr) || canvas.height !== Math.round(H * dpr)) {
-      canvas.width = Math.round(W * dpr);
-      canvas.height = Math.round(H * dpr);
-    }
-    const ctx = canvas.getContext("2d")!;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, W, H);
-
-    const plotW = W - AXIS_W;
-    const plotH = H - TIME_H;
-    const volTop = plotH - Math.round(plotH * VOL_FRAC);
-    const pTop = 40;
-    const pBot = volTop - 18;
-    const bars = m.bars(inst.under, tfMin);
+    if (!W || !H || !bars.length) return null;
+    const plotW = W - K.AXIS_W;
+    const plotH = H - K.TIME_H;
     const n = bars.length;
-    const bw = v.barW;
-    v.offset = Math.max(-RIGHT_PAD + 2, Math.min(n - 20, v.offset));
-    const lastIdx = n - 1 - Math.round(v.offset);
-    const xOf = (i: number) => plotW - (RIGHT_PAD + (lastIdx - i) + 0.5) * bw;
-    const first = Math.max(0, Math.floor(lastIdx - plotW / bw + RIGHT_PAD) - 1);
-    const last = Math.min(n - 1, lastIdx);
 
-    let lo = Infinity;
-    let hi = -Infinity;
-    let vmax = 1;
-    for (let i = first; i <= last; i++) {
-      const b = bars[i];
-      lo = Math.min(lo, b.l);
-      hi = Math.max(hi, b.h);
-      vmax = Math.max(vmax, b.v);
+    if (st.pendingRange) {
+      const from = rangeStart(st.pendingRange, Date.now());
+      let i = n - 1;
+      while (i > 0 && bars[i - 1].t >= from) i--;
+      const count = n - i;
+      st.bw = Math.max(K.MIN_BW, Math.min(K.MAX_BW, plotW / (count + K.padBars(plotW / count) + 1)));
+      st.off = 0;
+      st.auto = true;
+      st.fitted = false;
+      st.range = st.pendingRange;
+      st.pendingRange = null;
     }
-    if (!Number.isFinite(lo)) {
-      lo = quote.last - 10;
-      hi = quote.last + 10;
-    }
-    const span0 = Math.max(hi - lo, inst.tick * 16);
-    for (const l of linesRef.current) {
-      const p = v.drag?.id === l.id ? v.drag.price : l.price;
-      if (p > lo - span0 * 0.6 && p < hi + span0 * 0.6) {
-        lo = Math.min(lo, p);
-        hi = Math.max(hi, p);
+    // hold the view still when scrolled back and a new bar arrives
+    if (st.n && n > st.n && st.off > 0.5) st.off += n - st.n;
+    st.n = n;
+    const visible = plotW / st.bw;
+    const pad = K.padBars(st.bw);
+    st.off = Math.max(-visible * 0.6, Math.min(n - 3, st.off));
+    const L = n - 1 - st.off;
+    const first = Math.max(0, Math.floor(L - visible + pad) - 1);
+    const last = Math.min(n - 1, Math.ceil(L));
+    const volOn = ds.settings.chart.volume && st.bw >= 2;
+    const volTop = volOn ? plotH - Math.round(plotH * K.VOL_FRAC) : plotH;
+    const pTop = 40;
+    const pBot = (volOn ? volTop : plotH) - 18;
+    const logOn = ds.settings.chart.log;
+
+    if (st.auto) {
+      let lo = Infinity;
+      let hi = -Infinity;
+      for (let i = first; i <= last; i++) {
+        if (bars[i].l < lo) lo = bars[i].l;
+        if (bars[i].h > hi) hi = bars[i].h;
+      }
+      if (!Number.isFinite(lo)) {
+        const q = ds.quotes[symNow].last;
+        lo = q - 10;
+        hi = q + 10;
+      }
+      if (last >= n - 2) {
+        const span0 = Math.max(hi - lo, ins.tick * 16);
+        for (const l of linesRef.current) {
+          const p = st.lineDrag?.id === l.id ? st.lineDrag.price : l.price;
+          if (p > lo - span0 * 0.6 && p < hi + span0 * 0.6) {
+            lo = Math.min(lo, p);
+            hi = Math.max(hi, p);
+          }
+        }
+      }
+      const padP = Math.max((hi - lo) * 0.08, ins.tick * 4);
+      const tLo = logOn ? lo / (1 + (padP / hi) * 1.2) : lo - padP;
+      const tHi = hi + padP;
+      if (!st.fitted) {
+        st.lo = tLo;
+        st.hi = tHi;
+        st.fitted = true;
+      } else {
+        st.lo += (tLo - st.lo) * 0.3;
+        st.hi += (tHi - st.hi) * 0.3;
+        if (Math.abs(tLo - st.lo) > ins.tick * 0.05 || Math.abs(tHi - st.hi) > ins.tick * 0.05) st.base = true;
       }
     }
-    const pad = Math.max((hi - lo) * 0.08, inst.tick * 4);
-    const tLo = lo - pad;
-    const tHi = hi + pad;
-    let settling = false;
-    if (!v.scaled) {
-      v.lo = tLo;
-      v.hi = tHi;
-      v.scaled = true;
-    } else {
-      v.lo += (tLo - v.lo) * 0.2;
-      v.hi += (tHi - v.hi) * 0.2;
-      settling = Math.abs(tLo - v.lo) > inst.tick * 0.05 || Math.abs(tHi - v.hi) > inst.tick * 0.05;
-    }
-    const yOf = (p: number) => pTop + ((v.hi - p) / (v.hi - v.lo)) * (pBot - pTop);
-    v.yToPrice = (y: number) => v.hi - ((y - pTop) / (pBot - pTop)) * (v.hi - v.lo);
-    v.pTop = pTop;
-    v.pBot = pBot;
+    if (logOn && st.lo <= 0) st.lo = Math.max(1, st.hi / 4);
+    const f: K.Frame = { W, H, plotW, plotH, pTop, pBot, volTop, bw: st.bw, pad, L, lo: st.lo, hi: st.hi, log: logOn, bars, dur: sec * 1000, first, last };
+    st.frame = f;
+    return f;
+  };
 
-    ctx.font = `10.5px ${C.font}`;
+  const sizeCanvas = (c: HTMLCanvasElement, W: number, H: number) => {
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const w = Math.round(W * dpr);
+    const h = Math.round(H * dpr);
+    if (c.width !== w || c.height !== h) {
+      c.width = w;
+      c.height = h;
+    }
+    const ctx = c.getContext("2d")!;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return ctx;
+  };
+
+  /* ---------- base layer: everything that moves with data or the view ---------- */
+  const drawBase = (f: K.Frame) => {
+    const st = v.current;
+    const canvas = baseRef.current!;
+    const C = st.ink!;
+    const ctx = sizeCanvas(canvas, f.W, f.H);
+    ctx.clearRect(0, 0, f.W, f.H);
+    const ds = useDesk.getState();
+    const symNow = ds.settings.sym;
+    const ins = INSTRUMENTS[symNow];
+    const cfg = ds.settings.chart;
+    const quote = ds.quotes[symNow];
+    const sec = tfSec(ds.settings.tf);
+    const { bars, first, last, plotW, plotH } = f;
+    const bodyW = Math.max(1, Math.round(f.bw * 0.64));
+    const yl = Math.round(K.yOf(f, quote.last));
+
+    ctx.font = `10.5px ${C.mono}`;
     ctx.textBaseline = "middle";
 
-    // where the crosshair sits, worked out first so axis labels make room for its tags
-    const hovering = v.mx >= 0 && v.mx < plotW && v.my >= 0 && v.my < plotH && !v.pan && !v.drag;
-    const hi_ = hovering ? Math.max(first, Math.min(last, Math.round(lastIdx - (plotW - v.mx) / bw + RIGHT_PAD + 0.5))) : -1;
-    const hx = hi_ >= 0 ? Math.round(xOf(hi_)) : -1;
-    const hLabel = hi_ >= 0 ? fullTime(bars[hi_].t) : "";
-    const hTagW = hi_ >= 0 ? ctx.measureText(hLabel).width + 16 : 0;
-    const hy = hovering && v.my < pBot + 10 ? v.my : -1;
-    const lp = quote.last;
-    const yl = Math.round(yOf(lp));
-    const busy = (y: number) => Math.abs(y - yl) < 15 || (hy >= 0 && Math.abs(y - hy) < 15);
-
-    // price grid
-    const raw = (v.hi - v.lo) / 7;
-    const step = STEPS.find((x) => x >= raw) ?? 1000;
+    // grid and price labels
+    const step = K.priceStep(f.lo, f.hi, f.pBot - f.pTop);
+    const levels: number[] = [];
+    for (let p = Math.ceil(f.lo / step) * step; p <= f.hi; p += step) levels.push(p);
     ctx.fillStyle = C.tl;
-    for (let p = Math.ceil(v.lo / step) * step; p <= v.hi; p += step) {
-      const y = Math.round(yOf(p));
-      if (y < 4 || y > pBot + 8) continue;
-      ctx.fillRect(0, y, plotW, 1);
+    if (cfg.grid) for (const p of levels) {
+      const y = Math.round(K.yOf(f, p));
+      if (y > 4 && y < f.pBot + 8) ctx.fillRect(0, y, plotW, 1);
     }
     ctx.fillRect(plotW, 0, 1, plotH);
-    ctx.fillRect(0, plotH, W, 1);
-    ctx.fillRect(0, volTop - 1, plotW, 1);
+    ctx.fillRect(0, plotH, f.W, 1);
+    if (f.volTop < plotH) ctx.fillRect(0, f.volTop - 1, plotW, 1);
     ctx.fillStyle = C.dim;
     ctx.textAlign = "left";
-    for (let p = Math.ceil(v.lo / step) * step; p <= v.hi; p += step) {
-      const y = Math.round(yOf(p));
-      if (y < 8 || y > pBot + 8 || busy(y)) continue;
+    for (const p of levels) {
+      const y = Math.round(K.yOf(f, p));
+      if (y < 8 || y > plotH - 8 || Math.abs(y - yl) < 14) continue;
       ctx.fillText(fmt(p), plotW + 12, y);
     }
 
     // time labels
-    const cands = [5, 10, 15, 30, 60, 120, 240, 360, 720, 1440];
-    const every = cands.find((c) => (c / tfMin) * bw >= 92) ?? 1440;
     ctx.textAlign = "center";
-    for (let i = first; i <= last; i++) {
-      const { min } = nyClock(bars[i].t);
-      if (min % every !== 0) continue;
-      const x = Math.round(xOf(i));
-      if (x < 20 || x > plotW - 20) continue;
+    for (const tk of K.timeTicks(f, sec)) {
+      const x = Math.round(tk.x);
       ctx.fillStyle = C.tl;
       ctx.fillRect(x, plotH, 1, 5);
-      if (hx >= 0 && Math.abs(x - hx) < hTagW / 2 + 26) continue;
-      ctx.fillStyle = C.dim;
-      ctx.fillText(timeLabel(bars[i].t), x, plotH + 15);
+      ctx.fillStyle = tk.strong ? C.text : C.dim;
+      ctx.fillText(tk.text, x, plotH + 15);
     }
 
+    // clip the plot so nothing spills onto the axes
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 0, plotW, plotH);
+    ctx.clip();
+
     // the open position, as a dithered zone between entry and the tape
-    v.entryIdx = -1;
-    if (pos) {
+    const posNow = ds.positions[symNow];
+    if (cfg.zone && posNow) {
       let ei = last;
-      while (ei > 0 && bars[ei].t > pos.openedAt) ei--;
-      v.entryIdx = ei;
-      const x0 = Math.max(0, Math.round(xOf(ei)));
+      while (ei > 0 && bars[ei].t > posNow.openedAt) ei--;
+      const x0 = Math.max(0, Math.round(K.xOf(f, ei)));
       const x1 = Math.round(plotW - 2);
-      const ya = yOf(pos.avg);
-      const yb = yOf(quote.last);
-      const top = Math.max(pTop - 6, Math.min(ya, yb));
-      const bot = Math.min(pBot + 6, Math.max(ya, yb));
-      const win = (quote.last - pos.avg) * Math.sign(pos.qty) >= 0;
+      const ya = K.yOf(f, posNow.avg);
+      const yb = K.yOf(f, quote.last);
+      const top = Math.max(f.pTop - 6, Math.min(ya, yb));
+      const bot = Math.min(f.pBot + 6, Math.max(ya, yb));
+      const win = (quote.last - posNow.avg) * Math.sign(posNow.qty) >= 0;
       const pA = new Path2D();
       const pB = new Path2D();
       const cell = 3;
-      for (let y = Math.floor(top / cell) * cell; y < bot; y += cell) {
-        const near = 1 - Math.abs(y - yb) / Math.max(1, bot - top);
-        for (let x = Math.floor(x0 / cell) * cell; x < x1; x += cell) {
-          const fade = Math.min(1, (x - x0) / 90);
-          const I = (0.03 + 0.24 * near * near) * (0.35 + 0.65 * fade);
-          if (I > (BAYER4[((y / cell) & 3) * 4 + ((x / cell) & 3)] + 0.5) / 16) (I > 0.3 ? pB : pA).rect(x, y, 2, 2);
+      if (x1 > x0 && bot > top) {
+        for (let y = Math.floor(top / cell) * cell; y < bot; y += cell) {
+          const near = 1 - Math.abs(y - yb) / Math.max(1, bot - top);
+          for (let x = Math.floor(x0 / cell) * cell; x < x1; x += cell) {
+            const fade = Math.min(1, (x - x0) / 90);
+            const I = (0.03 + 0.24 * near * near) * (0.35 + 0.65 * fade);
+            if (I > (BAYER4[((y / cell) & 3) * 4 + ((x / cell) & 3)] + 0.5) / 16) (I > 0.3 ? pB : pA).rect(x, y, 2, 2);
+          }
         }
       }
       ctx.fillStyle = win ? C.b1 : C.e1;
@@ -316,55 +512,73 @@ export function Chart() {
       ctx.fill(pB);
     }
 
+    const lineMode = f.bw < 2;
     // volume, as slats that thin out toward the top
-    const bodyW = Math.max(1, Math.round(bw * 0.64));
-    const volH = plotH - volTop - 6;
-    const LEVELS = [0.42, 0.3, 0.21, 0.14];
-    const volUp = LEVELS.map(() => new Path2D());
-    const volDn = LEVELS.map(() => new Path2D());
-    for (let i = first; i <= last; i++) {
-      const b = bars[i];
-      const h = (b.v / vmax) * volH;
-      const x0 = Math.round(xOf(i)) - Math.floor(bodyW / 2);
-      const set = b.c >= b.o ? volUp : volDn;
-      for (let y = plotH - 3; plotH - 1 - y <= h; y -= 3) {
-        const lvl = Math.min(LEVELS.length - 1, Math.floor(((plotH - 1 - y) / volH) * LEVELS.length));
-        set[lvl].rect(x0, y, bodyW, 2);
+    if (f.volTop < plotH) {
+      const volH = plotH - f.volTop - 6;
+      let vmax = 1;
+      for (let i = first; i <= last; i++) if (bars[i].v > vmax) vmax = bars[i].v;
+      const LEVELS = [0.42, 0.3, 0.21, 0.14];
+      const up = LEVELS.map(() => new Path2D());
+      const dn = LEVELS.map(() => new Path2D());
+      for (let i = first; i <= last; i++) {
+        const b = bars[i];
+        const h = (b.v / vmax) * volH;
+        const x0 = Math.round(K.xOf(f, i)) - Math.floor(bodyW / 2);
+        const set = b.c >= b.o ? up : dn;
+        for (let y = plotH - 3; plotH - 1 - y <= h; y -= 3) set[Math.min(3, Math.floor(((plotH - 1 - y) / volH) * 4))].rect(x0, y, bodyW, 2);
       }
+      LEVELS.forEach((a, k) => {
+        ctx.globalAlpha = a;
+        ctx.fillStyle = C.blue;
+        ctx.fill(up[k]);
+        ctx.fillStyle = C.ember;
+        ctx.fill(dn[k]);
+      });
+      ctx.globalAlpha = 1;
     }
-    LEVELS.forEach((a, k) => {
-      ctx.globalAlpha = a;
+
+    if (lineMode) {
+      // far out: a line with the band's dithered glow beneath, as on the landing page
+      K.lineGlow(ctx, f, C, f.pBot + 16);
+      ctx.beginPath();
+      let started = false;
+      for (let i = first; i <= last; i++) {
+        const x = K.xOf(f, i);
+        const y = K.yOf(f, bars[i].c);
+        if (started) ctx.lineTo(x, y);
+        else {
+          ctx.moveTo(x, y);
+          started = true;
+        }
+      }
+      ctx.strokeStyle = C.blue;
+      ctx.lineWidth = 1.5;
+      ctx.lineJoin = "round";
+      ctx.stroke();
+    } else {
+      const upP = new Path2D();
+      const dnP = new Path2D();
+      for (let i = first; i <= last; i++) {
+        const b = bars[i];
+        const x = Math.round(K.xOf(f, i));
+        const path = b.c >= b.o ? upP : dnP;
+        const yh = Math.round(K.yOf(f, b.h));
+        const ylo = Math.round(K.yOf(f, b.l));
+        path.rect(x, yh, 1, Math.max(1, ylo - yh));
+        const yo = K.yOf(f, b.o);
+        const yc = K.yOf(f, b.c);
+        path.rect(x - Math.floor(bodyW / 2), Math.round(Math.min(yo, yc)), bodyW, Math.max(1, Math.round(Math.abs(yc - yo))));
+      }
       ctx.fillStyle = C.blue;
-      ctx.fill(volUp[k]);
+      ctx.fill(upP);
       ctx.fillStyle = C.ember;
-      ctx.fill(volDn[k]);
-    });
-    ctx.globalAlpha = 1;
-
-    // candles
-    const upP = new Path2D();
-    const dnP = new Path2D();
-    for (let i = first; i <= last; i++) {
-      const b = bars[i];
-      const x = Math.round(xOf(i));
-      const up = b.c >= b.o;
-      const path = up ? upP : dnP;
-      const yh = Math.round(yOf(b.h));
-      const ylo = Math.round(yOf(b.l));
-      path.rect(x, yh, 1, Math.max(1, ylo - yh));
-      const yo = yOf(b.o);
-      const yc = yOf(b.c);
-      const top = Math.round(Math.min(yo, yc));
-      const hgt = Math.max(1, Math.round(Math.abs(yc - yo)));
-      path.rect(x - Math.floor(bodyW / 2), top, bodyW, hgt);
+      ctx.fill(dnP);
     }
-    ctx.fillStyle = C.blue;
-    ctx.fill(upP);
-    ctx.fillStyle = C.ember;
-    ctx.fill(dnP);
 
-    // executions: an arrow under the bar for a buy, over it for a sell, stacked when a bar has several
-    if (fills.length) {
+    // executions: an arrow under the bar for a buy, over it for a sell
+    if (cfg.fills && f.bw >= 3) {
+      const fills = ds.fills;
       const t0 = bars[first]?.t ?? 0;
       const halo = new Path2D();
       const buys = new Path2D();
@@ -376,19 +590,19 @@ export function Chart() {
         path.closePath();
       };
       const seen = new Map<string, number>();
-      for (const f of fills) {
-        if (f.at < t0) continue;
-        let i = last;
-        while (i > first && bars[i].t > f.at) i--;
-        const up = f.side > 0;
-        const key = `${i}${up ? "b" : "s"}`;
+      for (const fl of fills) {
+        if (fl.sym !== symNow || fl.at < t0) continue;
+        const i = Math.floor(K.idxOfTime(f, fl.at));
+        if (i < first || i > last) continue;
+        const upw = fl.side > 0;
+        const key = `${i}${upw ? "b" : "s"}`;
         const k = seen.get(key) ?? 0;
         seen.set(key, k + 1);
-        const x = Math.round(xOf(i)) + 0.5;
-        const y = up ? Math.round(yOf(bars[i].l)) + 9 + k * 11 : Math.round(yOf(bars[i].h)) - 9 - k * 11;
-        if (y < 0 || y > volTop - 4) continue;
-        tri(halo, x, y, up, 6.5);
-        tri(up ? buys : sells, x, y, up, 4.5);
+        const x = Math.round(K.xOf(f, i)) + 0.5;
+        const y = upw ? Math.round(K.yOf(f, bars[i].l)) + 9 + k * 11 : Math.round(K.yOf(f, bars[i].h)) - 9 - k * 11;
+        if (y < 0 || y > f.pBot + 14) continue;
+        tri(halo, x, y, upw, 6.5);
+        tri(upw ? buys : sells, x, y, upw, 4.5);
       }
       ctx.fillStyle = C.bg;
       ctx.fill(halo);
@@ -398,74 +612,118 @@ export function Chart() {
       ctx.fill(sells);
     }
 
+    // drawings
+    const dr = useDraw.getState();
+    const mine = dr.byUnder[ins.under];
+    if (!dr.hidden) for (const d of mine) K.paintDrawing(ctx, f, d, C, d.id === dr.selected);
+
+    // the bracket a hovered deal button would send
+    if (ds.preview) {
+      const side = ds.preview;
+      const entry = side > 0 ? quote.ask : quote.bid;
+      const tk = ins.tick;
+      const rows: { p: number; label: string; color: string }[] = [{ p: entry, label: side > 0 ? "Buy" : "Sell", color: C.strong }];
+      if (ds.settings.stopOn) rows.push({ p: entry - side * ds.settings.stopTicks[symNow] * tk, label: "Stop", color: C.ember });
+      if (ds.settings.targetOn) rows.push({ p: entry + side * ds.settings.targetTicks[symNow] * tk, label: "Target", color: C.blue });
+      ctx.font = `10px ${C.mono}`;
+      ctx.textAlign = "right";
+      for (const r of rows) {
+        const y = Math.round(K.yOf(f, r.p)) + 0.5;
+        ctx.strokeStyle = r.color;
+        ctx.globalAlpha = 0.7;
+        ctx.setLineDash([6, 4]);
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(plotW, y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = r.color;
+        ctx.fillText(`${r.label.toUpperCase()} ${fmt(r.p)}`, plotW - 10, y - 8);
+      }
+      ctx.textAlign = "left";
+    }
+    ctx.restore();
+
+    // axis tags for horizontal and vertical lines
+    if (!dr.hidden) {
+      ctx.font = `10.5px ${C.mono}`;
+      for (const d of mine) {
+        if (d.kind === "hline") {
+          const y = K.yOf(f, d.a.p);
+          if (y < 0 || y > plotH) continue;
+          ctx.fillStyle = C.bg;
+          K.roundRect(ctx, plotW + 5, y - 10, K.AXIS_W - 10, 20, 5);
+          ctx.fill();
+          ctx.strokeStyle = C.strong;
+          ctx.lineWidth = 1;
+          ctx.stroke();
+          ctx.fillStyle = C.strong;
+          ctx.textAlign = "left";
+          ctx.fillText(fmt(d.a.p), plotW + 12, y + 0.5);
+        } else if (d.kind === "vline") {
+          const x = K.xOfTime(f, d.a.t);
+          if (x < 0 || x > plotW) continue;
+          const label = K.fullTime(d.a.t, sec);
+          const tw = ctx.measureText(label).width + 16;
+          ctx.fillStyle = C.strong;
+          K.roundRect(ctx, x - tw / 2, plotH + 4, tw, 18, 5);
+          ctx.fill();
+          ctx.fillStyle = C.bg;
+          ctx.textAlign = "center";
+          ctx.fillText(label, x, plotH + 13.5);
+        }
+      }
+    }
+
     // the tape
-    if (lp !== v.lastPx) {
-      v.flash = performance.now();
-      v.lastPx = lp;
+    if (quote.last !== st.lastPx) {
+      st.flash = performance.now();
+      st.lastPx = quote.last;
+      window.setTimeout(() => invalidate(true), 440);
     }
     ctx.fillStyle = C.text;
     ctx.globalAlpha = 0.55;
     for (let x = 0; x < plotW; x += 5) ctx.fillRect(x, yl, 2, 1);
     ctx.globalAlpha = 1;
-    const age = performance.now() - v.flash;
-    const flashing = age < 420;
+    const flashing = performance.now() - st.flash < 420;
     ctx.fillStyle = flashing ? (quote.dir > 0 ? C.blue : C.ember) : C.strong;
-    roundRect(ctx, plotW + 5, yl - 10, AXIS_W - 10, 20, 5);
+    K.roundRect(ctx, plotW + 5, yl - 10, K.AXIS_W - 10, 20, 5);
     ctx.fill();
     ctx.fillStyle = C.bg;
     ctx.textAlign = "left";
-    ctx.fillText(fmt(lp), plotW + 12, yl + 0.5);
+    ctx.font = `10.5px ${C.mono}`;
+    ctx.fillText(fmt(quote.last), plotW + 12, yl + 0.5);
 
-    // crosshair
-    if (hi_ >= 0) {
-      const bi = hi_;
-      const cx = hx;
-      ctx.fillStyle = C.text;
-      ctx.globalAlpha = 0.35;
-      for (let y = 0; y < plotH; y += 5) ctx.fillRect(cx, y, 1, 2);
-      if (hy >= 0) for (let x = 0; x < plotW; x += 5) ctx.fillRect(x, Math.round(hy), 2, 1);
-      ctx.globalAlpha = 1;
-      if (hy >= 0) {
-        const p = snap(sym, v.yToPrice(hy));
-        ctx.fillStyle = C.muted;
-        roundRect(ctx, plotW + 5, hy - 10, AXIS_W - 10, 20, 5);
-        ctx.fill();
-        ctx.fillStyle = C.bg;
-        ctx.textAlign = "left";
-        ctx.fillText(fmt(p), plotW + 12, hy + 0.5);
-      }
-      ctx.fillStyle = C.muted;
-      roundRect(ctx, cx - hTagW / 2, plotH + 4, hTagW, 18, 5);
-      ctx.fill();
-      ctx.fillStyle = C.bg;
-      ctx.textAlign = "center";
-      ctx.fillText(hLabel, cx, plotH + 13.5);
-      if (hoverIdx.current !== bi) {
-        hoverIdx.current = bi;
-        setHoverBar(bars[bi]);
-      }
-    } else if (hoverIdx.current !== -1) {
-      hoverIdx.current = -1;
-      setHoverBar(null);
-    }
-
-    // order and position lines (DOM, positioned here). Tags that would overlap
-    // gather into a stack centred on their lines, each tied back by a short elbow.
+    // order, position and alert lines (DOM): tags that would overlap gather into a stack
     const placed: { el: HTMLDivElement; y: number }[] = [];
     for (const l of linesRef.current) {
       const el = lineEls.current.get(l.id);
       if (!el) continue;
-      const p = v.drag?.id === l.id ? v.drag.price : l.price;
-      const y = yOf(p);
-      const cy = Math.max(pTop - 8, Math.min(pBot + 8, y));
-      el.style.transform = `translateY(${cy.toFixed(1)}px)`;
-      el.dataset.off = y < pTop - 8 ? "up" : y > pBot + 8 ? "down" : "";
+      const p = st.lineDrag?.id === l.id ? st.lineDrag.price : l.price;
+      const y = K.yOf(f, p);
+      const cy = Math.max(f.pTop - 8, Math.min(f.pBot + 8, y));
+      const tf = `translateY(${cy.toFixed(1)}px)`;
+      put(el, "transform", tf);
+      putData(el, "off", y < f.pTop - 8 ? "up" : y > f.pBot + 8 ? "down" : "");
+      const rule = ruleEls.current.get(l.id);
+      if (rule) put(rule, "transform", tf);
       placed.push({ el, y: cy });
-      if (v.drag?.id === l.id) {
+      if (st.lineDrag?.id === l.id) {
         const px = el.querySelector<HTMLElement>("[data-px]");
         if (px) px.textContent = fmt(p);
         const val = el.querySelector<HTMLElement>("[data-val]");
-        if (val && pos) val.textContent = money((p - pos.avg) * pos.qty * inst.pv);
+        if (val && posNow) val.textContent = money((p - posNow.avg) * posNow.qty * ins.pv);
+      }
+      if (l.kind === "entry" && posNow) {
+        const live = el.querySelector<HTMLElement>("[data-live]");
+        const pnl = ((posNow.qty > 0 ? quote.bid : quote.ask) - posNow.avg) * posNow.qty * ins.pv;
+        if (live) {
+          const txt = money(pnl);
+          if (live.textContent !== txt) live.textContent = txt;
+          putData(live, "tone", pnl >= 0 ? "pos" : "neg");
+        }
       }
     }
     placed.sort((a, b) => a.y - b.y);
@@ -489,345 +747,959 @@ export function Chart() {
       const top = Math.max(30, Math.min(plotH - 4 - g.items.length * TAG, g.top));
       g.items.forEach((it, k) => {
         const dy = Math.round(top + k * TAG + TAG / 2 - it.y);
-        it.el.style.setProperty("--dy", `${dy}px`);
-        it.el.style.setProperty("--ady", `${Math.abs(dy)}px`);
-        it.el.dataset.dir = dy < -2 ? "up" : dy > 2 ? "down" : "";
+        put(it.el, "--dy", `${dy}px`);
+        put(it.el, "--ady", `${Math.abs(dy)}px`);
+        putData(it.el, "dir", dy < -2 ? "up" : dy > 2 ? "down" : "");
       });
     }
-    const ghost = lineEls.current.get("ghost");
-    if (ghost) {
-      const show = pick && v.mx >= 0 && v.mx < plotW && v.my > 0 && v.my < pBot + 10;
-      ghost.style.opacity = show ? "1" : "0";
-      if (show) {
-        const p = snap(sym, v.yToPrice(v.my));
-        ghost.style.transform = `translateY(${yOf(p).toFixed(1)}px)`;
-        const px = ghost.querySelector<HTMLElement>("[data-px]");
-        if (px) px.textContent = fmt(p);
+  };
+
+  /* ---------- overlay: crosshair, drafts, handles ---------- */
+  const drawOver = (f: K.Frame) => {
+    const st = v.current;
+    const C = st.ink!;
+    const ctx = sizeCanvas(overRef.current!, f.W, f.H);
+    ctx.clearRect(0, 0, f.W, f.H);
+    const ds = useDesk.getState();
+    const symNow = ds.settings.sym;
+    const ins = INSTRUMENTS[symNow];
+    const sec = tfSec(ds.settings.tf);
+    const dr = useDraw.getState();
+    ctx.font = `10.5px ${C.mono}`;
+    ctx.textBaseline = "middle";
+
+    // drafts and transient boxes
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 0, f.plotW, f.plotH);
+    ctx.clip();
+    const draft = st.draft;
+    if (draft && draft.tool !== "measure" && draft.tool !== "zoom") K.paintDrawing(ctx, f, { id: "draft", kind: draft.tool, a: draft.a, b: draft.b } as Drawing, C, true);
+    if (st.drag?.kind === "brush") K.paintDrawing(ctx, f, { id: "draft", kind: "brush", pts: st.drag.pts }, C, true);
+    const meas = draft?.tool === "measure" ? draft : st.measure;
+    if (meas) {
+      const ax = K.xOfTime(f, meas.a.t);
+      const bx = K.xOfTime(f, meas.b.t);
+      const ay = K.yOf(f, meas.a.p);
+      const by = K.yOf(f, meas.b.p);
+      const dp = meas.b.p - meas.a.p;
+      const up = dp >= 0;
+      ctx.fillStyle = up ? C.blue : C.ember;
+      ctx.globalAlpha = 0.12;
+      ctx.fillRect(Math.min(ax, bx), Math.min(ay, by), Math.abs(bx - ax), Math.abs(by - ay));
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = up ? C.blue : C.ember;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(ax, ay);
+      ctx.lineTo(bx, by);
+      ctx.stroke();
+      const bars = Math.round(K.idxOfTime(f, meas.b.t) - K.idxOfTime(f, meas.a.t));
+      const ticks = Math.round(dp / ins.tick);
+      const l1 = `${up ? "+" : "−"}${fmt(Math.abs(dp))} (${up ? "+" : "−"}${Math.abs((dp / meas.a.p) * 100).toFixed(2)}%) · ${Math.abs(ticks)} ticks`;
+      const l2 = `${up ? "+" : "−"}$${fmt(Math.abs(ticks) * ins.tick * ins.pv)} per contract · ${Math.abs(bars)} bars, ${span(meas.b.t - meas.a.t)}`;
+      ctx.font = `10.5px ${C.mono}`;
+      const w = Math.max(ctx.measureText(l1).width, ctx.measureText(l2).width) + 20;
+      const lx = Math.min(Math.max(8, (ax + bx) / 2 - w / 2), f.plotW - w - 8);
+      const ly = Math.max(8, Math.min(f.plotH - 50, (up ? Math.min(ay, by) - 46 : Math.max(ay, by) + 8)));
+      ctx.fillStyle = up ? C.blue : C.ember;
+      K.roundRect(ctx, lx, ly, w, 40, 8);
+      ctx.fill();
+      ctx.fillStyle = "#fff";
+      ctx.textAlign = "left";
+      ctx.fillText(l1, lx + 10, ly + 13);
+      ctx.globalAlpha = 0.85;
+      ctx.fillText(l2, lx + 10, ly + 28);
+      ctx.globalAlpha = 1;
+    }
+    if (st.zoom) {
+      const z = st.zoom;
+      ctx.fillStyle = C.text;
+      ctx.globalAlpha = 0.06;
+      ctx.fillRect(Math.min(z.x0, z.x1), Math.min(z.y0, z.y1), Math.abs(z.x1 - z.x0), Math.abs(z.y1 - z.y0));
+      ctx.globalAlpha = 1;
+      ctx.setLineDash([4, 4]);
+      ctx.strokeStyle = C.muted;
+      ctx.strokeRect(Math.min(z.x0, z.x1) + 0.5, Math.min(z.y0, z.y1) + 0.5, Math.abs(z.x1 - z.x0), Math.abs(z.y1 - z.y0));
+      ctx.setLineDash([]);
+    }
+    // the hovered or selected drawing, lifted
+    const mine = dr.byUnder[ins.under];
+    if (!dr.hidden) {
+      const hot = mine.find((d) => d.id === st.hover && d.id !== dr.selected);
+      if (hot) K.paintDrawing(ctx, f, hot, C, true);
+      const sel = mine.find((d) => d.id === dr.selected);
+      if (sel) {
+        for (const h of K.handlesOf(f, sel)) {
+          ctx.fillStyle = C.bg;
+          ctx.strokeStyle = C.strong;
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.arc(h.x, h.y, 4.5, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+        }
       }
     }
+    ctx.restore();
 
-    if (settling || flashing) schedule();
-  }
-  drawRef.current = draw;
+    // crosshair
+    const busy = st.drag && (st.drag.kind === "pan" || st.drag.kind === "scaleX" || st.drag.kind === "scaleY");
+    const showX = st.inside && !busy && st.mx >= 0 && st.mx < f.plotW && st.my >= 0 && st.my < f.H;
+    let hb: number = f.last;
+    if (showX) {
+      hb = Math.max(f.first, Math.min(f.last, Math.round(K.iOfX(f, st.mx))));
+      const cx = Math.round(K.xOf(f, Math.round(K.iOfX(f, st.mx))));
+      const inPlot = st.my < f.plotH;
+      ctx.fillStyle = C.text;
+      ctx.globalAlpha = 0.35;
+      for (let y = 0; y < f.plotH; y += 5) ctx.fillRect(cx, y, 1, 2);
+      if (inPlot) for (let x = 0; x < f.plotW; x += 5) ctx.fillRect(x, Math.round(st.my), 2, 1);
+      ctx.globalAlpha = 1;
+      if (inPlot) {
+        const p = K.pOfY(f, st.my);
+        ctx.fillStyle = C.muted;
+        K.roundRect(ctx, f.plotW + 5, st.my - 10, K.AXIS_W - 10, 20, 5);
+        ctx.fill();
+        ctx.fillStyle = C.bg;
+        ctx.textAlign = "left";
+        ctx.fillText(fmt(snap(symNow, p)), f.plotW + 12, st.my + 0.5);
+      }
+      const label = K.fullTime(K.timeOfIdx(f, Math.round(K.iOfX(f, st.mx))), sec);
+      const tw = ctx.measureText(label).width + 16;
+      ctx.fillStyle = C.muted;
+      K.roundRect(ctx, Math.max(0, Math.min(f.plotW - tw, cx - tw / 2)), f.plotH + 4, tw, 18, 5);
+      ctx.fill();
+      ctx.fillStyle = C.bg;
+      ctx.textAlign = "center";
+      ctx.fillText(label, Math.max(tw / 2, Math.min(f.plotW - tw / 2, cx)), f.plotH + 13.5);
+    }
 
-  // redraw on every tick and whenever the book changes
+    // the legend follows the crosshair, without React
+    const b = f.bars[hb];
+    if (b) {
+      const L = leg.current;
+      const txt = (el: HTMLElement | null, s2: string) => {
+        if (el && el.textContent !== s2) el.textContent = s2;
+      };
+      txt(L.time, showX ? K.fullTime(b.t, sec) : "Now");
+      txt(L.o, fmt(b.o));
+      txt(L.h, fmt(b.h));
+      txt(L.l, fmt(b.l));
+      txt(L.c, fmt(b.c));
+      if (L.c) putData(L.c, "tone", b.c >= b.o ? "pos" : "neg");
+      txt(L.v, b.v >= 1e6 ? `${(b.v / 1e6).toFixed(2)}M` : b.v >= 1000 ? `${(b.v / 1000).toFixed(1)}k` : String(b.v));
+    }
+
+    // the pick-a-price ghost line
+    const ghost = lineEls.current.get("ghost");
+    if (ghost) {
+      const show = !!ds.pick && st.inside && st.mx < f.plotW && st.my > 0 && st.my < f.pBot + 10;
+      put(ghost, "opacity", show ? "1" : "0");
+      if (show) {
+        const p = snap(symNow, K.pOfY(f, st.my));
+        put(ghost, "transform", `translateY(${K.yOf(f, p).toFixed(1)}px)`);
+        const px = ghost.querySelector<HTMLElement>("[data-px]");
+        const label = fmt(p);
+        if (px && px.textContent !== label) px.textContent = label;
+      }
+    }
+  };
+
+  paint.current = () => {
+    const st = v.current;
+    st.raf = 0;
+    if (!st.ink) readInk();
+    if (!st.ink) return;
+    const wantBase = st.base;
+    st.base = false;
+    st.over = false;
+    const f = frame();
+    if (!f) return;
+    if (wantBase) drawBase(f);
+    drawOver(f);
+    if (st.base) invalidate(true); // still easing into a new scale
+  };
+
+  /* ---------- data, theme and size ---------- */
   useEffect(() => {
-    schedule();
-  });
-
-  useEffect(() => {
+    startDrawings();
     const wrap = wrapRef.current;
     if (!wrap) return;
-    const ro = new ResizeObserver(() => schedule());
+    const ro = new ResizeObserver(() => invalidate(true));
     ro.observe(wrap);
-    const off = onThemeChange(() => {
+    const offTheme = onThemeChange(() =>
       requestAnimationFrame(() => {
-        readColors();
-        schedule();
-      });
+        readInk();
+        invalidate(true);
+      }),
+    );
+    const unDesk = useDesk.subscribe((a, b) => {
+      if (a.quotes !== b.quotes || a.positions !== b.positions || a.orders !== b.orders || a.fills !== b.fills || a.alerts !== b.alerts || a.settings !== b.settings || a.preview !== b.preview) invalidate(true);
+      else if (a.pick !== b.pick) invalidate(false);
     });
+    const unDraw = useDraw.subscribe(() => invalidate(true));
     return () => {
       ro.disconnect();
-      off();
-      cancelAnimationFrame(view.current.raf);
-      view.current.raf = 0;
+      offTheme();
+      unDesk();
+      unDraw();
+      cancelAnimationFrame(v.current.raf);
+      v.current.raf = 0;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [invalidate]);
 
-  // new market or timeframe: snap the scale instead of easing across
+  // lines re-rendered: place them
+  useEffect(() => invalidate(true), [lines, invalidate]);
+
+  // a new market or timeframe starts fitted and current
   useEffect(() => {
-    view.current.scaled = false;
-    view.current.offset = 0;
-    schedule();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sym, tf]);
+    const st = v.current;
+    if (!st.pendingRange) {
+      st.bw = K.DEFAULT_BW;
+      st.range = null;
+      setRange(null);
+    }
+    st.off = 0;
+    st.auto = true;
+    st.fitted = false;
+    st.n = 0;
+    st.draft = null;
+    st.measure = null;
+    setAuto(true);
+    invalidate(true);
+  }, [sym, tf, invalidate]);
 
+  /* ---------- view changes ---------- */
+  const manual = (st = v.current) => {
+    if (st.auto) {
+      st.auto = false;
+      setAuto(false);
+    }
+  };
+  const clearRange = (st = v.current) => {
+    if (st.range) {
+      st.range = null;
+      setRange(null);
+    }
+  };
+  const resetView = () => {
+    const st = v.current;
+    st.bw = K.DEFAULT_BW;
+    st.off = 0;
+    st.auto = true;
+    st.fitted = false;
+    st.measure = null;
+    setAuto(true);
+    clearRange();
+    invalidate(true);
+  };
+  const applyRange = (r: Range) => {
+    const spec = RANGES.find((x) => x.id === r)!;
+    const st = v.current;
+    st.pendingRange = r;
+    setRange(r);
+    setAuto(true);
+    if (useDesk.getState().settings.tf !== spec.tf) setSettings({ tf: spec.tf });
+    invalidate(true);
+  };
+  const zoomAt = (x: number, k: number) => {
+    const st = v.current;
+    const f = st.frame;
+    if (!f) return;
+    const i0 = K.iOfX(f, x);
+    const bw = Math.max(K.MIN_BW, Math.min(K.MAX_BW, st.bw * k));
+    const pad = K.padBars(bw);
+    // keep the bar under the pointer where it is
+    const L = i0 + (f.plotW - x) / bw - pad - 0.5;
+    st.bw = bw;
+    st.off = f.bars.length - 1 - L;
+    clearRange();
+    invalidate(true);
+  };
+
+  /* ---------- pointer ---------- */
   const local = (e: { clientX: number; clientY: number }) => {
     const r = wrapRef.current!.getBoundingClientRect();
     return { x: e.clientX - r.left, y: e.clientY - r.top };
   };
+  const regionAt = (x: number, y: number) => {
+    const f = v.current.frame;
+    if (!f) return "plot" as const;
+    if (x >= f.plotW) return "price" as const;
+    if (y >= f.plotH) return "time" as const;
+    return "plot" as const;
+  };
+  const ptAt = (x: number, y: number): Pt => {
+    const f = v.current.frame!;
+    const i = Math.round(K.iOfX(f, x));
+    let p = K.pOfY(f, y);
+    if (useDraw.getState().magnet && i >= 0 && i < f.bars.length) {
+      const b = f.bars[i];
+      let dist = 16;
+      for (const q of [b.o, b.h, b.l, b.c]) {
+        const d = Math.abs(K.yOf(f, q) - y);
+        if (d < dist) {
+          dist = d;
+          p = q;
+        }
+      }
+    }
+    return { t: K.timeOfIdx(f, i), p: snap(useDesk.getState().settings.sym, p) };
+  };
+  const under = () => INSTRUMENTS[useDesk.getState().settings.sym].under;
+  const hitAt = (x: number, y: number): Drawing | null => {
+    const st = v.current;
+    const f = st.frame;
+    const dr = useDraw.getState();
+    if (!f || dr.hidden || dr.locked) return null;
+    const ctx = overRef.current!.getContext("2d")!;
+    const mine = dr.byUnder[under()];
+    for (let i = mine.length - 1; i >= 0; i--) if (K.hits(ctx, f, mine[i], x, y, st.ink?.sans ?? "sans-serif")) return mine[i];
+    return null;
+  };
+  const handleAt = (x: number, y: number): { d: Drawing; idx: number } | null => {
+    const st = v.current;
+    const f = st.frame;
+    const dr = useDraw.getState();
+    if (!f || !dr.selected || dr.hidden || dr.locked) return null;
+    const d = dr.byUnder[under()].find((z) => z.id === dr.selected);
+    if (!d) return null;
+    const hs = K.handlesOf(f, d);
+    for (let i = 0; i < hs.length; i++) if (Math.hypot(hs[i].x - x, hs[i].y - y) < 8) return { d, idx: i };
+    return null;
+  };
+  const finish = (d: Drawing) => {
+    addDrawing(under(), d);
+    if (!useDraw.getState().keep) setTool("cursor");
+  };
+  const commitTwo = (toolNow: TwoPoint, a: Pt, b: Pt) => {
+    const st = v.current;
+    const f = st.frame!;
+    if (toolNow === "measure") {
+      st.measure = { a, b };
+      if (!useDraw.getState().keep) setTool("cursor");
+      return;
+    }
+    if (toolNow === "zoom") {
+      const i0 = K.idxOfTime(f, Math.min(a.t, b.t));
+      const i1 = K.idxOfTime(f, Math.max(a.t, b.t));
+      const count = Math.max(4, i1 - i0 + 1);
+      st.bw = Math.max(K.MIN_BW, Math.min(K.MAX_BW, f.plotW / (count + K.padBars(f.plotW / count))));
+      st.off = f.bars.length - 1 - i1;
+      st.lo = Math.min(a.p, b.p);
+      st.hi = Math.max(a.p, b.p);
+      if (st.hi - st.lo < INSTRUMENTS[useDesk.getState().settings.sym].tick * 4) st.hi = st.lo + INSTRUMENTS[useDesk.getState().settings.sym].tick * 4;
+      manual();
+      clearRange();
+      setTool("cursor");
+      invalidate(true);
+      return;
+    }
+    if (a.t === b.t && a.p === b.p) return;
+    finish({ id: drawId(), kind: toolNow, a, b } as Drawing);
+  };
 
   const onDown = (e: React.PointerEvent) => {
-    const v = view.current;
+    if (e.button === 2) return;
+    const st = v.current;
     const { x, y } = local(e);
-    if (pick) {
-      if (x < (wrapRef.current?.clientWidth ?? 0) - AXIS_W && y < v.pBot + 10) {
-        const price = snap(sym, v.yToPrice(y));
-        const tk = useDesk.getState().ticket;
-        // a stop limit keeps its limit the same distance from the trigger
-        if (pick === "stop" && tk.type === "STPLMT" && tk.stop !== null && tk.limit !== null) setTicket({ stop: price, limit: snap(sym, price + (tk.limit - tk.stop)) });
-        else setTicket({ [pick]: price });
+    if (menu) setMenu(null);
+    const region = regionAt(x, y);
+    const target = e.currentTarget as Element;
+    if (region === "price") {
+      target.setPointerCapture(e.pointerId);
+      st.drag = { kind: "scaleY", y, lo: st.lo, hi: st.hi };
+      manual();
+      return;
+    }
+    if (region === "time") {
+      target.setPointerCapture(e.pointerId);
+      st.drag = { kind: "scaleX", x, bw: st.bw, off: st.off };
+      return;
+    }
+    const ds = useDesk.getState();
+    if (ds.pick) {
+      const f = st.frame;
+      if (f && y < f.pBot + 10) {
+        const price = snap(ds.settings.sym, K.pOfY(f, y));
+        const tk = ds.ticket;
+        if (ds.pick === "stop" && tk.type === "STPLMT" && tk.stop !== null && tk.limit !== null) setTicket({ stop: price, limit: snap(ds.settings.sym, price + (tk.limit - tk.stop)) });
+        else setTicket({ [ds.pick]: price });
         setPick(null);
       }
       return;
     }
-    (e.target as Element).setPointerCapture?.(e.pointerId);
-    v.pan = { x, offset: v.offset };
-  };
-  const onMove = (e: React.PointerEvent) => {
-    const v = view.current;
-    const { x, y } = local(e);
-    v.mx = x;
-    v.my = y;
-    if (v.pan) v.offset = v.pan.offset + (x - v.pan.x) / v.barW;
-    schedule();
-  };
-  const onUp = () => {
-    view.current.pan = null;
-    schedule();
-  };
-  const onLeave = () => {
-    view.current.mx = -1;
-    view.current.my = -1;
-    schedule();
+    if (text) return;
+    const dr = useDraw.getState();
+    const toolNow = e.shiftKey && dr.tool === "cursor" ? "measure" : dr.tool;
+    st.measure = null;
+
+    if (toolNow !== "cursor") {
+      const p = ptAt(x, y);
+      if (TWO.includes(toolNow as TwoPoint)) {
+        const two = toolNow as TwoPoint;
+        if (st.draft && st.draft.tool === two) {
+          // second click of click-click placement
+          commitTwo(two, st.draft.a, p);
+          st.draft = null;
+          invalidate(true);
+          return;
+        }
+        target.setPointerCapture(e.pointerId);
+        st.draft = { tool: two, a: p, b: p };
+        st.drag = { kind: "draw", tool: two, x0: x, y0: y };
+        if (two === "zoom") st.zoom = { x0: x, y0: y, x1: x, y1: y };
+        invalidate(false);
+        return;
+      }
+      if (toolNow === "hline" || toolNow === "vline") {
+        finish({ id: drawId(), kind: toolNow, a: p });
+        return;
+      }
+      if (toolNow === "arrow") {
+        const f = st.frame!;
+        const i = Math.max(0, Math.min(f.bars.length - 1, Math.round(K.iOfX(f, x))));
+        const b = f.bars[i];
+        const upArrow = y > K.yOf(f, (b.h + b.l) / 2);
+        finish({ id: drawId(), kind: "arrow", a: { t: p.t, p: upArrow ? b.l : b.h }, up: upArrow });
+        return;
+      }
+      if (toolNow === "text") {
+        setText({ x, y, at: p, value: "" });
+        return;
+      }
+      if (toolNow === "brush") {
+        target.setPointerCapture(e.pointerId);
+        st.drag = { kind: "brush", pts: [{ t: K.timeAtX(st.frame!, x), p: K.pOfY(st.frame!, y) }] };
+        return;
+      }
+    }
+
+    // the cursor: grab a handle, a drawing, or the chart itself
+    const h = handleAt(x, y);
+    if (h) {
+      target.setPointerCapture(e.pointerId);
+      st.drag = { kind: "handle", orig: h.d, idx: h.idx };
+      return;
+    }
+    const hit = hitAt(x, y);
+    if (hit) {
+      selectDrawing(hit.id);
+      target.setPointerCapture(e.pointerId);
+      st.drag = { kind: "move", orig: hit, x0: x, y0: y };
+      return;
+    }
+    if (dr.selected) selectDrawing(null);
+    target.setPointerCapture(e.pointerId);
+    st.drag = { kind: "pan", x, y, off: st.off, lo: st.lo, hi: st.hi };
   };
 
+  const onMove = (e: React.PointerEvent) => {
+    const st = v.current;
+    const { x, y } = local(e);
+    st.mx = x;
+    st.my = y;
+    st.inside = true;
+    const f = st.frame;
+    const d = st.drag;
+    const wrap = wrapRef.current!;
+    if (!f) return invalidate(false);
+    if (d?.kind === "pan") {
+      st.off = d.off + (x - d.x) / st.bw;
+      if (Math.abs(y - d.y) > 2 || !st.auto) {
+        // grabbing the chart moves price too, as on TradingView
+        if (st.auto && Math.abs(y - d.y) > 6) manual();
+        if (!st.auto) {
+          if (f.log) {
+            const k = Math.exp(((y - d.y) / (f.pBot - f.pTop)) * (Math.log(d.hi) - Math.log(d.lo)));
+            st.lo = d.lo * k;
+            st.hi = d.hi * k;
+          } else {
+            const dp = ((y - d.y) / (f.pBot - f.pTop)) * (d.hi - d.lo);
+            st.lo = d.lo + dp;
+            st.hi = d.hi + dp;
+          }
+        }
+      }
+      if (Math.abs(x - d.x) > 2) clearRange();
+      wrap.style.cursor = "grabbing";
+      return invalidate(true);
+    }
+    if (d?.kind === "scaleY") {
+      const k = Math.exp((y - d.y) * 0.005);
+      if (f.log) {
+        const mid = (Math.log(d.hi) + Math.log(d.lo)) / 2;
+        const half = ((Math.log(d.hi) - Math.log(d.lo)) / 2) * k;
+        st.lo = Math.exp(mid - half);
+        st.hi = Math.exp(mid + half);
+      } else {
+        const mid = (d.hi + d.lo) / 2;
+        const half = ((d.hi - d.lo) / 2) * k;
+        st.lo = mid - half;
+        st.hi = mid + half;
+      }
+      return invalidate(true);
+    }
+    if (d?.kind === "scaleX") {
+      st.bw = Math.max(K.MIN_BW, Math.min(K.MAX_BW, d.bw * Math.exp((x - d.x) * 0.006)));
+      st.off = d.off;
+      clearRange();
+      return invalidate(true);
+    }
+    if (d?.kind === "draw") {
+      const p = ptAt(x, y);
+      if (st.draft) st.draft.b = p;
+      if (st.zoom) {
+        st.zoom.x1 = x;
+        st.zoom.y1 = y;
+      }
+      return invalidate(false);
+    }
+    if (d?.kind === "brush") {
+      const lastP = d.pts[d.pts.length - 1];
+      if (Math.abs(K.xOfTime(f, lastP.t) - x) + Math.abs(K.yOf(f, lastP.p) - y) > 3) d.pts.push({ t: K.timeAtX(f, x), p: K.pOfY(f, y) });
+      return invalidate(false);
+    }
+    if (d?.kind === "move") {
+      const di = Math.round((x - d.x0) / st.bw);
+      const dp = K.pOfY(f, y) - K.pOfY(f, d.y0);
+      replaceDrawing(under(), K.shifted(f, d.orig, di, snap(useDesk.getState().settings.sym, dp)));
+      return;
+    }
+    if (d?.kind === "handle") {
+      const p = ptAt(x, y);
+      const o = d.orig;
+      let next: Drawing = o;
+      if (o.kind === "hline") next = { ...o, a: { ...o.a, p: p.p } };
+      else if (o.kind === "vline") next = { ...o, a: { ...o.a, t: p.t } };
+      else if (o.kind === "trend" || o.kind === "ray" || o.kind === "rect" || o.kind === "fib") next = d.idx === 0 ? { ...o, a: p } : { ...o, b: p };
+      replaceDrawing(under(), next);
+      return;
+    }
+    // hovering
+    if (st.draft) st.draft.b = ptAt(x, y);
+    const region = regionAt(x, y);
+    st.region = region;
+    let cursor = region === "price" ? "ns-resize" : region === "time" ? "ew-resize" : useDesk.getState().pick ? "copy" : "crosshair";
+    if (region === "plot" && useDraw.getState().tool === "cursor" && !useDesk.getState().pick) {
+      const prev = st.hover;
+      if (handleAt(x, y)) cursor = "move";
+      const hit = hitAt(x, y);
+      st.hover = hit?.id ?? null;
+      if (hit && cursor !== "move") cursor = "pointer";
+      if (prev !== st.hover) invalidate(false);
+    }
+    if (wrap.style.cursor !== cursor) wrap.style.cursor = cursor;
+    invalidate(false);
+  };
+
+  const onUp = (e: React.PointerEvent) => {
+    const st = v.current;
+    const d = st.drag;
+    st.drag = null;
+    if (!d) return;
+    const { x, y } = local(e);
+    if (d.kind === "draw") {
+      const moved = Math.hypot(x - d.x0, y - d.y0) > 5;
+      st.zoom = null;
+      if (moved && st.draft) {
+        commitTwo(d.tool, st.draft.a, ptAt(x, y));
+        st.draft = null;
+      }
+      // a click without a drag leaves the draft open for a second click
+    } else if (d.kind === "brush") {
+      if (d.pts.length > 1) finish({ id: drawId(), kind: "brush", pts: d.pts });
+    }
+    wrapRef.current!.style.cursor = "";
+    invalidate(true);
+  };
+
+  const onLeave = () => {
+    const st = v.current;
+    st.inside = false;
+    st.hover = null;
+    invalidate(false);
+  };
+
+  const onDouble = (e: React.MouseEvent) => {
+    const { x, y } = local(e);
+    const region = regionAt(x, y);
+    const st = v.current;
+    if (region === "price") {
+      st.auto = true;
+      st.fitted = false;
+      setAuto(true);
+      return invalidate(true);
+    }
+    if (region === "time") {
+      st.bw = K.DEFAULT_BW;
+      st.off = 0;
+      clearRange();
+      return invalidate(true);
+    }
+    const hit = hitAt(x, y);
+    if (hit?.kind === "text") {
+      const f = st.frame!;
+      setText({ x: K.xOfTime(f, hit.a.t), y: K.yOf(f, hit.a.p), at: hit.a, id: hit.id, value: hit.text });
+      return;
+    }
+    if (!hit) resetView();
+  };
+
+  const onMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const st = v.current;
+    const f = st.frame;
+    if (!f) return;
+    const { x, y } = local(e);
+    if (regionAt(x, y) !== "plot") return;
+    const ds = useDesk.getState();
+    const i = Math.round(K.iOfX(f, x));
+    const t = K.timeOfIdx(f, i);
+    setMenu({ x, y, price: snap(ds.settings.sym, K.pOfY(f, y)), t, label: K.fullTime(t, tfSec(ds.settings.tf)) });
+  };
+
+  // wheel: zoom time around the pointer, scale price over the axis, pan sideways
   useEffect(() => {
     const wrap = wrapRef.current;
     if (!wrap) return;
     const wheel = (e: WheelEvent) => {
       e.preventDefault();
-      const v = view.current;
-      const k = Math.exp(-e.deltaY * 0.0015);
-      v.barW = Math.max(3, Math.min(28, v.barW * k));
-      schedule();
+      const st = v.current;
+      const f = st.frame;
+      if (!f) return;
+      const { x, y } = local(e);
+      if (regionAt(x, y) === "price") {
+        const k = Math.exp(e.deltaY * 0.0015);
+        const mid = (st.hi + st.lo) / 2;
+        const half = ((st.hi - st.lo) / 2) * k;
+        st.lo = mid - half;
+        st.hi = mid + half;
+        manual();
+        return invalidate(true);
+      }
+      if (!e.ctrlKey && Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+        st.off += e.deltaX / st.bw;
+        clearRange();
+        return invalidate(true);
+      }
+      zoomAt(Math.min(x, f.plotW), Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0015)));
     };
     wrap.addEventListener("wheel", wheel, { passive: false });
     return () => wrap.removeEventListener("wheel", wheel);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // dragging a line
+  // Esc and Delete belong to the chart first while it's in the middle of something
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (el?.closest?.("input, textarea, select, [contenteditable='true']")) return;
+      const st = v.current;
+      const dr = useDraw.getState();
+      if (e.key === "Escape") {
+        if (st.draft || st.measure || st.drag) {
+          st.draft = null;
+          st.measure = null;
+          st.zoom = null;
+          st.drag = null;
+        } else if (dr.selected) selectDrawing(null);
+        else if (dr.tool !== "cursor") setTool("cursor");
+        else return;
+        e.stopImmediatePropagation();
+        e.preventDefault();
+        invalidate(true);
+      }
+      if ((e.key === "Delete" || e.key === "Backspace") && dr.selected) {
+        removeDrawing(INSTRUMENTS[useDesk.getState().settings.sym].under, dr.selected);
+        e.stopImmediatePropagation();
+        e.preventDefault();
+      }
+    };
+    window.addEventListener("keydown", key, true);
+    return () => window.removeEventListener("keydown", key, true);
+  }, [invalidate]);
+
+  /* ---------- dragging order and alert lines ---------- */
   const startDrag = (e: React.PointerEvent, l: Line) => {
     if (!l.drag) return;
     e.stopPropagation();
     (e.currentTarget as Element).setPointerCapture(e.pointerId);
-    view.current.drag = { id: l.id, price: l.price };
+    v.current.lineDrag = { id: l.id, price: l.price };
   };
   const moveDrag = (e: React.PointerEvent, l: Line) => {
-    const v = view.current;
-    if (v.drag?.id !== l.id) return;
+    const st = v.current;
+    if (st.lineDrag?.id !== l.id || !st.frame) return;
     e.stopPropagation();
     const { y } = local(e);
-    v.drag.price = snap(sym, v.yToPrice(y));
-    v.mx = -1;
-    schedule();
+    st.lineDrag.price = snap(sym, K.pOfY(st.frame, y));
+    st.inside = false;
+    invalidate(true);
   };
   const endDrag = (e: React.PointerEvent, l: Line) => {
-    const v = view.current;
-    if (v.drag?.id !== l.id) return;
+    const st = v.current;
+    if (st.lineDrag?.id !== l.id) return;
     e.stopPropagation();
-    const p = v.drag.price;
-    v.drag = null;
-    if (l.order && p !== l.price) moveOrder(l.order.id, p);
-    schedule();
+    const p = st.lineDrag.price;
+    st.lineDrag = null;
+    if (p !== l.price) {
+      if (l.order) moveOrder(l.order.id, p);
+      if (l.alertId) moveAlert(l.alertId, p);
+    }
+    invalidate(true);
   };
-
-  const bar = hoverBar ?? (() => {
-    const m = getMarket();
-    if (!m || !ready) return null;
-    const bs = m.bars(inst.under, tfMin);
-    return bs[bs.length - 1];
-  })();
-  void tick;
 
   const hasStop = orders.some((o) => o.role === "stop");
   const hasTarget = orders.some((o) => o.role === "target");
-  const chg = quote.last - quote.prev;
+  const textCommit = () => {
+    if (!text) return;
+    const value = text.value.trim();
+    if (value) {
+      if (text.id) replaceDrawing(inst.under, { id: text.id, kind: "text", a: text.at, text: value });
+      else finish({ id: drawId(), kind: "text", a: text.at, text: value });
+    }
+    setText(null);
+  };
 
   return (
     <div className={s.chart}>
-      <header className={s.bar}>
-        <button type="button" className={s.barIcon} aria-pressed={markets} onClick={() => togglePanel("markets")} title={markets ? "Hide markets (M)" : "Show markets (M)"} aria-label="Markets panel">
-          <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
-            <rect x="1.5" y="2.5" width="13" height="11" rx="2.2" fill="none" stroke="currentColor" strokeWidth="1.2" />
-            <path d="M6 2.5v11" stroke="currentColor" strokeWidth="1.2" />
-            <rect className={s.barIconFill} x="2.6" y="3.6" width="2.4" height="8.8" rx="0.8" />
-          </svg>
-        </button>
-        <div className={s.syms} role="tablist" aria-label="Market" style={{ "--i": SYMS.indexOf(sym) } as CSSProperties}>
-          <span className={s.symBar} aria-hidden="true" />
-          {SYMS.map((x, k) => (
-            <button key={x} type="button" role="tab" aria-selected={x === sym} onClick={() => selectSym(x)} title={`${INSTRUMENTS[x].name} (${k + 1})`}>
-              {x}
-              {held[k] !== 0 && <i className={held[k] > 0 ? s.symL : s.symS} />}
-            </button>
-          ))}
-        </div>
-        <span className={s.barSep} aria-hidden="true" />
-        <div className={s.quote}>
-          <Odometer value={quote.last ? fmt(quote.last) : "0.00"} className={s.quotePx} delay={0} />
-          <span className={`${s.quoteChg} ${chg >= 0 ? s.pos : s.neg}`}>
-            {chg >= 0 ? "+" : "−"}
-            {fmt(Math.abs(chg))}
-            <span>{quote.prev ? `${chg >= 0 ? "+" : "−"}${Math.abs((chg / quote.prev) * 100).toFixed(2)}%` : ""}</span>
-          </span>
-        </div>
-        <div className={s.barRight}>
-          <div className={s.seg} role="tablist" aria-label="Timeframe" style={{ "--i": TIMEFRAMES.findIndex((t) => t.id === tf), "--n": TIMEFRAMES.length } as CSSProperties}>
-            <span className={s.segPill} aria-hidden="true" />
-            {TIMEFRAMES.map((t) => (
-              <button key={t.id} type="button" role="tab" aria-selected={t.id === tf} onClick={() => setSettings({ tf: t.id })}>
-                {t.label}
-              </button>
-            ))}
-          </div>
-          <span className={s.barSep} aria-hidden="true" />
-          <button type="button" className={s.barBtn} aria-pressed={panels.instant} onClick={() => togglePanel("instant")} title="Instant trade panel (I)">
-            <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true">
-              <path d="M9.2 1.5 3.5 9h4.1l-1 5.5L12.5 7H8.4z" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
-            </svg>
-            Instant
-          </button>
-          <button type="button" className={s.barBtn} aria-pressed={panels.pnl} onClick={() => togglePanel("pnl")} title="Live P&L panel (L)">
-            <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true">
-              <path d="M1.5 9h3l1.6-4 2.6 8 1.8-5H14.5" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" strokeLinecap="round" />
-            </svg>
-            P&amp;L
-          </button>
-          <button type="button" className={s.barBtn} aria-pressed={notesOpen} onClick={() => toggleNotes()} title="Notes (N)">
-            <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true">
-              <path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinejoin="round" />
-            </svg>
-            Notes
-            {noteCount > 0 && <em>{noteCount}</em>}
-          </button>
-          <button type="button" className={s.barIcon} onClick={() => showShortcuts(true)} title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">
-            <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
-              <rect x="1.5" y="4" width="13" height="8.5" rx="2" fill="none" stroke="currentColor" strokeWidth="1.2" />
-              <path d="M4 7h.01M6.5 7h.01M9 7h.01M11.5 7h.01M5 9.8h6" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-            </svg>
-          </button>
-        </div>
-      </header>
+      <ChartBar />
+      <div className={s.chartBody}>
+        {rail && (
+          <ToolRail
+            count={drawCount}
+            onClear={() => {
+              const n = clearDrawings(inst.under);
+              if (n) useDesk.setState({ toasts: [...useDesk.getState().toasts, { id: `c${Date.now()}`, tone: "plain", title: `Removed ${n} drawing${n > 1 ? "s" : ""}`, at: Date.now() }] });
+            }}
+          />
+        )}
+        <div
+          ref={wrapRef}
+          className={`${s.plot} ${pick ? s.picking : ""} ${tool !== "cursor" ? s.drawing : ""}`}
+          data-plot=""
+          onPointerDown={onDown}
+          onPointerMove={onMove}
+          onPointerUp={onUp}
+          onPointerCancel={onUp}
+          onPointerLeave={onLeave}
+          onDoubleClick={onDouble}
+          onContextMenu={onMenu}
+        >
+          <canvas ref={baseRef} className={s.canvas} aria-label={`${inst.code} chart`} role="img" />
+          <canvas ref={overRef} className={s.canvas} aria-hidden="true" />
 
-      <div
-        ref={wrapRef}
-        className={`${s.plot} ${pick ? s.picking : ""}`}
-        data-plot=""
-        onPointerDown={onDown}
-        onPointerMove={onMove}
-        onPointerUp={onUp}
-        onPointerLeave={onLeave}
-        onDoubleClick={() => {
-          view.current.offset = 0;
-          view.current.barW = 9;
-          schedule();
-        }}
-      >
-        <canvas ref={canvasRef} className={s.canvas} aria-label={`${inst.code} chart`} role="img" />
-        {bar && (
-          <div className={s.legend} aria-hidden="true">
+          <div className={s.legend}>
+            <button
+              type="button"
+              className={s.railToggle}
+              aria-pressed={rail}
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={() => toggleDraw("rail")}
+              title={rail ? "Hide drawing tools" : "Drawing tools"}
+              aria-label="Drawing tools"
+            >
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="m10.2 2.6 3.2 3.2-7.8 7.8H2.4v-3.2z" />
+                <path d="m8.6 4.2 3.2 3.2" />
+              </svg>
+            </button>
             <span className={s.legName}>
               {inst.name} · {tf}
             </span>
-            <span className={s.legTime}>{hoverBar ? fullTime(bar.t) : "Now"}</span>
+            <span className={s.legTime} ref={(el) => void (leg.current.time = el)} />
             <span>
               <i>O</i>
-              {fmt(bar.o)}
+              <b ref={(el) => void (leg.current.o = el)} />
             </span>
             <span>
               <i>H</i>
-              {fmt(bar.h)}
+              <b ref={(el) => void (leg.current.h = el)} />
             </span>
             <span>
               <i>L</i>
-              {fmt(bar.l)}
+              <b ref={(el) => void (leg.current.l = el)} />
             </span>
             <span>
               <i>C</i>
-              <b className={bar.c >= bar.o ? s.pos : s.neg}>{fmt(bar.c)}</b>
+              <b className={s.legC} ref={(el) => void (leg.current.c = el)} />
             </span>
             <span>
               <i>V</i>
-              {bar.v >= 1000 ? `${(bar.v / 1000).toFixed(1)}k` : bar.v}
+              <b ref={(el) => void (leg.current.v = el)} />
             </span>
           </div>
-        )}
-        <Toaster inline />
 
-        {lines.map((l) => (
+          {/* rules first, tags after: every tag sits above every line */}
+          {lines.map((l) => (
+            <div
+              key={`r${l.id}`}
+              ref={(el) => {
+                if (el) ruleEls.current.set(l.id, el);
+                else ruleEls.current.delete(l.id);
+              }}
+              className={`${s.line} ${s[`line_${l.kind}`]} ${l.drag ? s.lineDrag : ""}`}
+              onPointerDown={(e) => startDrag(e, l)}
+              onPointerMove={(e) => moveDrag(e, l)}
+              onPointerUp={(e) => endDrag(e, l)}
+              style={{ right: K.AXIS_W } as CSSProperties}
+            >
+              <span className={s.lineRule} />
+            </div>
+          ))}
+          {lines.map((l) => (
+            <div
+              key={l.id}
+              ref={(el) => {
+                if (el) lineEls.current.set(l.id, el);
+                else lineEls.current.delete(l.id);
+              }}
+              className={`${s.line} ${s.lineTagRow} ${s[`line_${l.kind}`]} ${l.drag ? s.lineDrag : ""}`}
+              onPointerDown={(e) => startDrag(e, l)}
+              onPointerMove={(e) => moveDrag(e, l)}
+              onPointerUp={(e) => endDrag(e, l)}
+              style={{ right: K.AXIS_W } as CSSProperties}
+            >
+              <span className={s.lineLink} aria-hidden="true" />
+              <span className={s.lineTag}>
+                {l.kind === "alert" && (
+                  <svg width="11" height="11" viewBox="0 0 16 16" aria-hidden="true">
+                    <path d="M4 11V7a4 4 0 0 1 8 0v4l1.3 1.5H2.7z M6.5 14h3" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+                  </svg>
+                )}
+                <b>{l.title}</b>
+                <span data-px>{fmt(l.price)}</span>
+                {l.value && (
+                  <em data-val className={l.tone === "pos" ? s.pos : s.neg}>
+                    {l.value}
+                  </em>
+                )}
+                {l.kind === "entry" && <em data-live className={s.liveVal} />}
+                {l.kind === "entry" && !hasStop && (
+                  <button type="button" className={s.lineAdd} onPointerDown={(e) => e.stopPropagation()} onClick={() => addBracket(sym, "stop")}>
+                    + Stop
+                  </button>
+                )}
+                {l.kind === "entry" && !hasTarget && (
+                  <button type="button" className={s.lineAdd} onPointerDown={(e) => e.stopPropagation()} onClick={() => addBracket(sym, "target")}>
+                    + Target
+                  </button>
+                )}
+                {(l.order || l.alertId) && (
+                  <button
+                    type="button"
+                    className={s.lineX}
+                    aria-label={`Cancel ${l.title}`}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={() => (l.order ? cancelOrder(l.order.id) : removeAlert(l.alertId!))}
+                  >
+                    ×
+                  </button>
+                )}
+              </span>
+            </div>
+          ))}
           <div
-            key={l.id}
             ref={(el) => {
-              if (el) lineEls.current.set(l.id, el);
-              else lineEls.current.delete(l.id);
+              if (el) lineEls.current.set("ghost", el);
+              else lineEls.current.delete("ghost");
             }}
-            className={`${s.line} ${s[`line_${l.kind}`]} ${l.drag ? s.lineDrag : ""}`}
-            onPointerDown={(e) => startDrag(e, l)}
-            onPointerMove={(e) => moveDrag(e, l)}
-            onPointerUp={(e) => endDrag(e, l)}
-            style={{ right: AXIS_W } as CSSProperties}
+            className={`${s.line} ${s.line_ghost}`}
+            style={{ right: K.AXIS_W, opacity: 0 }}
+            aria-hidden="true"
           >
             <span className={s.lineRule} />
-            <span className={s.lineLink} aria-hidden="true" />
             <span className={s.lineTag}>
-              <b>{l.title}</b>
-              <span data-px>{fmt(l.price)}</span>
-              {l.value && (
-                <em data-val className={l.tone === "pos" ? s.pos : s.neg}>
-                  {l.value}
-                </em>
-              )}
-              {l.kind === "entry" && pos && (
-                <em className={(quote.last - pos.avg) * pos.qty >= 0 ? s.pos : s.neg}>{money((quote.last - pos.avg) * pos.qty * inst.pv)}</em>
-              )}
-              {l.kind === "entry" && !hasStop && (
-                <button type="button" className={s.lineAdd} onPointerDown={(e) => e.stopPropagation()} onClick={() => addBracket(sym, "stop")}>
-                  + Stop
-                </button>
-              )}
-              {l.kind === "entry" && !hasTarget && (
-                <button type="button" className={s.lineAdd} onPointerDown={(e) => e.stopPropagation()} onClick={() => addBracket(sym, "target")}>
-                  + Target
-                </button>
-              )}
-              {l.order && (
-                <button
-                  type="button"
-                  className={s.lineX}
-                  aria-label={`Cancel ${l.title}`}
-                  onPointerDown={(e) => e.stopPropagation()}
-                  onClick={() => cancelOrder(l.order!.id)}
-                >
-                  ×
-                </button>
-              )}
+              <b>Set {pick === "stop" ? "stop" : "limit"}</b>
+              <span data-px />
             </span>
           </div>
-        ))}
-        <div
-          ref={(el) => {
-            if (el) lineEls.current.set("ghost", el);
-            else lineEls.current.delete("ghost");
-          }}
-          className={`${s.line} ${s.line_ghost}`}
-          style={{ right: AXIS_W, opacity: 0 }}
-          aria-hidden="true"
-        >
-          <span className={s.lineRule} />
-          <span className={s.lineTag}>
-            <b>Set {pick === "stop" ? "stop" : "limit"}</b>
-            <span data-px />
-          </span>
+          {pick && (
+            <div className={s.pickHint}>
+              Click the chart to set the {pick} price <button type="button" onClick={() => setPick(null)}>Esc</button>
+            </div>
+          )}
+          {text && (
+            <input
+              ref={textRef}
+              className={s.textEdit}
+              style={{ transform: `translate(${text.x}px, ${text.y - 13}px)` }}
+              value={text.value}
+              placeholder="Text"
+              onPointerDown={(e) => e.stopPropagation()}
+              onChange={(e) => setText({ ...text, value: e.target.value })}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") textCommit();
+                if (e.key === "Escape") setText(null);
+              }}
+              onBlur={() => {
+                if (document.activeElement !== textRef.current) textCommit();
+              }}
+            />
+          )}
+          <Toaster inline />
+          {menu && (
+            <ChartMenu
+              at={menu}
+              sym={sym}
+              drawings={drawCount}
+              onClose={() => setMenu(null)}
+              onCopy={() => {
+                void navigator.clipboard?.writeText(fmt(menu.price).replace(/,/g, ""));
+                useDesk.setState({ toasts: [...useDesk.getState().toasts, { id: `p${Date.now()}`, tone: "plain", title: `Copied ${fmt(menu.price)}`, at: Date.now() }] });
+              }}
+              onOrder={(side, kind) => {
+                const ds = useDesk.getState();
+                const qty = ds.settings.qty[sym];
+                if (kind === "LMT") placeOrder({ sym, side, qty, type: "LMT", limit: menu.price, bracket: true });
+                else placeOrder({ sym, side, qty, type: "STP", stop: menu.price, bracket: true });
+              }}
+              onAlert={() => addAlert(sym, menu.price)}
+              onHLine={() => addDrawing(inst.under, { id: drawId(), kind: "hline", a: { t: menu.t, p: menu.price } })}
+              onVLine={() => addDrawing(inst.under, { id: drawId(), kind: "vline", a: { t: menu.t, p: menu.price } })}
+              onClear={() => clearDrawings(inst.under)}
+              onReset={resetView}
+              onSettings={() => setSettingsOpen(true)}
+            />
+          )}
+          {settings && <ChartSettings onClose={() => setSettingsOpen(false)} />}
         </div>
-        {pick && (
-          <div className={s.pickHint}>
-            Click the chart to set the {pick} price <button type="button" onClick={() => setPick(null)}>Esc</button>
-          </div>
-        )}
+      </div>
+      <div className={s.ranges}>
+        <div className={s.rangeList} role="group" aria-label="Date range">
+          {RANGES.map((r) => (
+            <button key={r.id} type="button" aria-pressed={range === r.id} title={r.label} onClick={() => applyRange(r.id)}>
+              {r.id}
+            </button>
+          ))}
+        </div>
+        <div className={s.scaleBtns}>
+          <button
+            type="button"
+            aria-pressed={auto}
+            title="Auto scale: fit price to the bars on screen"
+            onClick={() => {
+              const st = v.current;
+              st.auto = !st.auto;
+              if (st.auto) st.fitted = false;
+              setAuto(st.auto);
+              invalidate(true);
+            }}
+          >
+            A
+          </button>
+          <button type="button" aria-pressed={log} title="Logarithmic scale" onClick={() => setSettings({ chart: { ...chartCfg, log: !log } })}>
+            L
+          </button>
+          <button type="button" aria-pressed={settings} title="Chart settings" aria-label="Chart settings" onClick={() => setSettingsOpen((x) => !x)}>
+            <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true">
+              <circle cx="8" cy="8" r="2.2" fill="none" stroke="currentColor" strokeWidth="1.25" />
+              <path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" />
+            </svg>
+          </button>
+        </div>
       </div>
     </div>
   );
-}
-
-function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.arcTo(x + w, y, x + w, y + h, r);
-  ctx.arcTo(x + w, y + h, x, y + h, r);
-  ctx.arcTo(x, y + h, x, y, r);
-  ctx.arcTo(x, y, x + w, y, r);
-  ctx.closePath();
 }
