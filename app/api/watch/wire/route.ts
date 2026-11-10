@@ -1,9 +1,10 @@
+import { allowed, UA } from "@/lib/watch/robots";
 import { parseFeed } from "@/lib/watch/rss";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
 
-/** Publishers' own headline feeds. Headlines link straight to the source; no article text is kept. */
+/** Publishers' own headline feeds, read only where the site allows it. Headlines link straight to the source; no article text is kept. */
 const SOURCES = [
   { id: "fed", name: "Federal Reserve", url: "https://www.federalreserve.gov/feeds/press_all.xml" },
   { id: "cnbc", name: "CNBC", url: "https://www.cnbc.com/id/100003114/device/rss/rss.html" },
@@ -14,12 +15,12 @@ const SOURCES = [
   { id: "wh", name: "White House", url: "https://www.whitehouse.gov/news/feed/" },
   { id: "sec", name: "SEC", url: "https://www.sec.gov/news/pressreleases.rss" },
 ];
-const UA = "Mozilla/5.0 (compatible; AltronWatcher/1.0; +https://altron.capital)";
 
 type Item = { id: string; source: string; title: string; url: string; at: number };
 
 async function read(src: (typeof SOURCES)[number]): Promise<{ id: string; name: string; ok: boolean; items: Item[] }> {
   try {
+    if (!(await allowed(src.url))) return { id: src.id, name: src.name, ok: false, items: [] };
     const res = await fetch(src.url, { headers: { "user-agent": UA, accept: "application/rss+xml, application/atom+xml, application/xml, text/xml" }, next: { revalidate: 90 }, signal: AbortSignal.timeout(8000) });
     if (!res.ok) return { id: src.id, name: src.name, ok: false, items: [] };
     const items = parseFeed(await res.text())

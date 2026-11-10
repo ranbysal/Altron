@@ -21,10 +21,10 @@ export const DEFAULT_ACCOUNTS: Account[] = [
   { handle: "KobeissiLetter", name: "The Kobeissi Letter" },
 ];
 
-type WatchState = { accounts: Account[]; replies: boolean; usdOnly: boolean };
+type WatchState = { accounts: Account[]; keyOnly: boolean };
 const KEY = "altron-watch-v1";
 
-export const useWatch = create<WatchState>(() => ({ accounts: DEFAULT_ACCOUNTS, replies: false, usdOnly: true }));
+export const useWatch = create<WatchState>(() => ({ accounts: DEFAULT_ACCOUNTS, keyOnly: true }));
 
 let started = false;
 export function startWatch() {
@@ -34,7 +34,7 @@ export function startWatch() {
     const raw = JSON.parse(localStorage.getItem(KEY) ?? "null");
     if (raw && Array.isArray(raw.accounts)) {
       const accounts = (raw.accounts as Account[]).filter((a) => a && /^[A-Za-z0-9_]{1,15}$/.test(a.handle)).slice(0, 30);
-      useWatch.setState({ accounts, replies: !!raw.replies, usdOnly: raw.usdOnly !== false });
+      useWatch.setState({ accounts, keyOnly: raw.keyOnly !== false });
     }
   } catch {
     /* nothing saved */
@@ -65,13 +65,6 @@ export function removeAccount(handle: string) {
 export function resetAccounts() {
   useWatch.setState({ accounts: DEFAULT_ACCOUNTS });
 }
-/** X's own name for an account, learned from its posts. */
-export function nameAccount(handle: string, name: string) {
-  const { accounts } = useWatch.getState();
-  const a = accounts.find((x) => x.handle.toLowerCase() === handle.toLowerCase());
-  if (a && name && (a.name !== name || a.handle !== handle)) useWatch.setState({ accounts: accounts.map((x) => (x === a ? { handle, name } : x)) });
-}
-
 export type FeedState<T> = { data: T | null; state: "loading" | "ok" | "error"; at: number };
 
 /** Fetches a JSON feed now and every `every` ms while the tab is in view. Keeps the last answer through a failed refresh. */
@@ -131,10 +124,7 @@ export function useNow(every = 15_000): number {
 }
 
 /* shapes returned by /api/watch/* */
-export type XPart = { t: string; href?: string };
-export type XPost = { id: string; handle: string; name: string; at: number; parts: XPart[]; url: string; reply: boolean; repost?: { handle: string; name: string }; media: number };
-export type Voices = { at: number; accounts: { handle: string; name?: string; ok: boolean; why?: string; n: number }[]; posts: XPost[] };
 export type WireItem = { id: string; source: string; title: string; url: string; at: number };
 export type Wire = { at: number; sources: { id: string; name: string; ok: boolean; n: number }[]; items: WireItem[] };
-export type CalEvent = { id: string; title: string; ccy: string; at: number; impact: 0 | 1 | 2 | 3; forecast: string; previous: string };
-export type Calendar = { ok: boolean; stale?: boolean; at: number; events: CalEvent[] };
+export type CalEvent = { id: string; title: string; src: "BLS" | "BEA" | "Fed"; at: number; impact: 1 | 2 | 3; allDay?: boolean };
+export type Calendar = { ok: boolean; stale?: boolean; at: number; events: CalEvent[]; sources?: { id: string; ok: boolean }[] };

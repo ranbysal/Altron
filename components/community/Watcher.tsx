@@ -9,7 +9,7 @@ import { BAYER4 } from "@/lib/noise";
 import { onThemeChange } from "@/lib/theme";
 import { movesOf, sessionOf, type Move, type Session } from "@/lib/community/moves";
 import { clock, dayKey } from "@/lib/community/trades";
-import { addAccount, ago, nameAccount, removeAccount, resetAccounts, startWatch, useFeed, useNow, useWatch, DEFAULT_ACCOUNTS, type CalEvent, type Calendar, type FeedState, type Voices, type Wire, type XPost } from "@/lib/community/watch";
+import { addAccount, ago, removeAccount, resetAccounts, startWatch, useFeed, useNow, useWatch, DEFAULT_ACCOUNTS, type CalEvent, type Calendar, type FeedState, type Wire } from "@/lib/community/watch";
 import c from "./community.module.css";
 
 const mono = (name: string) =>
@@ -26,107 +26,146 @@ const mono = (name: string) =>
 /* voices: posts from X                                                */
 /* ------------------------------------------------------------------ */
 
-function Post({ p, now }: { p: XPost; now: number }) {
+/*
+ * X has no free feed to read on a server: its robots rules close the embed endpoint to
+ * automated readers, and it has pursued the services that read it anyway. So Voices uses
+ * the one route X offers without the API, its own embedded timeline, loaded by the
+ * visitor's browser straight from X. The list of accounts is ours; the posts are X's.
+ */
+type Twttr = {
+  ready?: (cb: (t: Twttr) => void) => void;
+  widgets?: { createTimeline: (src: { sourceType: "profile"; screenName: string }, el: HTMLElement, opts: Record<string, unknown>) => Promise<HTMLElement | undefined> };
+};
+let widgets: Promise<Twttr> | null = null;
+function loadWidgets(): Promise<Twttr> {
+  if (widgets) return widgets;
+  widgets = new Promise<Twttr>((resolve, reject) => {
+    const w = window as unknown as { twttr?: Twttr };
+    if (w.twttr?.widgets) return resolve(w.twttr);
+    const el = document.createElement("script");
+    el.src = "https://platform.twitter.com/widgets.js";
+    el.async = true;
+    el.onload = () => {
+      const t = (window as unknown as { twttr?: Twttr }).twttr;
+      if (t?.ready) t.ready((x) => resolve(x));
+      else if (t?.widgets) resolve(t);
+      else reject(new Error("no widgets"));
+    };
+    el.onerror = () => {
+      widgets = null;
+      reject(new Error("blocked"));
+    };
+    document.head.appendChild(el);
+  });
+  return widgets;
+}
+
+type VoiceState = "loading" | "ok" | "quiet";
+
+function XTimeline({ handle, onState }: { handle: string; onState: (s: VoiceState) => void }) {
+  const box = useRef<HTMLDivElement>(null);
+  const [state, setState] = useState<VoiceState>("loading");
+  const [theme, setTheme] = useState("light");
+  useEffect(() => {
+    const read = () => setTheme(document.documentElement.dataset.theme === "dark" ? "dark" : "light");
+    read();
+    return onThemeChange(read);
+  }, []);
+  useEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    let dead = false;
+    const set = (v: VoiceState) => {
+      if (dead) return;
+      setState(v);
+      onState(v);
+    };
+    set("loading");
+    el.replaceChildren();
+    const timer = window.setTimeout(() => set("quiet"), 10_000);
+    loadWidgets()
+      .then((tw) => tw.widgets!.createTimeline({ sourceType: "profile", screenName: handle }, el, { theme, chrome: "noheader nofooter noborders transparent", dnt: true, height: Math.max(380, el.clientHeight - 8) }))
+      .then((node) => {
+        window.clearTimeout(timer);
+        set(node ? "ok" : "quiet");
+      })
+      .catch(() => {
+        window.clearTimeout(timer);
+        set("quiet");
+      });
+    return () => {
+      dead = true;
+      window.clearTimeout(timer);
+      el.replaceChildren();
+    };
+  }, [handle, theme, onState]);
   return (
-    <li className={c.post} data-fresh={now - p.at < 15 * 60_000 ? "" : undefined}>
-      <header>
-        <span className={c.mono2} aria-hidden="true">
-          {mono(p.name)}
-        </span>
-        <b>{p.name}</b>
-        <span className={c.handle}>@{p.handle}</span>
-        <time dateTime={new Date(p.at).toISOString()} title={new Date(p.at).toLocaleString()}>
-          {ago(p.at, now)}
-        </time>
-        <a href={p.url} target="_blank" rel="noreferrer noopener" aria-label={`Open this post by ${p.name} on X`}>
-          <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <path d="M4.5 2.5h5v5M9.5 2.5l-7 7" />
-          </svg>
-        </a>
-      </header>
-      {p.repost && (
-        <span className={c.repost}>
-          Reposted {p.repost.name} @{p.repost.handle}
-        </span>
-      )}
-      <p>
-        {p.parts.map((x, i) =>
-          x.href ? (
-            <a key={i} href={x.href} target="_blank" rel="noreferrer noopener nofollow">
-              {x.t}
-            </a>
+    <div className={c.xwrap}>
+      <div ref={box} className={c.xframe} data-state={state} />
+      {state !== "ok" && (
+        <div className={c.empty}>
+          {state === "loading" ? (
+            <>
+              <i className={c.skel} />
+              <i className={c.skel} />
+              <i className={c.skel} />
+            </>
           ) : (
-            <span key={i}>{x.t}</span>
-          ),
-        )}
-        {p.media > 0 && (
-          <a className={c.media} href={p.url} target="_blank" rel="noreferrer noopener">
-            {p.media === 1 ? "1 attachment" : `${p.media} attachments`}
-          </a>
-        )}
-      </p>
-    </li>
+            <>
+              <p>X didn&apos;t load this timeline here.</p>
+              <span>Posts come from X&apos;s own embed, in your browser. A content blocker or X itself can hold it back.</span>
+              <a className={c.outLink} href={`https://x.com/${handle}`} target="_blank" rel="noreferrer noopener">
+                Open @{handle} on X
+              </a>
+            </>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
-function VoicesPanel({ feed, now }: { feed: FeedState<Voices>; now: number }) {
+function VoicesPanel({ onState }: { onState: (s: VoiceState) => void }) {
   const accounts = useWatch((s) => s.accounts);
-  const replies = useWatch((s) => s.replies);
-  const [only, setOnly] = useState<string | null>(null);
+  const [pick, setPick] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [err, setErr] = useState<string | null>(null);
-  const data = feed.data;
-
-  useEffect(() => {
-    for (const a of data?.accounts ?? []) if (a.ok && a.name) nameAccount(a.handle, a.name);
-  }, [data]);
-  useEffect(() => {
-    if (only && !accounts.some((a) => a.handle === only)) setOnly(null);
-  }, [accounts, only]);
-
-  const info = useMemo(() => new Map((data?.accounts ?? []).map((a) => [a.handle.toLowerCase(), a])), [data]);
-  const posts = useMemo(() => {
-    const follow = new Set(accounts.map((a) => a.handle.toLowerCase()));
-    return (data?.posts ?? []).filter((p) => follow.has(p.handle.toLowerCase()) && (!only || p.handle.toLowerCase() === only.toLowerCase()) && (replies || !p.reply));
-  }, [data, accounts, only, replies]);
+  const sel = accounts.find((a) => a.handle === pick) ?? accounts[0];
   const isDefault = accounts.length === DEFAULT_ACCOUNTS.length && accounts.every((a, i) => a.handle === DEFAULT_ACCOUNTS[i].handle);
 
   return (
     <div className={c.voices}>
       <div className={c.accounts}>
         <ul>
-          {accounts.map((a) => {
-            const st = info.get(a.handle.toLowerCase());
-            return (
-              <li key={a.handle} data-on={only === a.handle ? "" : undefined} data-quiet={st && !st.ok ? "" : undefined}>
-                <button type="button" className={c.acct} aria-pressed={only === a.handle} onClick={() => setOnly(only === a.handle ? null : a.handle)} title={st && !st.ok ? `X returned nothing for @${a.handle} (${st.why ?? "no posts"})` : `Show only @${a.handle}`}>
-                  <span className={c.mono2} aria-hidden="true">
-                    {mono(a.name)}
-                  </span>
-                  <span className={c.acctName}>
-                    <b>{a.name}</b>
-                    <em>@{a.handle}</em>
-                  </span>
-                </button>
-                <a className={c.acctOut} href={`https://x.com/${a.handle}`} target="_blank" rel="noreferrer noopener" aria-label={`Open @${a.handle} on X`}>
-                  <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <path d="M4.5 2.5h5v5M9.5 2.5l-7 7" />
-                  </svg>
-                </a>
-                <button type="button" className={c.acctX} onClick={() => removeAccount(a.handle)} aria-label={`Stop following @${a.handle}`}>
-                  ×
-                </button>
-              </li>
-            );
-          })}
+          {accounts.map((a) => (
+            <li key={a.handle} data-on={sel?.handle === a.handle ? "" : undefined}>
+              <button type="button" className={c.acct} aria-pressed={sel?.handle === a.handle} onClick={() => setPick(a.handle)} title={`Show @${a.handle}`}>
+                <span className={c.mono2} aria-hidden="true">
+                  {mono(a.name)}
+                </span>
+                <span className={c.acctName}>
+                  <b>{a.name}</b>
+                  <em>@{a.handle}</em>
+                </span>
+              </button>
+              <button type="button" className={c.acctX} onClick={() => removeAccount(a.handle)} aria-label={`Stop following @${a.handle}`}>
+                ×
+              </button>
+            </li>
+          ))}
         </ul>
         <form
           className={c.addAcct}
           onSubmit={(e) => {
             e.preventDefault();
+            const before = useWatch.getState().accounts.length;
             const why = addAccount(draft);
             setErr(why);
-            if (!why) setDraft("");
+            if (!why) {
+              setDraft("");
+              const list = useWatch.getState().accounts;
+              if (list.length > before) setPick(list[list.length - 1].handle);
+            }
           }}
         >
           <input
@@ -155,32 +194,22 @@ function VoicesPanel({ feed, now }: { feed: FeedState<Voices>; now: number }) {
       </div>
 
       <div className={c.posts}>
-        <div className={c.postsBar}>
-          <span>{only ? `@${only}` : "Everyone"}</span>
-          <button type="button" role="switch" aria-checked={replies} onClick={() => useWatch.setState({ replies: !replies })}>
-            Replies {replies ? "shown" : "hidden"}
-          </button>
-        </div>
-        {posts.length ? (
-          <ol className={c.scroll}>
-            {posts.map((p) => (
-              <Post key={p.id} p={p} now={now} />
-            ))}
-          </ol>
+        {sel ? (
+          <>
+            <div className={c.postsBar}>
+              <span>
+                {sel.name !== sel.handle && `${sel.name} · `}@{sel.handle}
+              </span>
+              <a href={`https://x.com/${sel.handle}`} target="_blank" rel="noreferrer noopener">
+                Open on X
+              </a>
+            </div>
+            <XTimeline key={sel.handle} handle={sel.handle} onState={onState} />
+          </>
         ) : (
           <div className={c.empty}>
-            {feed.state === "loading" ? (
-              <>
-                <i className={c.skel} />
-                <i className={c.skel} />
-                <i className={c.skel} />
-              </>
-            ) : (
-              <>
-                <p>Nothing from X at the moment.</p>
-                <span>The Watcher reads the public feed behind X&apos;s own embeds and checks again every 90 seconds. Each account opens on X from the list.</span>
-              </>
-            )}
+            <p>No one on the list.</p>
+            <span>Add an X handle on the left to follow it here.</span>
           </div>
         )}
       </div>
@@ -233,6 +262,7 @@ function WirePanel({ feed, now }: { feed: FeedState<Wire>; now: number }) {
 /* the calendar: this week's releases                                  */
 /* ------------------------------------------------------------------ */
 
+const SRC = { BLS: "Bureau of Labor Statistics", BEA: "Bureau of Economic Analysis", Fed: "Federal Reserve" } as const;
 const DAY_LONG = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "long", month: "short", day: "numeric" });
 
 function until(ms: number): string {
@@ -245,7 +275,7 @@ function until(ms: number): string {
 
 function Pips({ n }: { n: number }) {
   return (
-    <span className={c.pips} data-n={n} aria-label={n === 3 ? "High impact" : n === 2 ? "Medium impact" : n === 1 ? "Low impact" : "Holiday"}>
+    <span className={c.pips} data-n={n} aria-label={n === 3 ? "High impact" : n === 2 ? "Medium impact" : "Low impact"}>
       <i />
       <i />
       <i />
@@ -254,11 +284,11 @@ function Pips({ n }: { n: number }) {
 }
 
 function CalendarPanel({ feed, now }: { feed: FeedState<Calendar>; now: number }) {
-  const usdOnly = useWatch((s) => s.usdOnly);
+  const keyOnly = useWatch((s) => s.keyOnly);
   const all = feed.data?.events ?? [];
   const today = dayKey(now);
-  const events = useMemo(() => all.filter((e) => (!usdOnly || e.ccy === "USD") && dayKey(e.at) >= today), [all, usdOnly, today]);
-  const next = events.find((e) => e.at > now && e.impact >= 2) ?? events.find((e) => e.at > now);
+  const events = useMemo(() => all.filter((e) => (!keyOnly || e.impact >= 2) && dayKey(e.at) >= today), [all, keyOnly, today]);
+  const next = events.find((e) => e.at > now && e.impact >= 2 && !e.allDay) ?? events.find((e) => e.at > now);
   const groups = useMemo(() => {
     const out: { key: string; label: string; rows: CalEvent[] }[] = [];
     for (const e of events) {
@@ -282,7 +312,7 @@ function CalendarPanel({ feed, now }: { feed: FeedState<Calendar>; now: number }
         ) : (
           <>
             <p>No calendar right now.</p>
-            <span>This week&apos;s releases load from the public economic calendar and refresh through the day.</span>
+            <span>Releases and Fed events load from the agencies&apos; own calendars and refresh through the day.</span>
           </>
         )}
       </div>
@@ -297,9 +327,8 @@ function CalendarPanel({ feed, now }: { feed: FeedState<Calendar>; now: number }
           <strong>{next.title}</strong>
           <span className={c.nextMeta}>
             <Pips n={next.impact} />
-            {next.ccy} · {dayKey(next.at) === today ? "today" : DAY_LONG.format(next.at)} {clock(next.at)} ET
-            {next.forecast && ` · forecast ${next.forecast}`}
-            {next.previous && ` · previous ${next.previous}`}
+            {SRC[next.src]} · {dayKey(next.at) === today ? "today" : DAY_LONG.format(next.at)}
+            {!next.allDay && ` ${clock(next.at)} ET`}
           </span>
         </div>
       )}
@@ -310,32 +339,18 @@ function CalendarPanel({ feed, now }: { feed: FeedState<Calendar>; now: number }
             <ul>
               {g.rows.map((e) => (
                 <li key={e.id} data-past={e.at < now ? "" : undefined} data-next={e === next ? "" : undefined}>
-                  <time>{clock(e.at)}</time>
+                  <time>{e.allDay ? "Day" : clock(e.at)}</time>
                   <Pips n={e.impact} />
-                  <span className={c.calTitle}>
-                    {!usdOnly && <em>{e.ccy}</em>}
+                  <span className={c.calTitle} title={e.title}>
                     {e.title}
                   </span>
-                  <span className={c.calNums}>
-                    {e.forecast && (
-                      <span>
-                        <i>F</i>
-                        {e.forecast}
-                      </span>
-                    )}
-                    {e.previous && (
-                      <span>
-                        <i>P</i>
-                        {e.previous}
-                      </span>
-                    )}
-                  </span>
+                  <span className={c.calNums}>{e.src}</span>
                 </li>
               ))}
             </ul>
           </section>
         ))}
-        {!events.length && <p className={c.none}>Nothing left on the calendar this week{usdOnly ? " for the dollar" : ""}.</p>}
+        {!events.length && <p className={c.none}>{keyOnly ? "No key releases in the next ten days. Switch to All for the rest." : "Nothing scheduled in the next ten days."}</p>}
       </div>
     </div>
   );
@@ -530,9 +545,7 @@ function Light({ name, state, at, now }: { name: string; state: "ok" | "quiet" |
 
 export function Watcher() {
   useEffect(() => startWatch(), []);
-  const accounts = useWatch((s) => s.accounts);
-  const handles = accounts.map((a) => a.handle).join(",");
-  const voices = useFeed<Voices>(handles ? `/api/watch/voices?h=${handles}` : null, 90_000);
+  const [voice, setVoice] = useState<VoiceState>("loading");
   const wire = useFeed<Wire>("/api/watch/wire", 60_000);
   const cal = useFeed<Calendar>("/api/watch/calendar", 15 * 60_000);
   const now = useNow(15_000);
@@ -546,7 +559,7 @@ export function Watcher() {
           <p>What can move the tape: who is posting, what just crossed the wire, what is due, and what price has already done.</p>
         </div>
         <div className={c.lights}>
-          <Light name="Voices" state={lit(voices, !!voices.data?.posts.length)} at={voices.at} now={now} />
+          <Light name="Voices" state={voice} at={0} now={now} />
           <Light name="Wire" state={lit(wire, !!wire.data?.items.length)} at={wire.at} now={now} />
           <Light name="Calendar" state={lit(cal, !!cal.data?.events.length)} at={cal.at} now={now} />
           <Light name="Moves" state="ok" at={0} now={now} />
@@ -554,7 +567,7 @@ export function Watcher() {
       </Cell>
       <section className={c.watch} aria-label="Altron Watcher">
         <Cell i={5} className={c.aVoices} label="Voices" aside="Posts on X" bodyClass={c.bodyTall}>
-          <VoicesPanel feed={voices} now={now} />
+          <VoicesPanel onState={setVoice} />
         </Cell>
         <Cell i={6} className={c.aWire} label="Wire" aside="Breaking" bodyClass={c.bodyTall}>
           <WirePanel feed={wire} now={now} />
@@ -571,13 +584,13 @@ export function Watcher() {
 }
 
 function CalToggle() {
-  const usdOnly = useWatch((s) => s.usdOnly);
+  const keyOnly = useWatch((s) => s.keyOnly);
   return (
-    <span className={c.calToggle} role="group" aria-label="Currencies">
-      <button type="button" aria-pressed={usdOnly} onClick={() => useWatch.setState({ usdOnly: true })}>
-        USD
+    <span className={c.calToggle} role="group" aria-label="Which releases">
+      <button type="button" aria-pressed={keyOnly} onClick={() => useWatch.setState({ keyOnly: true })}>
+        Key
       </button>
-      <button type="button" aria-pressed={!usdOnly} onClick={() => useWatch.setState({ usdOnly: false })}>
+      <button type="button" aria-pressed={!keyOnly} onClick={() => useWatch.setState({ keyOnly: false })}>
         All
       </button>
     </span>

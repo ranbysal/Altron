@@ -308,9 +308,7 @@
 .acctName { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .acctName b { font-size: 12px; font-weight: 500; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .acctName em { font-family: var(--mono); font-size: 9.5px; font-style: normal; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.accounts li[data-quiet] .mono2 { opacity: 0.45; }
-.accounts li[data-quiet] .acctName b { color: var(--dim); }
-.acctOut, .acctX {
+.acctX {
   position: absolute;
   top: 50%;
   width: 22px;
@@ -329,10 +327,9 @@
   transform: translateY(-50%);
   transition: opacity 0.15s, color 0.15s;
 }
-.acctOut { right: 30px; }
 .acctX { right: 6px; }
-.accounts li:hover :is(.acctOut, .acctX), :is(.acctOut, .acctX):focus-visible { opacity: 1; }
-:is(.acctOut, .acctX):hover { color: var(--text-strong); }
+.accounts li:hover .acctX, .acctX:focus-visible { opacity: 1; }
+.acctX:hover { color: var(--text-strong); }
 .addAcct { display: flex; gap: 6px; padding: 11px 12px 7px 20px; border-top: 1px solid var(--tl); }
 .addAcct input { flex: 1; min-width: 0; height: 30px; padding: 0 10px; border: 1px solid var(--line-2); border-radius: 8px; background: none; font-family: var(--mono); font-size: 11px; color: var(--text); }
 .addAcct input::placeholder { color: var(--dim); }
@@ -345,23 +342,15 @@
 .posts { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .postsBar { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 0 20px; height: 37px; border-bottom: 1px solid var(--tl); font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--dim); }
 .postsBar span { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.postsBar button { flex: none; padding: 0; border: 0; background: none; font: inherit; letter-spacing: inherit; text-transform: inherit; color: var(--dim); cursor: pointer; }
-.postsBar button:hover, .postsBar button[aria-checked="true"] { color: var(--text); }
-.post { position: relative; padding: 15px 20px 16px; border-bottom: 1px solid var(--tl); animation: c-rise 0.45s var(--ease) backwards; }
-.post[data-fresh]::before { content: ""; position: absolute; left: 0; top: 15px; bottom: 16px; width: 2px; background: var(--text-strong); }
-.post header { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.post header b { font-size: 12.5px; font-weight: 500; color: var(--text-strong); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.handle { font-family: var(--mono); font-size: 10px; color: var(--dim); white-space: nowrap; }
-.post header time { margin-left: auto; font-family: var(--mono); font-size: 10px; color: var(--dim); white-space: nowrap; }
-.post[data-fresh] header time { color: var(--text-strong); }
-.post header a { flex: none; display: grid; place-items: center; width: 18px; height: 18px; color: var(--dim); opacity: 0; transition: opacity 0.15s, color 0.15s; }
-.post:hover header a, .post header a:focus-visible { opacity: 1; }
-.post header a:hover { color: var(--text-strong); }
-.repost { display: block; margin: 7px 0 0 32px; font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--dim); }
-.post p { margin: 7px 0 0 32px; font-size: 13.5px; line-height: 1.52; color: var(--soft); white-space: pre-wrap; overflow-wrap: anywhere; }
-.post p a { color: var(--blue-soft); text-decoration: none; }
-.post p a:hover { text-decoration: underline; text-underline-offset: 2px; }
-.post p .media { display: inline-block; margin-left: 6px; padding: 0 6px; border: 1px solid var(--tl); border-radius: 5px; font-family: var(--mono); font-size: 10px; line-height: 1.7; color: var(--muted); }
+.postsBar a { flex: none; color: var(--dim); text-decoration: none; transition: color 0.15s; }
+.postsBar a:hover { color: var(--text); }
+/* X's own embedded timeline, sat inside the panel */
+.xwrap { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.xframe { flex: 1; min-height: 0; overflow-y: auto; padding: 6px 10px 0; scrollbar-width: thin; scrollbar-color: var(--tl) transparent; }
+.xframe[data-state="loading"], .xframe[data-state="quiet"] { visibility: hidden; position: absolute; inset: 0; }
+.xframe iframe { display: block; width: 100% !important; max-width: 100% !important; border: 0; }
+.outLink { align-self: flex-start; margin-top: 8px; height: 30px; padding: 0 13px; display: inline-flex; align-items: center; border: 1px solid var(--line-2); border-radius: 999px; font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.04em; color: var(--text); text-decoration: none; transition: border-color 0.2s, background 0.2s; }
+.outLink:hover { border-color: var(--dim); background: var(--hover); }
 
 /* the wire */
 .wire { border-top: 1px solid var(--tl); }
@@ -382,15 +371,13 @@
 .nextMeta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-family: var(--mono); font-size: 10px; line-height: 1.5; color: var(--muted); }
 .calList h4 { position: sticky; top: 0; z-index: 1; margin: 0; padding: 13px 20px 7px; background: var(--page); font-family: var(--mono); font-size: 10px; font-weight: 400; letter-spacing: 0.12em; text-transform: uppercase; color: var(--dim); }
 .calList ul { margin: 0; padding: 0; list-style: none; }
-.calList li { display: grid; grid-template-columns: 58px 14px minmax(0, 1fr) auto; align-items: baseline; gap: 9px; padding: 7px 20px; font-size: 12.5px; color: var(--text); }
+.calList li { display: grid; grid-template-columns: 58px 14px minmax(0, 1fr) 26px; align-items: baseline; gap: 9px; padding: 7px 20px; font-size: 12.5px; color: var(--text); }
 .calList li time { font-family: var(--mono); font-size: 10.5px; color: var(--muted); white-space: nowrap; }
 .calList li[data-past] { opacity: 0.4; }
 .calList li[data-next] { background: color-mix(in srgb, var(--text) 4.5%, transparent); }
 .calList .none { padding: 16px 20px; }
 .calTitle { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.calTitle em { margin-right: 7px; font-family: var(--mono); font-size: 9.5px; font-style: normal; color: var(--dim); }
-.calNums { display: flex; gap: 10px; font-family: var(--mono); font-size: 10.5px; color: var(--muted); white-space: nowrap; }
-.calNums i { margin-right: 3px; font-size: 9px; font-style: normal; color: var(--dim); }
+.calNums { font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.06em; text-align: right; color: var(--dim); }
 .pips { display: inline-flex; align-items: flex-end; gap: 2px; height: 10px; }
 .pips i { width: 3px; border-radius: 1px; background: var(--tl); }
 .pips i:nth-child(1) { height: 4px; }
