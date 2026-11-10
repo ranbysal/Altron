@@ -109,7 +109,7 @@ export function Dashboard() {
               <Odometer value={`${(st.winRate * 100).toFixed(1)}%`} className={s.statVal} />
               <LineMeter share={st.winRate} count={48} />
               <p className={s.statSub}>
-                {st.wins} wins · {st.losses} losses · {st.flat} flat
+                {st.wins} wins · {st.losses} losses · {st.flat} breakeven
               </p>
             </Cell>
             <Cell i={3} label="Profit factor" className={s.stat}>

@@ -96,7 +96,7 @@ function PathChart({ values }: { values: number[] }) {
   return <canvas ref={ref} className={s.posPath} aria-hidden="true" />;
 }
 
-/** The open position in the selected market, pinned above the blotter so Flatten never moves. */
+/** The open position in the selected market, pinned above the blotter so its Close button never moves. */
 export function Position() {
   const sym = useDesk((st) => st.settings.sym);
   const pos = useDesk((st) => st.positions[sym]);
@@ -160,7 +160,7 @@ export function Position() {
           </>
         ) : (
           <>
-            <span className={s.flatTag}>Flat</span>
+            <span className={s.flatTag}>Closed</span>
             <span className={s.dim}>Day so far</span>
           </>
         )}
@@ -215,7 +215,7 @@ export function Position() {
           Close half
         </button>
         <button type="button" disabled={!pos} className={s.flat} onClick={() => flatten(sym)}>
-          Flatten {inst.code.replace(/Z\d$/, "")}
+          Close {inst.code.replace(/Z\d$/, "")}
         </button>
       </div>
     </div>

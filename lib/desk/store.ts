@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { INSTRUMENTS, SYMS, TIMEFRAMES, snap, tickValue, type Sym, type Timeframe } from "./instruments";
-import { Market, nyClock, type Quote } from "./market";
+import { Market, nyClock, sessionDay, type Band, type Pin, type Pins, type Quote } from "./market";
 
 /**
  * Yazan's paper account: one account, four contracts, every order type the
@@ -53,6 +53,9 @@ export type Trade = {
   risk?: number;
   /** opened with a notification: its exits are announced too */
   notify?: boolean;
+  /** where the stop and target last sat, kept for the record once the trade is over */
+  stop?: number;
+  target?: number;
 };
 export type Phase = "before" | "during" | "after";
 export type Note = { id: string; tradeId: string | null; sym: Sym; phase: Phase; text: string; at: number; edits: { text: string; at: number }[] };
@@ -240,6 +243,15 @@ function pushToast(d: Draft, t: Omit<Toast, "id" | "at">) {
   d.toasts = [...d.toasts.slice(-3), { ...t, id: uid("t"), at: Date.now() }];
 }
 
+/** Keeps a trade's record of where its stop and target sit. */
+function syncExits(d: Draft, sym: Sym) {
+  const pos = d.positions[sym];
+  if (!pos) return;
+  const stop = d.orders.find((o) => o.sym === sym && o.role === "stop")?.stop;
+  const target = d.orders.find((o) => o.sym === sym && o.role === "target")?.limit;
+  d.trades = d.trades.map((t) => (t.id === pos.tradeId && ((stop !== undefined && t.stop !== stop) || (target !== undefined && t.target !== target)) ? { ...t, stop: stop ?? t.stop, target: target ?? t.target } : t));
+}
+
 /** Sends a notice to members (kept here until the backend relays it) and says so on the desk. */
 function publish(d: Draft, n: Omit<Notice, "id">) {
   const full: Notice = { ...n, id: uid("N") };
@@ -353,6 +365,8 @@ function applyFill(d: Draft, o: Order, qty: number, price: number, at: number) {
     const size = Math.abs(pos.qty);
     d.orders = d.orders.map((x) => (x.sym === sym && x.reduceOnly && (x.role === "stop" || x.role === "target") ? { ...x, qty: size } : x));
   }
+
+  syncExits(d, sym);
 
   // members hear about an exit from a trade they were told about
   if (closedQty && wasTrade && d.trades.find((t) => t.id === wasTrade)?.notify) {
@@ -567,7 +581,10 @@ export function moveOrder(id: string, price: number) {
     return o;
   });
   const o = d.orders.find((x) => x.id === id);
-  if (o) work(d, o.sym, get().quotes[o.sym], Date.now());
+  if (o) {
+    syncExits(d, o.sym);
+    work(d, o.sym, get().quotes[o.sym], Date.now());
+  }
   commit(d);
 }
 
@@ -617,6 +634,7 @@ export function addBracket(sym: Sym, role: "stop" | "target", price?: number) {
   d.orders = [...d.orders.map((x) => (x === sibling ? { ...x, oco } : x)), o];
   // a stop added later still defines the trade's risk
   if (role === "stop") updateTrade(d, pos.tradeId, (t) => (t.risk ? t : { ...t, risk: Math.abs(pos.avg - p) * inst.pv * Math.abs(pos.qty) }));
+  syncExits(d, sym);
   commit(d);
 }
 
@@ -938,7 +956,7 @@ export function realizedSince(trades: Trade[], since: number): number {
 /* boot, tape and persistence                                          */
 /* ------------------------------------------------------------------ */
 
-type Saved = Pick<DeskState, "positions" | "orders" | "fills" | "trades" | "notes" | "settings"> & { alerts?: Alert[]; notices?: Notice[] } & { prices?: { NQ: number; ES: number }; v: 1 };
+type Saved = Pick<DeskState, "positions" | "orders" | "fills" | "trades" | "notes" | "settings"> & { alerts?: Alert[]; notices?: Notice[] } & { prices?: { NQ: number; ES: number }; archive?: number; v: 1 };
 
 function load(): Saved | null {
   try {
@@ -965,6 +983,7 @@ function save() {
     notices: s.notices.slice(-300),
     settings: s.settings,
     prices: { NQ: market.quote("NQ").last, ES: market.quote("ES").last },
+    archive: archived,
   };
   try {
     localStorage.setItem(KEY, JSON.stringify(data));
@@ -1086,13 +1105,222 @@ function seed(): Partial<DeskState> {
   return { positions: d.positions, orders: d.orders, fills: d.fills, trades: d.trades, notes: d.notes };
 }
 
+/**
+ * The simulated history is generated fresh on each visit; these pins make it pass
+ * through every fill on the book, and keep each closed trade between its stop and
+ * target until it ended, so a past trade replays on the chart the way it happened.
+ */
+function pinsOf(trades: Trade[], fills: Fill[]): Pins {
+  const at: Partial<Record<"NQ" | "ES", Pin[]>> = {};
+  const bands: Partial<Record<"NQ" | "ES", Band[]>> = {};
+  for (const f of fills) (at[INSTRUMENTS[f.sym].under] ??= []).push({ t: f.at, p: f.price });
+  for (const t of trades) {
+    if (!t.closedAt || (t.stop === undefined && t.target === undefined)) continue;
+    const long = t.side === "LONG";
+    const lo = long ? (t.stop ?? -Infinity) : (t.target ?? -Infinity);
+    const hi = long ? (t.target ?? Infinity) : (t.stop ?? Infinity);
+    (bands[INSTRUMENTS[t.sym].under] ??= []).push({
+      from: t.openedAt,
+      to: t.closedAt,
+      lo,
+      hi,
+    });
+  }
+  return { at, bands };
+}
+
+/** Bumped when the archive below changes, so a book gets it once. */
+const ARCHIVE = 1;
+let archived = 0;
+
+/**
+ * Ten closed trades from the sessions before today, read off the tape as it was
+ * generated, so the record has some depth. Added once to any book.
+ */
+function archive(): Partial<DeskState> | null {
+  const m = market!;
+  const s = get();
+  const d: Draft = {
+    positions: s.positions,
+    orders: s.orders,
+    fills: s.fills.slice(),
+    trades: s.trades.slice(),
+    notes: s.notes.slice(),
+    toasts: [],
+    notices: s.notices,
+  };
+  const today = sessionDay(Date.now());
+  type Want = "win" | "loss" | "up" | "down";
+  // days back, New York minute of the day, market, size, how it went, notes
+  const plan: [number, number, Sym, number, Want, string?, string?][] = [
+    [1, 605, "NQ", 1, "win", "Opening drive holding above the overnight high. Long the first pullback.", "Paid at the target. Let it work."],
+    [1, 820, "ES", 2, "loss", "Fading the push into the afternoon. Tight.", "Stopped. The push had more in it."],
+    [2, 588, "NQ", 2, "win", "Gap and go. Long over the open print, wrong back in the gap."],
+    [2, 680, "ES", 1, "up", undefined, "Took it off before lunch. Flat tape, small gain."],
+    [3, 630, "ES", 2, "win", "Back to the mid after the morning flush."],
+    [3, 855, "NQ", 1, "loss", "Breakdown of the afternoon range.", "Range held. Out at the stop."],
+    [4, 582, "NQ", 1, "win"],
+    [4, 860, "ES", 3, "down", "Into the afternoon, small and quick.", "Nothing happened. Scratched it."],
+    [5, 612, "ES", 2, "win", "Retest of yesterday's value area high."],
+    [5, 750, "NQ", 1, "loss"],
+  ];
+  const days = new Map<"NQ" | "ES", { keys: number[]; bars: ReturnType<Market["bars"]> }>();
+  const dayList = (under: "NQ" | "ES") => {
+    let hit = days.get(under);
+    if (!hit) {
+      const bars = m.bars(under, 60);
+      const keys: number[] = [];
+      for (const b of bars) {
+        const k = sessionDay(b.t);
+        if (k < today && keys[keys.length - 1] !== k) keys.push(k);
+      }
+      hit = { keys: keys.reverse(), bars };
+      days.set(under, hit);
+    }
+    return hit;
+  };
+  const taken = (under: "NQ" | "ES", a: number, b: number) => d.trades.some((t) => INSTRUMENTS[t.sym].under === under && t.openedAt < b + 120_000 && (t.closedAt ?? Infinity) > a - 120_000);
+  let made = 0;
+  for (const [back, minute, sym, qty, want, before, after] of plan) {
+    const inst = INSTRUMENTS[sym];
+    const { keys, bars } = dayList(inst.under);
+    const key = keys[back - 1];
+    if (key === undefined) continue;
+    // the regular session of that day, from the planned minute on
+    const rth = (t: number) => sessionDay(t) === key && nyClock(t).min >= 570 && nyClock(t).min < 945;
+    const start = bars.findIndex((b) => rth(b.t) && nyClock(b.t).min >= minute);
+    if (start < 0) continue;
+    const stopTicks = DEFAULT_SETTINGS.stopTicks[sym];
+    const targetTicks = DEFAULT_SETTINGS.targetTicks[sym];
+    let pick: {
+      ei: number;
+      xi: number;
+      side: Side;
+      entry: number;
+      exit: number;
+      stop: number;
+      target: number;
+      role: Role;
+    } | null = null;
+    for (let pass = 0; pass < 2 && !pick; pass++)
+      for (let off = 0; off < 75 && !pick; off += 3) {
+        const ei = start + off;
+        if (ei >= bars.length - 60 || !rth(bars[ei].t)) break;
+        for (const side of (off % 2 ? [-1, 1] : [1, -1]) as Side[]) {
+          const eb = bars[ei];
+          const entry = snap(sym, (eb.h + eb.l) / 2);
+          const stop = snap(sym, entry - side * stopTicks * inst.tick);
+          const target = snap(sym, entry + side * targetTicks * inst.tick);
+          let xi = -1;
+          let role: Role = "exit";
+          for (let i = ei + 1; i < Math.min(bars.length - 2, ei + 150); i++) {
+            const b = bars[i];
+            const sHit = side > 0 ? b.l <= stop : b.h >= stop;
+            const tHit = side > 0 ? b.h >= target : b.l <= target;
+            if (sHit && tHit) break;
+            if (sHit || tHit) {
+              xi = i;
+              role = sHit ? "stop" : "target";
+              break;
+            }
+            if ((want === "up" || want === "down") && i === ei + (pass ? 20 : 40)) {
+              xi = i;
+              break;
+            }
+          }
+          if (xi < 0 || sessionDay(bars[xi].t) !== key) continue;
+          const exit = role === "stop" ? stop : role === "target" ? target : bars[xi].c;
+          const gain = (exit - entry) * side;
+          const ok = want === "win" ? role === "target" : want === "loss" ? role === "stop" : role === "exit" && (pass > 0 || (want === "up" ? gain > 0 : gain < 0)) && Math.abs(gain) < stopTicks * inst.tick * 0.6;
+          if (!ok || taken(inst.under, bars[ei].t, bars[xi].t)) continue;
+          pick = { ei, xi, side, entry, exit, stop, target, role };
+          break;
+        }
+      }
+    if (!pick) continue;
+    const { ei, xi, side, entry, exit, stop, target, role } = pick;
+    const openAt = bars[ei].t + 20_000;
+    const closeAt = bars[xi].t + 30_000;
+    const pnl = (exit - entry) * side * qty * inst.pv;
+    const id = uid("T");
+    d.trades.push({
+      id,
+      sym,
+      side: side > 0 ? "LONG" : "SHORT",
+      openedAt: openAt,
+      closedAt: closeAt,
+      qty,
+      entryQty: qty,
+      entryValue: entry * qty,
+      exitQty: qty,
+      exitValue: exit * qty,
+      pnl,
+      risk: stopTicks * tickValue(sym) * qty,
+      stop,
+      target,
+    });
+    d.fills.push({
+      id: uid("F"),
+      orderId: uid("o"),
+      sym,
+      side,
+      qty,
+      price: entry,
+      at: openAt,
+      tradeId: id,
+      role: "entry",
+      pnl: 0,
+    });
+    d.fills.push({
+      id: uid("F"),
+      orderId: uid("o"),
+      sym,
+      side: -side as Side,
+      qty,
+      price: exit,
+      at: closeAt,
+      tradeId: id,
+      role,
+      pnl,
+    });
+    if (before)
+      d.notes.push({
+        id: uid("n"),
+        tradeId: id,
+        sym,
+        phase: "before",
+        text: before,
+        at: openAt - 3 * 60_000,
+        edits: [],
+      });
+    if (after)
+      d.notes.push({
+        id: uid("n"),
+        tradeId: id,
+        sym,
+        phase: "after",
+        text: after,
+        at: closeAt + 90_000,
+        edits: [],
+      });
+    made++;
+  }
+  archived = ARCHIVE;
+  if (!made) return null;
+  d.trades.sort((a, b) => a.openedAt - b.openedAt);
+  d.fills.sort((a, b) => a.at - b.at);
+  d.notes.sort((a, b) => a.at - b.at);
+  return { trades: d.trades, fills: d.fills, notes: d.notes };
+}
+
 let started = false;
 
 export function startDesk() {
   if (started || typeof window === "undefined") return;
   started = true;
   const saved = load();
-  market = new Market(saved?.prices);
+  market = new Market(saved?.prices, saved ? pinsOf(saved.trades ?? [], saved.fills ?? []) : {});
+  archived = saved?.archive ?? 0;
   const base: Partial<DeskState> = saved
     ? {
         positions: saved.positions,
@@ -1115,6 +1343,10 @@ export function startDesk() {
     : {};
   set({ quotes: readQuotes(), ready: true, ...base });
   if (!saved) set(seed());
+  if (archived < ARCHIVE) {
+    const more = archive();
+    if (more) set(more);
+  }
   set({ toasts: [] });
 
   window.setInterval(() => {

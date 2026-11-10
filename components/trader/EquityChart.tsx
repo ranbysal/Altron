@@ -10,11 +10,11 @@ import s from "./trader.module.css";
 
 type Point = { eq: number; dd: number };
 
-const EQ_TOP = 22;
-const EQ_BASE = 262;
-const UW_TOP = 286;
-const UW_DEPTH = 58;
-const HEIGHT = 352;
+/** Full size on the dashboard; `compact` is the same band at a little over half the height. */
+const GEO = {
+  full: { EQ_TOP: 22, EQ_BASE: 262, UW_TOP: 286, UW_DEPTH: 58, HEIGHT: 352, GLOW: 74, UW_GLOW: 30 },
+  compact: { EQ_TOP: 14, EQ_BASE: 146, UW_TOP: 160, UW_DEPTH: 36, HEIGHT: 202, GLOW: 50, UW_GLOW: 22 },
+};
 /** The curve stops short of the right edge, leaving room ahead of the live point. */
 const plotOf = (W: number) => W - Math.max(110, Math.round(W * 0.09));
 
@@ -26,7 +26,8 @@ function hex(c: string): string {
  * Equity by trade, drawn in the band's dither texture: profit as a bright edge
  * with a glow falling beneath it, drawdown hanging below the baseline in ember.
  */
-export function EquityChart({ curve, trades }: { curve: Point[]; trades: Trade[] }) {
+export function EquityChart({ curve, trades, compact = false, className }: { curve: Point[]; trades: Trade[]; compact?: boolean; className?: string }) {
+  const { EQ_TOP, EQ_BASE, UW_TOP, UW_DEPTH, HEIGHT, GLOW, UW_GLOW } = GEO[compact ? "compact" : "full"];
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [hover, setHover] = useState<{ i: number; x: number; y: number; dy: number } | null>(null);
@@ -131,7 +132,7 @@ export function EquityChart({ curve, trades }: { curve: Point[]; trades: Trade[]
           const dy = cy - yl;
           const dp = dy / norm;
           let I = 1.15 * Math.exp(-(dp * dp) / 18);
-          if (dy > 0) I = Math.max(I, 0.64 * Math.exp(-dy / 74));
+          if (dy > 0) I = Math.max(I, 0.64 * Math.exp(-dy / GLOW));
           I *= front * Math.min(1, (EQ_BASE + 6 - cy) / 34);
           if (I > (BAYER4[(r & 3) * 4 + (i & 3)] + 0.5) / 16) blue[tone(I)].rect(i * cell, r * cell, sq, sq);
         }
@@ -146,7 +147,7 @@ export function EquityChart({ curve, trades }: { curve: Point[]; trades: Trade[]
             const cy = (r + 0.5) * cell;
             const up = edge - cy; // >0 inside the drawdown
             let I = 1.1 * Math.exp(-(up * up) / 16);
-            if (up > 0) I = Math.max(I, 0.58 * Math.exp(-up / 30));
+            if (up > 0) I = Math.max(I, 0.58 * Math.exp(-up / UW_GLOW));
             I *= front;
             if (I > (BAYER4[(r & 3) * 4 + (i & 3)] + 0.5) / 16) ember[tone(I)].rect(i * cell, r * cell, sq, sq);
           }
@@ -209,7 +210,7 @@ export function EquityChart({ curve, trades }: { curve: Point[]; trades: Trade[]
       st.W = W;
       st.P = plotOf(W);
       setSize({ W, P: st.P });
-      st.cell = W < 700 ? 3 : 4;
+      st.cell = compact || W < 700 ? 3 : 4;
       st.to = columns(curveRef.current);
       st.from = st.to;
       st.now = st.to;
@@ -237,6 +238,7 @@ export function EquityChart({ curve, trades }: { curve: Point[]; trades: Trade[]
       off();
       cancelAnimationFrame(st.raf);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // new period: morph from what's on screen
@@ -280,7 +282,7 @@ export function EquityChart({ curve, trades }: { curve: Point[]; trades: Trade[]
   const thin = Math.max(1, Math.ceil(months.length / 8));
 
   return (
-    <div className={s.equity}>
+    <div className={`${s.equity} ${className ?? ""}`}>
       <div ref={wrapRef} className={s.equityPlot} style={{ height: HEIGHT }} onPointerMove={onMove} onPointerLeave={() => setHover(null)}>
         <canvas ref={canvasRef} className={s.equityCanvas} aria-hidden="true" />
         <span className={s.endMark} style={{ top: endY, left: size.P }}>

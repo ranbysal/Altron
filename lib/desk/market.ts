@@ -171,6 +171,92 @@ function lowerBound(bars: Bar[], t: number): number {
   return lo;
 }
 
+/** A price the history has to pass through: a fill on the book. */
+export type Pin = { t: number; p: number };
+/** A stretch the price stayed inside: a trade between its stop and target, before it ended. */
+export type Band = { from: number; to: number; lo: number; hi: number };
+export type Pins = {
+  at?: Partial<Record<Under, Pin[]>>;
+  bands?: Partial<Record<Under, Band[]>>;
+};
+
+/**
+ * Bends generated history so it agrees with the book: each pinned bar closes at the
+ * pinned price, the bend fades linearly between pins and to nothing at the last bar,
+ * and bars inside a trade stay between its stop and target until the bar it ended in.
+ * Works on unsnapped prices; the caller snaps to the tick after.
+ */
+function pinBars(bars: Bar[], span: number, tick: number, pins: Pin[] = [], bands: Band[] = []) {
+  if (bars.length < 2) return;
+  const t0 = bars[0].t;
+  const tEnd = bars[bars.length - 1].t;
+  const at = (t: number) => {
+    const i = lowerBound(bars, t + 1) - 1;
+    return i >= 0 && t < bars[i].t + span ? i : -1;
+  };
+  const byBar = new Map<number, Pin[]>();
+  for (const p of pins) {
+    if (p.t < t0 || p.t >= tEnd) continue; // the live bar is the tape's
+    const i = at(p.t);
+    if (i < 0) continue;
+    const list = byBar.get(i) ?? [];
+    list.push(p);
+    byBar.set(i, list);
+  }
+  if (byBar.size) {
+    const anchors: { t: number; d: number }[] = [];
+    for (const i of [...byBar.keys()].sort((a, b) => a - b)) {
+      const ps = byBar.get(i)!.sort((a, b) => a.t - b.t);
+      anchors.push({ t: bars[i].t + span, d: ps[ps.length - 1].p - bars[i].c });
+    }
+    anchors.push({ t: tEnd + span, d: 0 });
+    let k = 0;
+    const dAt = (t: number) => {
+      if (t <= anchors[0].t) return anchors[0].d;
+      while (k < anchors.length - 2 && anchors[k + 1].t < t) k++;
+      const a = anchors[k];
+      const b = anchors[k + 1];
+      if (t >= b.t) return b.d;
+      return a.d + ((b.d - a.d) * (t - a.t)) / (b.t - a.t);
+    };
+    for (const b of bars) {
+      const dO = dAt(b.t);
+      const dC = dAt(b.t + span);
+      const o = b.o + dO;
+      const c = b.c + dC;
+      b.h = Math.max(b.h + Math.max(dO, dC), o, c);
+      b.l = Math.min(b.l + Math.min(dO, dC), o, c);
+      b.o = o;
+      b.c = c;
+    }
+  }
+  for (const band of bands) {
+    const i0 = at(band.from);
+    const i1 = at(band.to);
+    if (i0 < 0 || i1 < 0) continue;
+    const lo = band.lo + tick;
+    const hi = band.hi - tick;
+    if (hi <= lo) continue;
+    const fit = (x: number) => Math.min(hi, Math.max(lo, x));
+    for (let i = i0; i < i1; i++) {
+      const b = bars[i];
+      b.o = fit(b.o);
+      b.c = fit(b.c);
+      b.h = fit(b.h);
+      b.l = fit(b.l);
+    }
+    bars[i1].o = fit(bars[i1].o);
+  }
+  // every pinned price sits inside its bar
+  for (const [i, ps] of byBar) {
+    const b = bars[i];
+    for (const p of ps) {
+      if (p.p > b.h) b.h = p.p;
+      if (p.p < b.l) b.l = p.p;
+    }
+  }
+}
+
 /**
  * Buckets source bars by `keyOf`. Only the last bucket is rebuilt as the source
  * grows, and the same object is reused for it, so any array holding it sees the
@@ -280,7 +366,10 @@ export class Market {
   private rolls = new Map<string, Rollup>();
   private joined = new Map<string, { n: number; bars: Bar[] }>();
 
-  constructor(endPrices?: Partial<Record<Under, number>>) {
+  private pins: Pins;
+
+  constructor(endPrices?: Partial<Record<Under, number>>, pins: Pins = {}) {
+    this.pins = pins;
     let seed = (Date.now() % 2147483647) | 0;
     this.rnd = () => {
       seed = (seed + 0x6d2b79f5) | 0;
@@ -322,12 +411,19 @@ export class Market {
       bars.push({ t, o, h, l, c: p, v: Math.round(sp.vol * f * heat * Math.exp(gauss(rnd) * 0.35)) });
     }
     const shift = end - bars[bars.length - 1].c;
+    for (const b of bars) {
+      b.o += shift;
+      b.h += shift;
+      b.l += shift;
+      b.c += shift;
+    }
+    pinBars(bars, MIN, sp.tick, this.pins.at?.[under], this.pins.bands?.[under]);
     const q = this.snapper(sp.tick);
     for (const b of bars) {
-      b.o = q(b.o + shift);
-      b.h = q(b.h + shift);
-      b.l = q(b.l + shift);
-      b.c = q(b.c + shift);
+      b.o = q(b.o);
+      b.h = q(b.h);
+      b.l = q(b.l);
+      b.c = q(b.c);
       b.h = Math.max(b.h, b.o, b.c);
       b.l = Math.min(b.l, b.o, b.c);
     }
@@ -360,12 +456,19 @@ export class Market {
       bars.push({ t, o, h, l, c: Math.exp(lp), v: Math.round(sp.vol * 30 * f * heat * Math.exp(gauss(rnd) * 0.3)) });
     }
     const k = end / bars[bars.length - 1].c;
+    for (const b of bars) {
+      b.o *= k;
+      b.h *= k;
+      b.l *= k;
+      b.c *= k;
+    }
+    pinBars(bars, 30 * MIN, sp.tick, this.pins.at?.[under], this.pins.bands?.[under]);
     const q = this.snapper(sp.tick);
     for (const b of bars) {
-      b.o = q(b.o * k);
-      b.h = q(b.h * k);
-      b.l = q(b.l * k);
-      b.c = q(b.c * k);
+      b.o = q(b.o);
+      b.h = q(b.h);
+      b.l = q(b.l);
+      b.c = q(b.c);
       b.h = Math.max(b.h, b.o, b.c);
       b.l = Math.min(b.l, b.o, b.c);
     }

@@ -42,7 +42,7 @@ import s from "./desk.module.css";
 /* the toolbar over the chart                                          */
 /* ------------------------------------------------------------------ */
 
-function ChartBar() {
+function ChartBar({ viewer = false, frozen = false }: { viewer?: boolean; frozen?: boolean }) {
   const sym = useDesk((st) => st.settings.sym);
   const tf = useDesk((st) => st.settings.tf);
   const pnl = useDesk((st) => st.settings.panels.pnl);
@@ -54,8 +54,8 @@ function ChartBar() {
   const ti = TIMEFRAMES.findIndex((t) => t.id === tf);
 
   return (
-    <header className={s.bar}>
-      <button type="button" className={s.barIcon} aria-pressed={markets} onClick={() => togglePanel("markets")} title={markets ? "Hide markets (M)" : "Show markets (M)"} aria-label="Markets panel">
+    <header className={s.bar} data-viewer={viewer ? "" : undefined}>
+      <button type="button" className={`${s.barIcon} ${s.barMk}`} aria-pressed={markets} onClick={() => togglePanel("markets")} title={markets ? "Hide markets (M)" : "Show markets (M)"} aria-label="Markets panel">
         <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
           <rect x="1.5" y="2.5" width="13" height="11" rx="2.2" fill="none" stroke="currentColor" strokeWidth="1.2" />
           <path d="M6 2.5v11" stroke="currentColor" strokeWidth="1.2" />
@@ -72,7 +72,7 @@ function ChartBar() {
         ))}
       </div>
       <span className={s.barSep} aria-hidden="true" />
-      <div className={s.quote}>
+      <div className={s.quote} hidden={frozen}>
         <Odometer value={quote.last ? fmt(quote.last) : "0.00"} className={s.quotePx} delay={0} />
         <span className={`${s.quoteChg} ${chg >= 0 ? s.pos : s.neg}`}>
           {chg >= 0 ? "+" : "−"}
@@ -102,7 +102,7 @@ function ChartBar() {
           </svg>
         </label>
         <span className={s.barSep} aria-hidden="true" />
-        <button type="button" className={s.barBtn} aria-pressed={pnl} onClick={() => togglePanel("pnl")} title="Live P&L panel (L)">
+        <button type="button" className={`${s.barBtn} ${s.barPnl}`} aria-pressed={pnl} onClick={() => togglePanel("pnl")} title="Live P&L panel (L)">
           <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true">
             <path d="M1.5 9h3l1.6-4 2.6 8 1.8-5H14.5" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" strokeLinecap="round" />
           </svg>
@@ -143,7 +143,7 @@ function ChartBar() {
 type Line = {
   id: string;
   price: number;
-  kind: "entry" | "stop" | "target" | "order" | "alert" | "dbuy" | "dsell" | "dstop" | "dtarget";
+  kind: "entry" | "stop" | "target" | "order" | "alert" | "exit" | "dbuy" | "dsell" | "dstop" | "dtarget";
   title: string;
   value?: string;
   tone?: "pos" | "neg";
@@ -220,7 +220,30 @@ function span(ms: number): string {
   return `${Math.round(m / 1440)}d`;
 }
 
-export function Chart() {
+/** What members see: no grid, no position zone, no volume; fills on. */
+const VIEW_CFG = { volume: false, fills: true, zone: false, grid: false, log: false };
+
+/**
+ * The desk's chart. With `viewer` it's the read-only chart of the Community page: Yazan's
+ * position, stop and target as plain tags, his fills, and nothing that trades, draws or configures.
+ */
+/** A finished trade, drawn as plain tags on the viewer's chart. */
+export type TradeMarks = { side: 1 | -1; qty: number; entry: number; exit?: number; stop?: number; target?: number };
+
+export function Chart({
+  viewer = false,
+  focus,
+  until,
+  marks,
+}: {
+  viewer?: boolean;
+  /** bring this stretch of time into view (a past trade) */
+  focus?: { from: number; to: number };
+  /** freeze the chart: no bars after this moment */
+  until?: number;
+  /** draw these levels instead of the live position */
+  marks?: TradeMarks;
+} = {}) {
   const sym = useDesk((st) => st.settings.sym);
   const tf = useDesk((st) => st.settings.tf);
   const pick = useDesk((st) => st.pick);
@@ -293,6 +316,8 @@ export function Chart() {
     zoom: null as null | { x0: number; y0: number; x1: number; y1: number },
     hover: null as string | null,
     lineDrag: null as null | { id: string; price: number },
+    /** the community page asked to see a stretch of time (a past trade) */
+    pendingFocus: null as null | { from: number; to: number },
     frame: null as K.Frame | null,
     raf: 0,
     base: true,
@@ -312,6 +337,29 @@ export function Chart() {
   /* ---------- lines on the chart, from the book ---------- */
   const lines = useMemo<Line[]>(() => {
     const out: Line[] = [];
+    if (viewer && marks) {
+      const pnl = (p: number) => money((p - marks.entry) * marks.side * marks.qty * inst.pv);
+      out.push({ id: "m-entry", price: marks.entry, kind: "entry", title: `${marks.side > 0 ? "Long" : "Short"} ${marks.qty}`, drag: false });
+      if (marks.target !== undefined) out.push({ id: "m-target", price: marks.target, kind: "target", title: "Target", value: pnl(marks.target), tone: "pos", drag: false });
+      if (marks.stop !== undefined) out.push({ id: "m-stop", price: marks.stop, kind: "stop", title: "Stop", value: pnl(marks.stop), tone: "neg", drag: false });
+      if (marks.exit !== undefined) {
+        const v = (marks.exit - marks.entry) * marks.side * marks.qty * inst.pv;
+        out.push({ id: "m-exit", price: marks.exit, kind: "exit", title: "Exit", value: money(v), tone: v >= 0 ? "pos" : "neg", drag: false });
+      }
+      return out;
+    }
+    if (viewer) {
+      if (pos) {
+        out.push({ id: "entry", price: pos.avg, kind: "entry", title: `${pos.qty > 0 ? "Long" : "Short"} ${Math.abs(pos.qty)}`, drag: false });
+        for (const o of orders) {
+          if (o.role !== "stop" && o.role !== "target") continue;
+          const p = o.role === "stop" ? o.stop! : o.limit!;
+          const pnl = (p - pos.avg) * pos.qty * inst.pv;
+          out.push({ id: o.id, price: p, kind: o.role, title: o.role === "stop" ? "Stop" : "Target", value: money(pnl), tone: pnl >= 0 ? "pos" : "neg", drag: false });
+        }
+      }
+      return out;
+    }
     if (pos) {
       const dir = Math.sign(pos.qty);
       out.push({ id: "entry", price: pos.avg, kind: "entry", title: `${dir > 0 ? "Long" : "Short"} ${Math.abs(pos.qty)}`, drag: false });
@@ -340,7 +388,7 @@ export function Chart() {
       if (dStop !== null) out.push({ id: "d-stop", price: dStop, kind: "dstop", title: "SL", value: money(legPnl(dStop)), tone: "neg", draft: "stop", follows: dFollowStop, drag: true });
     }
     return out;
-  }, [pos, orders, alerts, inst.pv, ticket, tQty, dStop, dTarget, dFollowStop, dFollowTarget]);
+  }, [viewer, marks, pos, orders, alerts, inst.pv, ticket, tQty, dStop, dTarget, dFollowStop, dFollowTarget]);
   const linesRef = useRef(lines);
   linesRef.current = lines;
 
@@ -398,7 +446,18 @@ export function Chart() {
     const symNow = ds.settings.sym;
     const ins = INSTRUMENTS[symNow];
     const sec = tfSec(ds.settings.tf);
-    const bars = m.bars(ins.under, sec);
+    let bars = m.bars(ins.under, sec);
+    const cap = untilRef.current;
+    if (cap !== undefined && bars.length && bars[bars.length - 1].t > cap) {
+      let lo = 0;
+      let hi = bars.length;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (bars[mid].t <= cap) lo = mid + 1;
+        else hi = mid;
+      }
+      bars = bars.slice(0, Math.max(1, lo));
+    }
     const W = wrap.clientWidth;
     const H = wrap.clientHeight;
     if (!W || !H || !bars.length) return null;
@@ -418,6 +477,23 @@ export function Chart() {
       st.range = st.pendingRange;
       st.pendingRange = null;
     }
+    if (st.pendingFocus) {
+      // bring a stretch of time (a past trade) to the middle of the chart, with room around it
+      const { from, to } = st.pendingFocus;
+      let i0 = 0;
+      while (i0 < n - 1 && bars[i0].t < from) i0++;
+      let i1 = n - 1;
+      while (i1 > 0 && bars[i1].t > to) i1--;
+      const count = Math.max(48, Math.round(Math.max(1, i1 - i0 + 1) * 2.6));
+      st.bw = Math.max(K.MIN_BW, Math.min(K.MAX_BW, plotW / count));
+      const L0 = (i0 + i1) / 2 + plotW / st.bw / 2 - K.padBars(st.bw) - 0.5;
+      st.off = Math.max(0, n - 1 - L0);
+      st.auto = true;
+      st.fitted = false;
+      st.range = null;
+      st.n = n;
+      st.pendingFocus = null;
+    }
     // hold the view still when scrolled back and a new bar arrives
     if (st.n && n > st.n && st.off > 0.5) st.off += n - st.n;
     st.n = n;
@@ -427,11 +503,11 @@ export function Chart() {
     const L = n - 1 - st.off;
     const first = Math.max(0, Math.floor(L - visible + pad) - 1);
     const last = Math.min(n - 1, Math.ceil(L));
-    const volOn = ds.settings.chart.volume && st.bw >= 2;
+    const volOn = !viewer && ds.settings.chart.volume && st.bw >= 2;
     const volTop = volOn ? plotH - Math.round(plotH * K.VOL_FRAC) : plotH;
     const pTop = 40;
     const pBot = (volOn ? volTop : plotH) - 18;
-    const logOn = ds.settings.chart.log;
+    const logOn = !viewer && ds.settings.chart.log;
 
     if (st.auto) {
       let lo = Infinity;
@@ -510,7 +586,7 @@ export function Chart() {
     const ds = useDesk.getState();
     const symNow = ds.settings.sym;
     const ins = INSTRUMENTS[symNow];
-    const cfg = ds.settings.chart;
+    const cfg = viewer ? VIEW_CFG : ds.settings.chart;
     const quote = ds.quotes[symNow];
     const sec = tfSec(ds.settings.tf);
     const { bars, first, last, plotW, plotH } = f;
@@ -703,7 +779,7 @@ export function Chart() {
     const dr = useDraw.getState();
     const mine = dr.byUnder[ins.under];
     const dc = drawCtx();
-    if (!dr.hidden && fo > 0) {
+    if (!dr.hidden && fo > 0 && !viewer) {
       for (const d of mine) {
         // a hidden drawing only shows, faintly, while the tools are open or it's selected
         if (d.hidden && !dr.rail && d.id !== dr.selected) continue;
@@ -714,7 +790,7 @@ export function Chart() {
     }
 
     // the bracket a hovered deal button would send
-    if (ds.preview && ds.ticket.type === "MKT") {
+    if (ds.preview && ds.ticket.type === "MKT" && !viewer) {
       const side = ds.preview;
       const look = { ...ds, ticket: { ...ds.ticket, side } };
       const entry = ticketEntry(look, symNow);
@@ -745,7 +821,7 @@ export function Chart() {
     ctx.restore();
 
     // axis tags for horizontal and vertical lines
-    if (!dr.hidden && fo > 0) {
+    if (!dr.hidden && fo > 0 && !viewer) {
       ctx.font = `10.5px ${C.mono}`;
       ctx.globalAlpha = fo;
       for (const d of mine) {
@@ -778,7 +854,8 @@ export function Chart() {
       ctx.globalAlpha = 1;
     }
 
-    // the tape
+    // the tape (a frozen chart of a past trade has no live price)
+    if (untilRef.current === undefined) {
     if (quote.last !== st.lastPx) {
       st.flash = performance.now();
       st.lastPx = quote.last;
@@ -796,6 +873,7 @@ export function Chart() {
     ctx.textAlign = "left";
     ctx.font = `10.5px ${C.mono}`;
     ctx.fillText(fmt(quote.last), plotW + 12, yl + 0.5);
+    }
 
     // order, position and alert lines (DOM): tags that would overlap gather into a stack
     const placed: { el: HTMLDivElement; y: number }[] = [];
@@ -822,7 +900,7 @@ export function Chart() {
           val.textContent = money((p - draftEntry.price) * t.side * ds.settings.qty[symNow] * ins.pv);
         } else if (val && posNow) val.textContent = money((p - posNow.avg) * posNow.qty * ins.pv);
       }
-      if (l.kind === "entry" && posNow) {
+      if (l.kind === "entry" && posNow && l.id === "entry") {
         const live = el.querySelector<HTMLElement>("[data-live]");
         const pnl = ((posNow.qty > 0 ? quote.bid : quote.ask) - posNow.avg) * posNow.qty * ins.pv;
         if (live) {
@@ -931,8 +1009,8 @@ export function Chart() {
     }
     // the hovered or selected drawing, lifted
     const mine = dr.byUnder[ins.under];
-    const sel = dr.hidden ? undefined : mine.find((d) => d.id === dr.selected);
-    if (!dr.hidden && st.fo > 0) {
+    const sel = dr.hidden || viewer ? undefined : mine.find((d) => d.id === dr.selected);
+    if (!dr.hidden && st.fo > 0 && !viewer) {
       const hot = mine.find((d) => d.id === st.hover && d.id !== dr.selected);
       if (hot) {
         ctx.globalAlpha = st.fo * (hot.hidden ? 0.45 : 1);
@@ -1016,7 +1094,7 @@ export function Chart() {
       const txt = (el: HTMLElement | null, s2: string) => {
         if (el && el.textContent !== s2) el.textContent = s2;
       };
-      txt(L.time, showX ? K.fullTime(b.t, sec) : "Now");
+      txt(L.time, showX || untilRef.current !== undefined ? K.fullTime(b.t, sec) : "Now");
       txt(L.o, fmt(b.o));
       txt(L.h, fmt(b.h));
       txt(L.l, fmt(b.l));
@@ -1097,6 +1175,25 @@ export function Chart() {
   // lines re-rendered: place them
   useEffect(() => invalidate(true), [lines, invalidate]);
 
+  // a past trade: pick a timeframe that fits it, then bring its stretch of time to the middle
+  const focusRef = useRef(focus);
+  focusRef.current = focus;
+  const untilRef = useRef(until);
+  untilRef.current = until;
+  const focusKey = focus ? `${focus.from}:${focus.to}` : "";
+  useEffect(() => {
+    const fo = focusRef.current;
+    if (!viewer || !fo) return;
+    const st = v.current;
+    const dur = Math.max(60_000, fo.to - fo.from);
+    const old = Date.now() - fo.from > 9 * 86_400_000; // minute bars go back ten days
+    const want = (old ? [1800, 3600, 86400] : [60, 300, 900, 1800, 3600]).find((sec) => dur / 1000 / sec <= 70) ?? 3600;
+    const tfNext = TIMEFRAMES.find((t) => t.sec === want)?.id ?? "5m";
+    st.pendingFocus = fo;
+    if (useDesk.getState().settings.tf !== tfNext) setSettings({ tf: tfNext });
+    invalidate(true);
+  }, [viewer, focusKey, invalidate]);
+
   // a new pop-up (or one that gained a button) is measured again, then placed
   useLayoutEffect(() => {
     v.current.popW = 0;
@@ -1106,7 +1203,9 @@ export function Chart() {
   // a new market or timeframe starts fitted and current
   useEffect(() => {
     const st = v.current;
-    if (!st.pendingRange) {
+    // a frozen chart keeps its trade in view through timeframe changes
+    if (!st.pendingFocus && focusRef.current) st.pendingFocus = focusRef.current;
+    if (!st.pendingRange && !st.pendingFocus) {
       st.bw = K.DEFAULT_BW;
       st.range = null;
       setRange(null);
@@ -1203,7 +1302,7 @@ export function Chart() {
     const st = v.current;
     const f = st.frame;
     const dr = useDraw.getState();
-    if (!f || dr.hidden || st.fo <= 0.02) return null;
+    if (!f || dr.hidden || viewer || st.fo <= 0.02) return null;
     const ctx = overRef.current!.getContext("2d")!;
     const mine = dr.byUnder[under()];
     for (let i = mine.length - 1; i >= 0; i--) {
@@ -1276,7 +1375,7 @@ export function Chart() {
       return;
     }
     const ds = useDesk.getState();
-    if (ds.pick) {
+    if (ds.pick && !viewer) {
       const f = st.frame;
       if (f && y < f.pBot + 10) {
         const price = snap(ds.settings.sym, K.pOfY(f, y));
@@ -1289,7 +1388,7 @@ export function Chart() {
     }
     if (text) return;
     const dr = useDraw.getState();
-    const toolNow = e.shiftKey && dr.tool === "cursor" ? "measure" : dr.tool;
+    const toolNow = viewer ? (e.shiftKey ? "measure" : "cursor") : e.shiftKey && dr.tool === "cursor" ? "measure" : dr.tool;
     st.measure = null;
 
     if (toolNow !== "cursor") {
@@ -1539,6 +1638,7 @@ export function Chart() {
 
   const onMenu = (e: React.MouseEvent) => {
     e.preventDefault();
+    if (viewer) return;
     const st = v.current;
     const f = st.frame;
     if (!f) return;
@@ -1655,10 +1755,10 @@ export function Chart() {
   };
 
   return (
-    <div className={s.chart} data-chart="">
-      <ChartBar />
+    <div className={s.chart} data-chart="" data-viewer={viewer ? "" : undefined}>
+      <ChartBar viewer={viewer} frozen={until !== undefined} />
       <div className={s.chartBody} data-chart-body="">
-        {rail && (
+        {rail && !viewer && (
           <ToolRail
             count={drawCount}
             onClear={() => {
@@ -1669,7 +1769,7 @@ export function Chart() {
         )}
         <div
           ref={wrapRef}
-          className={`${s.plot} ${pick ? s.picking : ""} ${tool !== "cursor" ? s.drawing : ""}`}
+          className={`${s.plot} ${pick && !viewer ? s.picking : ""} ${tool !== "cursor" && !viewer ? s.drawing : ""}`}
           data-plot=""
           onPointerDown={onDown}
           onPointerMove={onMove}
@@ -1766,7 +1866,7 @@ export function Chart() {
                     {l.value}
                   </em>
                 )}
-                {l.kind === "entry" && <em data-live className={s.liveVal} />}
+                {l.kind === "entry" && l.id === "entry" && <em data-live className={s.liveVal} />}
                 {l.kind === "entry" && !hasStop && (
                   <button type="button" className={s.lineAdd} onPointerDown={(e) => e.stopPropagation()} onClick={() => addBracket(sym, "stop")}>
                     + Stop
@@ -1850,7 +1950,7 @@ export function Chart() {
               }}
             />
           )}
-          {selId && selKind && (
+          {selId && selKind && !viewer && (
             <DrawPop
               ref={popRef}
               kind={selKind}

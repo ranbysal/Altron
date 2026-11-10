@@ -16,7 +16,7 @@ import s from "./desk.module.css";
 const KEYS: [string, string][] = [
   ["B", "Buy at market, ticket size, with bracket"],
   ["S", "Sell at market, ticket size, with bracket"],
-  ["F", "Flatten the selected market"],
+  ["F", "Close the position in the selected market"],
   ["Esc", "Close a pop-up, leave full screen, then cancel working entries"],
   ["1 – 4", "Switch market"],
   ["T", "Next timeframe"],
