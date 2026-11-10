@@ -30,7 +30,6 @@ import {
   type Order,
 } from "@/lib/desk/store";
 import { addDrawing, clearDrawings, drawId, removeDrawing, replaceDrawing, restyle, selectDrawing, setTool, startDrawings, toggleDraw, toggleHidden, useDraw, type Drawing, type Pt } from "@/lib/desk/drawings";
-import { useView } from "@/lib/community/view";
 import { BAYER4 } from "@/lib/noise";
 import { onThemeChange } from "@/lib/theme";
 import { Odometer } from "@/components/trader/parts";
@@ -43,7 +42,7 @@ import s from "./desk.module.css";
 /* the toolbar over the chart                                          */
 /* ------------------------------------------------------------------ */
 
-function ChartBar({ viewer = false }: { viewer?: boolean }) {
+function ChartBar({ viewer = false, frozen = false }: { viewer?: boolean; frozen?: boolean }) {
   const sym = useDesk((st) => st.settings.sym);
   const tf = useDesk((st) => st.settings.tf);
   const pnl = useDesk((st) => st.settings.panels.pnl);
@@ -73,7 +72,7 @@ function ChartBar({ viewer = false }: { viewer?: boolean }) {
         ))}
       </div>
       <span className={s.barSep} aria-hidden="true" />
-      <div className={s.quote}>
+      <div className={s.quote} hidden={frozen}>
         <Odometer value={quote.last ? fmt(quote.last) : "0.00"} className={s.quotePx} delay={0} />
         <span className={`${s.quoteChg} ${chg >= 0 ? s.pos : s.neg}`}>
           {chg >= 0 ? "+" : "−"}
@@ -144,7 +143,7 @@ function ChartBar({ viewer = false }: { viewer?: boolean }) {
 type Line = {
   id: string;
   price: number;
-  kind: "entry" | "stop" | "target" | "order" | "alert" | "dbuy" | "dsell" | "dstop" | "dtarget";
+  kind: "entry" | "stop" | "target" | "order" | "alert" | "exit" | "dbuy" | "dsell" | "dstop" | "dtarget";
   title: string;
   value?: string;
   tone?: "pos" | "neg";
@@ -228,7 +227,23 @@ const VIEW_CFG = { volume: false, fills: true, zone: false, grid: false, log: fa
  * The desk's chart. With `viewer` it's the read-only chart of the Community page: Yazan's
  * position, stop and target as plain tags, his fills, and nothing that trades, draws or configures.
  */
-export function Chart({ viewer = false }: { viewer?: boolean } = {}) {
+/** A finished trade, drawn as plain tags on the viewer's chart. */
+export type TradeMarks = { side: 1 | -1; qty: number; entry: number; exit?: number; stop?: number; target?: number };
+
+export function Chart({
+  viewer = false,
+  focus,
+  until,
+  marks,
+}: {
+  viewer?: boolean;
+  /** bring this stretch of time into view (a past trade) */
+  focus?: { from: number; to: number };
+  /** freeze the chart: no bars after this moment */
+  until?: number;
+  /** draw these levels instead of the live position */
+  marks?: TradeMarks;
+} = {}) {
   const sym = useDesk((st) => st.settings.sym);
   const tf = useDesk((st) => st.settings.tf);
   const pick = useDesk((st) => st.pick);
@@ -322,6 +337,17 @@ export function Chart({ viewer = false }: { viewer?: boolean } = {}) {
   /* ---------- lines on the chart, from the book ---------- */
   const lines = useMemo<Line[]>(() => {
     const out: Line[] = [];
+    if (viewer && marks) {
+      const pnl = (p: number) => money((p - marks.entry) * marks.side * marks.qty * inst.pv);
+      out.push({ id: "m-entry", price: marks.entry, kind: "entry", title: `${marks.side > 0 ? "Long" : "Short"} ${marks.qty}`, drag: false });
+      if (marks.target !== undefined) out.push({ id: "m-target", price: marks.target, kind: "target", title: "Target", value: pnl(marks.target), tone: "pos", drag: false });
+      if (marks.stop !== undefined) out.push({ id: "m-stop", price: marks.stop, kind: "stop", title: "Stop", value: pnl(marks.stop), tone: "neg", drag: false });
+      if (marks.exit !== undefined) {
+        const v = (marks.exit - marks.entry) * marks.side * marks.qty * inst.pv;
+        out.push({ id: "m-exit", price: marks.exit, kind: "exit", title: "Exit", value: money(v), tone: v >= 0 ? "pos" : "neg", drag: false });
+      }
+      return out;
+    }
     if (viewer) {
       if (pos) {
         out.push({ id: "entry", price: pos.avg, kind: "entry", title: `${pos.qty > 0 ? "Long" : "Short"} ${Math.abs(pos.qty)}`, drag: false });
@@ -362,7 +388,7 @@ export function Chart({ viewer = false }: { viewer?: boolean } = {}) {
       if (dStop !== null) out.push({ id: "d-stop", price: dStop, kind: "dstop", title: "SL", value: money(legPnl(dStop)), tone: "neg", draft: "stop", follows: dFollowStop, drag: true });
     }
     return out;
-  }, [viewer, pos, orders, alerts, inst.pv, ticket, tQty, dStop, dTarget, dFollowStop, dFollowTarget]);
+  }, [viewer, marks, pos, orders, alerts, inst.pv, ticket, tQty, dStop, dTarget, dFollowStop, dFollowTarget]);
   const linesRef = useRef(lines);
   linesRef.current = lines;
 
@@ -420,7 +446,18 @@ export function Chart({ viewer = false }: { viewer?: boolean } = {}) {
     const symNow = ds.settings.sym;
     const ins = INSTRUMENTS[symNow];
     const sec = tfSec(ds.settings.tf);
-    const bars = m.bars(ins.under, sec);
+    let bars = m.bars(ins.under, sec);
+    const cap = untilRef.current;
+    if (cap !== undefined && bars.length && bars[bars.length - 1].t > cap) {
+      let lo = 0;
+      let hi = bars.length;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (bars[mid].t <= cap) lo = mid + 1;
+        else hi = mid;
+      }
+      bars = bars.slice(0, Math.max(1, lo));
+    }
     const W = wrap.clientWidth;
     const H = wrap.clientHeight;
     if (!W || !H || !bars.length) return null;
@@ -817,7 +854,8 @@ export function Chart({ viewer = false }: { viewer?: boolean } = {}) {
       ctx.globalAlpha = 1;
     }
 
-    // the tape
+    // the tape (a frozen chart of a past trade has no live price)
+    if (untilRef.current === undefined) {
     if (quote.last !== st.lastPx) {
       st.flash = performance.now();
       st.lastPx = quote.last;
@@ -835,6 +873,7 @@ export function Chart({ viewer = false }: { viewer?: boolean } = {}) {
     ctx.textAlign = "left";
     ctx.font = `10.5px ${C.mono}`;
     ctx.fillText(fmt(quote.last), plotW + 12, yl + 0.5);
+    }
 
     // order, position and alert lines (DOM): tags that would overlap gather into a stack
     const placed: { el: HTMLDivElement; y: number }[] = [];
@@ -861,7 +900,7 @@ export function Chart({ viewer = false }: { viewer?: boolean } = {}) {
           val.textContent = money((p - draftEntry.price) * t.side * ds.settings.qty[symNow] * ins.pv);
         } else if (val && posNow) val.textContent = money((p - posNow.avg) * posNow.qty * ins.pv);
       }
-      if (l.kind === "entry" && posNow) {
+      if (l.kind === "entry" && posNow && l.id === "entry") {
         const live = el.querySelector<HTMLElement>("[data-live]");
         const pnl = ((posNow.qty > 0 ? quote.bid : quote.ask) - posNow.avg) * posNow.qty * ins.pv;
         if (live) {
@@ -1055,7 +1094,7 @@ export function Chart({ viewer = false }: { viewer?: boolean } = {}) {
       const txt = (el: HTMLElement | null, s2: string) => {
         if (el && el.textContent !== s2) el.textContent = s2;
       };
-      txt(L.time, showX ? K.fullTime(b.t, sec) : "Now");
+      txt(L.time, showX || untilRef.current !== undefined ? K.fullTime(b.t, sec) : "Now");
       txt(L.o, fmt(b.o));
       txt(L.h, fmt(b.h));
       txt(L.l, fmt(b.l));
@@ -1136,34 +1175,24 @@ export function Chart({ viewer = false }: { viewer?: boolean } = {}) {
   // lines re-rendered: place them
   useEffect(() => invalidate(true), [lines, invalidate]);
 
-  // the community page: show a past trade's stretch of time, or come back to now
+  // a past trade: pick a timeframe that fits it, then bring its stretch of time to the middle
+  const focusRef = useRef(focus);
+  focusRef.current = focus;
+  const untilRef = useRef(until);
+  untilRef.current = until;
+  const focusKey = focus ? `${focus.from}:${focus.to}` : "";
   useEffect(() => {
-    if (!viewer) return;
-    const go = (focus: { from: number; to: number } | null) => {
-      const st = v.current;
-      if (!focus) {
-        st.pendingFocus = null;
-        st.bw = K.DEFAULT_BW;
-        st.off = 0;
-        st.auto = true;
-        st.fitted = false;
-        setAuto(true);
-        return invalidate(true);
-      }
-      const dur = Math.max(60_000, focus.to - focus.from);
-      const old = Date.now() - focus.from > 9 * 86_400_000; // minute bars go back ten days
-      const want = (old ? [1800, 3600, 86400] : [60, 300, 900, 1800, 3600]).find((sec) => dur / 1000 / sec <= 70) ?? 3600;
-      const tfNext = TIMEFRAMES.find((t) => t.sec === want)?.id ?? "5m";
-      st.pendingFocus = focus;
-      if (useDesk.getState().settings.tf !== tfNext) setSettings({ tf: tfNext });
-      invalidate(true);
-    };
-    const cur = useView.getState().focus;
-    if (cur) go(cur);
-    return useView.subscribe((a, b) => {
-      if (a.focus !== b.focus) go(a.focus);
-    });
-  }, [viewer, invalidate]);
+    const fo = focusRef.current;
+    if (!viewer || !fo) return;
+    const st = v.current;
+    const dur = Math.max(60_000, fo.to - fo.from);
+    const old = Date.now() - fo.from > 9 * 86_400_000; // minute bars go back ten days
+    const want = (old ? [1800, 3600, 86400] : [60, 300, 900, 1800, 3600]).find((sec) => dur / 1000 / sec <= 70) ?? 3600;
+    const tfNext = TIMEFRAMES.find((t) => t.sec === want)?.id ?? "5m";
+    st.pendingFocus = fo;
+    if (useDesk.getState().settings.tf !== tfNext) setSettings({ tf: tfNext });
+    invalidate(true);
+  }, [viewer, focusKey, invalidate]);
 
   // a new pop-up (or one that gained a button) is measured again, then placed
   useLayoutEffect(() => {
@@ -1174,6 +1203,8 @@ export function Chart({ viewer = false }: { viewer?: boolean } = {}) {
   // a new market or timeframe starts fitted and current
   useEffect(() => {
     const st = v.current;
+    // a frozen chart keeps its trade in view through timeframe changes
+    if (!st.pendingFocus && focusRef.current) st.pendingFocus = focusRef.current;
     if (!st.pendingRange && !st.pendingFocus) {
       st.bw = K.DEFAULT_BW;
       st.range = null;
@@ -1725,7 +1756,7 @@ export function Chart({ viewer = false }: { viewer?: boolean } = {}) {
 
   return (
     <div className={s.chart} data-chart="" data-viewer={viewer ? "" : undefined}>
-      <ChartBar viewer={viewer} />
+      <ChartBar viewer={viewer} frozen={until !== undefined} />
       <div className={s.chartBody} data-chart-body="">
         {rail && !viewer && (
           <ToolRail
@@ -1835,7 +1866,7 @@ export function Chart({ viewer = false }: { viewer?: boolean } = {}) {
                     {l.value}
                   </em>
                 )}
-                {l.kind === "entry" && <em data-live className={s.liveVal} />}
+                {l.kind === "entry" && l.id === "entry" && <em data-live className={s.liveVal} />}
                 {l.kind === "entry" && !hasStop && (
                   <button type="button" className={s.lineAdd} onPointerDown={(e) => e.stopPropagation()} onClick={() => addBracket(sym, "stop")}>
                     + Stop

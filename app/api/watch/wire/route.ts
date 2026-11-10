@@ -16,7 +16,7 @@ const SOURCES = [
   { id: "sec", name: "SEC", url: "https://www.sec.gov/news/pressreleases.rss" },
 ];
 
-type Item = { id: string; source: string; title: string; url: string; at: number };
+type Item = { id: string; source: string; title: string; url: string; at: number; image?: string };
 
 async function read(src: (typeof SOURCES)[number]): Promise<{ id: string; name: string; ok: boolean; items: Item[] }> {
   try {
@@ -25,7 +25,7 @@ async function read(src: (typeof SOURCES)[number]): Promise<{ id: string; name: 
     if (!res.ok) return { id: src.id, name: src.name, ok: false, items: [] };
     const items = parseFeed(await res.text())
       .slice(0, 30)
-      .map((x) => ({ id: `${src.id}:${x.url}`, source: src.name, title: x.title, url: x.url, at: x.at }));
+      .map((x) => ({ id: `${src.id}:${x.url}`, source: src.name, title: x.title, url: x.url, at: x.at, image: x.image }));
     return { id: src.id, name: src.name, ok: items.length > 0, items };
   } catch {
     return { id: src.id, name: src.name, ok: false, items: [] };

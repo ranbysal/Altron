@@ -77,7 +77,7 @@ export function TraderShell({ children }: { children: ReactNode }) {
     startDesk();
   }, []);
   return (
-    <div className={s.root}>
+    <div className={s.root} data-trader-root="">
       <div className={s.page}>
         <Nav />
         {children}

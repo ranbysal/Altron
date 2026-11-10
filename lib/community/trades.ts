@@ -1,4 +1,4 @@
-import { INSTRUMENTS, tickValue, type Sym } from "@/lib/desk/instruments";
+import { INSTRUMENTS, tickValue } from "@/lib/desk/instruments";
 import { noticeText, sizeWords, type Fill, type Note, type Notice, type Order, type Trade } from "@/lib/desk/store";
 import { fmt, money } from "@/lib/format";
 import { placeholders, roomUntil, type Msg } from "./room";
@@ -31,10 +31,13 @@ export function targetOf(t: Trade, orders: Order[]): number | undefined {
   return t.target;
 }
 
-/** The trade the page shows when nothing is picked: the open one, else the latest. */
-export function currentTrade(trades: Trade[], sym: Sym): Trade | undefined {
+/**
+ * The trade the page leads with: the open one, else the most recent. A closed trade stays
+ * here, not in the history, until the next one opens.
+ */
+export function currentTrade(trades: Trade[]): Trade | undefined {
   const open = trades.filter((t) => !t.closedAt);
-  return open.find((t) => t.sym === sym) ?? open[open.length - 1] ?? trades[trades.length - 1];
+  return open[open.length - 1] ?? [...trades].sort((a, b) => b.openedAt - a.openedAt)[0];
 }
 
 export type RoomState = { open: boolean; live: boolean; until: number | null };
@@ -48,7 +51,7 @@ export function roomOf(t: Trade, trades: Trade[], now: number): RoomState {
 export type Line =
   | { kind: "event"; id: string; at: number; text: string; tone: "buy" | "sell" | "move" | "flat"; sub?: string }
   | { kind: "note"; id: string; at: number; text: string }
-  | { kind: "msg"; id: string; at: number; name: string; trader: boolean; text: string };
+  | { kind: "msg"; id: string; at: number; name: string; trader: boolean; text: string; reply?: { name: string; text: string } };
 
 /** Everything said and done in one trade's room, in order. */
 export function streamOf(t: Trade, fills: Fill[], notices: Notice[], notes: Note[], msgs: Msg[], now: number): Line[] {
@@ -66,7 +69,7 @@ export function streamOf(t: Trade, fills: Fill[], notices: Notice[], notes: Note
     else text = `${f.side > 0 ? "Bought back" : "Sold"} ${size} @ ${px}`;
     out.push({ kind: "event", id: f.id, at: f.at, text, tone: f.side > 0 ? "buy" : "sell", sub: opening ? undefined : money(f.pnl) });
   });
-  if (t.closedAt) out.push({ kind: "event", id: `${t.id}-flat`, at: t.closedAt + 1, text: "Flat", tone: "flat", sub: money(t.pnl) });
+  if (t.closedAt) out.push({ kind: "event", id: `${t.id}-closed`, at: t.closedAt + 1, text: "Trade closed", tone: "flat", sub: money(t.pnl) });
   for (const n of notices) {
     if (n.tradeId !== t.id) continue;
     if (n.kind === "stop" || n.kind === "target") {
@@ -76,7 +79,12 @@ export function streamOf(t: Trade, fills: Fill[], notices: Notice[], notes: Note
     if (n.note) out.push({ kind: "note", id: `${n.id}-note`, at: n.at + 2, text: n.note });
   }
   for (const n of notes) if (n.tradeId === t.id) out.push({ kind: "note", id: n.id, at: n.at, text: n.text });
-  for (const m of [...msgs.filter((x) => x.tradeId === t.id), ...placeholders(t, now)]) out.push({ kind: "msg", id: m.id, at: m.at, name: m.name, trader: !!m.trader, text: m.text });
+  const said = [...msgs.filter((x) => x.tradeId === t.id), ...placeholders(t, now)];
+  const byId = new Map(said.map((m) => [m.id, m]));
+  for (const m of said) {
+    const r = m.replyTo ? byId.get(m.replyTo) : undefined;
+    out.push({ kind: "msg", id: m.id, at: m.at, name: m.name, trader: !!m.trader, text: m.text, reply: r ? { name: r.name, text: r.text } : undefined });
+  }
   return out.sort((a, b) => a.at - b.at);
 }
 

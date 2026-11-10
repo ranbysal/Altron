@@ -124,7 +124,7 @@ export function useNow(every = 15_000): number {
 }
 
 /* shapes returned by /api/watch/* */
-export type WireItem = { id: string; source: string; title: string; url: string; at: number };
+export type WireItem = { id: string; source: string; title: string; url: string; at: number; image?: string };
 export type Wire = { at: number; sources: { id: string; name: string; ok: boolean; n: number }[]; items: WireItem[] };
 export type CalEvent = { id: string; title: string; src: "BLS" | "BEA" | "Fed"; at: number; impact: 1 | 2 | 3; allDay?: boolean };
 export type Calendar = { ok: boolean; stale?: boolean; at: number; events: CalEvent[]; sources?: { id: string; ok: boolean }[] };

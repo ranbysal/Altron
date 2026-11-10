@@ -1,7 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { Cell } from "@/components/trader/parts";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { dayStart, getMarket, useDesk } from "@/lib/desk/store";
 import { INSTRUMENTS, type Under } from "@/lib/desk/instruments";
 import { fmt } from "@/lib/format";
@@ -9,8 +8,12 @@ import { BAYER4 } from "@/lib/noise";
 import { onThemeChange } from "@/lib/theme";
 import { movesOf, sessionOf, type Move, type Session } from "@/lib/community/moves";
 import { clock, dayKey } from "@/lib/community/trades";
-import { addAccount, ago, removeAccount, resetAccounts, startWatch, useFeed, useNow, useWatch, DEFAULT_ACCOUNTS, type CalEvent, type Calendar, type FeedState, type Wire } from "@/lib/community/watch";
+import { addAccount, ago, removeAccount, resetAccounts, startWatch, useWatch, DEFAULT_ACCOUNTS, type CalEvent, type Calendar, type FeedState, type Wire, type WireItem } from "@/lib/community/watch";
 import c from "./community.module.css";
+
+/*
+ * The page's market panels: Watcher (posts on X), News, Calendar and Moves.
+ */
 
 const mono = (name: string) =>
   name
@@ -22,15 +25,24 @@ const mono = (name: string) =>
     .slice(0, 2)
     .toUpperCase() || "·";
 
+/** A stable tint per name, so each account and source keeps its own colour. */
+function hue(name: string): number {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % 360;
+  return h;
+}
+
+export type VoiceState = "loading" | "ok" | "quiet";
+
 /* ------------------------------------------------------------------ */
-/* voices: posts from X                                                */
+/* watcher: posts on X                                                 */
 /* ------------------------------------------------------------------ */
 
 /*
  * X has no free feed to read on a server: its robots rules close the embed endpoint to
- * automated readers, and it has pursued the services that read it anyway. So Voices uses
- * the one route X offers without the API, its own embedded timeline, loaded by the
- * visitor's browser straight from X. The list of accounts is ours; the posts are X's.
+ * automated readers, and it has pursued the services that read it anyway. So the Watcher
+ * uses the one route X offers without the API, its own embedded timeline, loaded by the
+ * visitor's browser. The list of accounts is ours; the posts, with their photos, are X's.
  */
 type Twttr = {
   ready?: (cb: (t: Twttr) => void) => void;
@@ -60,7 +72,6 @@ function loadWidgets(): Promise<Twttr> {
   return widgets;
 }
 
-type VoiceState = "loading" | "ok" | "quiet";
 
 function XTimeline({ handle, onState }: { handle: string; onState: (s: VoiceState) => void }) {
   const box = useRef<HTMLDivElement>(null);
@@ -125,35 +136,43 @@ function XTimeline({ handle, onState }: { handle: string; onState: (s: VoiceStat
   );
 }
 
-function VoicesPanel({ onState }: { onState: (s: VoiceState) => void }) {
+
+export function XWatcher({ onState }: { onState: (s: VoiceState) => void }) {
+  useEffect(() => startWatch(), []);
   const accounts = useWatch((s) => s.accounts);
   const [pick, setPick] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const sel = accounts.find((a) => a.handle === pick) ?? accounts[0];
   const isDefault = accounts.length === DEFAULT_ACCOUNTS.length && accounts.every((a, i) => a.handle === DEFAULT_ACCOUNTS[i].handle);
+  const input = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (adding) input.current?.focus();
+  }, [adding]);
 
   return (
-    <div className={c.voices}>
-      <div className={c.accounts}>
-        <ul>
-          {accounts.map((a) => (
-            <li key={a.handle} data-on={sel?.handle === a.handle ? "" : undefined}>
-              <button type="button" className={c.acct} aria-pressed={sel?.handle === a.handle} onClick={() => setPick(a.handle)} title={`Show @${a.handle}`}>
-                <span className={c.mono2} aria-hidden="true">
-                  {mono(a.name)}
-                </span>
-                <span className={c.acctName}>
-                  <b>{a.name}</b>
-                  <em>@{a.handle}</em>
-                </span>
-              </button>
-              <button type="button" className={c.acctX} onClick={() => removeAccount(a.handle)} aria-label={`Stop following @${a.handle}`}>
-                ×
-              </button>
-            </li>
-          ))}
-        </ul>
+    <div className={c.watcher}>
+      <ul className={c.faces} aria-label="Accounts">
+        {accounts.map((a) => (
+          <li key={a.handle}>
+            <button type="button" className={c.faceBtn} aria-pressed={sel?.handle === a.handle} onClick={() => setPick(a.handle)} style={{ "--h": hue(a.handle) } as CSSProperties} data-tip={a.name}>
+              <span aria-hidden="true">{mono(a.name)}</span>
+              <i className={c.srOnly}>
+                {a.name} @{a.handle}
+              </i>
+            </button>
+          </li>
+        ))}
+        <li>
+          <button type="button" className={`${c.faceBtn} ${c.faceAdd}`} aria-expanded={adding} onClick={() => setAdding((v) => !v)} data-tip="Add an account" aria-label="Add an account">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" aria-hidden="true">
+              <path d="M8 3v10M3 8h10" />
+            </svg>
+          </button>
+        </li>
+      </ul>
+      {adding && (
         <form
           className={c.addAcct}
           onSubmit={(e) => {
@@ -163,18 +182,21 @@ function VoicesPanel({ onState }: { onState: (s: VoiceState) => void }) {
             setErr(why);
             if (!why) {
               setDraft("");
+              setAdding(false);
               const list = useWatch.getState().accounts;
               if (list.length > before) setPick(list[list.length - 1].handle);
             }
           }}
         >
           <input
+            ref={input}
             value={draft}
             onChange={(e) => {
               setDraft(e.target.value);
               setErr(null);
             }}
-            placeholder="Add @handle"
+            onKeyDown={(e) => e.key === "Escape" && setAdding(false)}
+            placeholder="@handle or x.com link"
             aria-label="Add an X account to follow"
             spellCheck={false}
             autoCapitalize="none"
@@ -182,46 +204,62 @@ function VoicesPanel({ onState }: { onState: (s: VoiceState) => void }) {
           <button type="submit" disabled={!draft.trim()}>
             Add
           </button>
-        </form>
-        <div className={c.acctFoot}>
-          {err ? <span className={c.neg}>{err}</span> : <span>{accounts.length} followed</span>}
-          {!isDefault && (
-            <button type="button" onClick={resetAccounts}>
-              Reset
+          {err && <span className={c.neg}>{err}</span>}
+          {!isDefault && !err && (
+            <button type="button" className={c.linkBtn} onClick={resetAccounts}>
+              Reset list
             </button>
           )}
-        </div>
-      </div>
-
-      <div className={c.posts}>
-        {sel ? (
-          <>
-            <div className={c.postsBar}>
-              <span>
-                {sel.name !== sel.handle && `${sel.name} · `}@{sel.handle}
-              </span>
-              <a href={`https://x.com/${sel.handle}`} target="_blank" rel="noreferrer noopener">
-                Open on X
-              </a>
-            </div>
-            <XTimeline key={sel.handle} handle={sel.handle} onState={onState} />
-          </>
-        ) : (
-          <div className={c.empty}>
-            <p>No one on the list.</p>
-            <span>Add an X handle on the left to follow it here.</span>
+        </form>
+      )}
+      {sel ? (
+        <>
+          <div className={c.who}>
+            <span className={c.whoFace} style={{ "--h": hue(sel.handle) } as CSSProperties} aria-hidden="true">
+              {mono(sel.name)}
+            </span>
+            <span className={c.whoName}>
+              <b>{sel.name}</b>
+              <em>@{sel.handle}</em>
+            </span>
+            <a href={`https://x.com/${sel.handle}`} target="_blank" rel="noreferrer noopener">
+              Open on X
+            </a>
+            <button type="button" onClick={() => removeAccount(sel.handle)} aria-label={`Stop following @${sel.handle}`}>
+              Remove
+            </button>
           </div>
-        )}
-      </div>
+          <XTimeline key={sel.handle} handle={sel.handle} onState={onState} />
+        </>
+      ) : (
+        <div className={c.empty}>
+          <p>No one on the list.</p>
+          <span>Add an X handle with the plus to follow it here.</span>
+        </div>
+      )}
     </div>
   );
 }
 
 /* ------------------------------------------------------------------ */
-/* the wire: headlines                                                 */
+/* news                                                                */
 /* ------------------------------------------------------------------ */
 
-function WirePanel({ feed, now }: { feed: FeedState<Wire>; now: number }) {
+function Thumb({ item }: { item: WireItem }) {
+  const [bad, setBad] = useState(false);
+  if (item.image && !bad)
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img className={c.thumb} src={item.image} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" onError={() => setBad(true)} />
+    );
+  return (
+    <span className={`${c.thumb} ${c.thumbMono}`} style={{ "--h": hue(item.source) } as CSSProperties} aria-hidden="true">
+      {mono(item.source)}
+    </span>
+  );
+}
+
+export function News({ feed, now }: { feed: FeedState<Wire>; now: number }) {
   const items = feed.data?.items ?? [];
   const today = dayKey(now);
   if (!items.length)
@@ -235,22 +273,25 @@ function WirePanel({ feed, now }: { feed: FeedState<Wire>; now: number }) {
           </>
         ) : (
           <>
-            <p>The wire is quiet.</p>
+            <p>No headlines right now.</p>
             <span>Headlines come straight from publishers&apos; own feeds and refresh every minute.</span>
           </>
         )}
       </div>
     );
   return (
-    <ol className={`${c.scroll} ${c.wire}`}>
+    <ol className={`${c.scroll} ${c.news}`}>
       {items.map((x) => (
         <li key={x.id} data-fresh={now - x.at < 12 * 60_000 ? "" : undefined}>
-          <span className={c.wMeta}>
-            <time dateTime={new Date(x.at).toISOString()}>{dayKey(x.at) === today ? clock(x.at) : ago(x.at, now)}</time>
-            <em>{x.source}</em>
-          </span>
           <a href={x.url} target="_blank" rel="noreferrer noopener">
-            {x.title}
+            <span className={c.newsText}>
+              <span className={c.wMeta}>
+                <time dateTime={new Date(x.at).toISOString()}>{dayKey(x.at) === today ? clock(x.at) : ago(x.at, now)}</time>
+                <em>{x.source}</em>
+              </span>
+              <b>{x.title}</b>
+            </span>
+            <Thumb item={x} />
           </a>
         </li>
       ))}
@@ -259,11 +300,14 @@ function WirePanel({ feed, now }: { feed: FeedState<Wire>; now: number }) {
 }
 
 /* ------------------------------------------------------------------ */
-/* the calendar: this week's releases                                  */
+/* calendar: a list and a week, taking turns                           */
 /* ------------------------------------------------------------------ */
 
 const SRC = { BLS: "Bureau of Labor Statistics", BEA: "Bureau of Economic Analysis", Fed: "Federal Reserve" } as const;
 const DAY_LONG = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "long", month: "short", day: "numeric" });
+const WD = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "short" });
+const DN = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", day: "numeric" });
+const CYCLE_MS = 7000;
 
 function until(ms: number): string {
   const m = Math.max(0, Math.round(ms / 60_000));
@@ -283,12 +327,43 @@ function Pips({ n }: { n: number }) {
   );
 }
 
-function CalendarPanel({ feed, now }: { feed: FeedState<Calendar>; now: number }) {
+/** The next five weekdays, from today (or Monday, at a weekend). */
+function weekdays(now: number): { key: string; at: number }[] {
+  const out: { key: string; at: number }[] = [];
+  for (let d = 0; out.length < 5 && d < 10; d++) {
+    const at = now + d * 86_400_000;
+    const w = WD.format(at);
+    if (w === "Sat" || w === "Sun") continue;
+    out.push({ key: dayKey(at), at });
+  }
+  return out;
+}
+
+export function CalendarCard({ feed, now }: { feed: FeedState<Calendar>; now: number }) {
   const keyOnly = useWatch((s) => s.keyOnly);
+  const [view, setView] = useState<"list" | "week">("list");
+  const [held, setHeld] = useState(false);
+  const [lap, setLap] = useState(0);
   const all = feed.data?.events ?? [];
   const today = dayKey(now);
   const events = useMemo(() => all.filter((e) => (!keyOnly || e.impact >= 2) && dayKey(e.at) >= today), [all, keyOnly, today]);
   const next = events.find((e) => e.at > now && e.impact >= 2 && !e.allDay) ?? events.find((e) => e.at > now);
+
+  // the two views take turns every seven seconds; a hand on the panel holds it still
+  const reduce = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  useEffect(() => {
+    if (held || reduce || !events.length) return;
+    const id = window.setTimeout(() => {
+      setView((v) => (v === "list" ? "week" : "list"));
+      setLap((n) => n + 1);
+    }, CYCLE_MS);
+    return () => window.clearTimeout(id);
+  }, [view, held, reduce, events.length, lap]);
+  const choose = useCallback((v: "list" | "week") => {
+    setView(v);
+    setLap((n) => n + 1);
+  }, []);
+
   const groups = useMemo(() => {
     const out: { key: string; label: string; rows: CalEvent[] }[] = [];
     for (const e of events) {
@@ -299,59 +374,106 @@ function CalendarPanel({ feed, now }: { feed: FeedState<Calendar>; now: number }
     }
     return out;
   }, [events, today]);
+  const days = useMemo(() => weekdays(now), [now]);
 
-  if (!all.length)
-    return (
-      <div className={c.empty}>
-        {feed.state === "loading" ? (
-          <>
-            <i className={c.skel} />
-            <i className={c.skel} />
-            <i className={c.skel} />
-          </>
-        ) : (
-          <>
-            <p>No calendar right now.</p>
-            <span>Releases and Fed events load from the agencies&apos; own calendars and refresh through the day.</span>
-          </>
-        )}
-      </div>
-    );
   return (
-    <div className={c.cal}>
-      {next && (
-        <div className={c.next}>
-          <span className={c.nextWhen}>
-            Next <b>{until(next.at - now)}</b>
-          </span>
-          <strong>{next.title}</strong>
-          <span className={c.nextMeta}>
-            <Pips n={next.impact} />
-            {SRC[next.src]} · {dayKey(next.at) === today ? "today" : DAY_LONG.format(next.at)}
-            {!next.allDay && ` ${clock(next.at)} ET`}
-          </span>
-        </div>
-      )}
-      <div className={`${c.scroll} ${c.calList}`}>
-        {groups.map((g) => (
-          <section key={g.key}>
-            <h4>{g.label}</h4>
-            <ul>
-              {g.rows.map((e) => (
-                <li key={e.id} data-past={e.at < now ? "" : undefined} data-next={e === next ? "" : undefined}>
-                  <time>{e.allDay ? "Day" : clock(e.at)}</time>
-                  <Pips n={e.impact} />
-                  <span className={c.calTitle} title={e.title}>
-                    {e.title}
-                  </span>
-                  <span className={c.calNums}>{e.src}</span>
-                </li>
-              ))}
-            </ul>
-          </section>
-        ))}
-        {!events.length && <p className={c.none}>{keyOnly ? "No key releases in the next ten days. Switch to All for the rest." : "Nothing scheduled in the next ten days."}</p>}
+    <div className={c.cal} onPointerEnter={() => setHeld(true)} onPointerLeave={() => setHeld(false)} onFocus={() => setHeld(true)} onBlur={() => setHeld(false)}>
+      <div className={c.calBar}>
+        <span className={c.views} role="tablist" aria-label="Calendar view">
+          {(["list", "week"] as const).map((v) => (
+            <button key={v} type="button" role="tab" aria-selected={view === v} onClick={() => choose(v)}>
+              {v === "list" ? "List" : "Week"}
+              {view === v && !held && !reduce && <i key={lap} className={c.lapBar} style={{ animationDuration: `${CYCLE_MS}ms` }} aria-hidden="true" />}
+            </button>
+          ))}
+        </span>
+        <span className={c.calToggle} role="group" aria-label="Which releases">
+          <button type="button" aria-pressed={keyOnly} onClick={() => useWatch.setState({ keyOnly: true })}>
+            Key
+          </button>
+          <button type="button" aria-pressed={!keyOnly} onClick={() => useWatch.setState({ keyOnly: false })}>
+            All
+          </button>
+        </span>
       </div>
+      {!all.length ? (
+        <div className={c.empty}>
+          {feed.state === "loading" ? (
+            <>
+              <i className={c.skel} />
+              <i className={c.skel} />
+              <i className={c.skel} />
+            </>
+          ) : (
+            <>
+              <p>No calendar right now.</p>
+              <span>Releases and Fed events load from the agencies&apos; own calendars and refresh through the day.</span>
+            </>
+          )}
+        </div>
+      ) : (
+        <>
+          {next && (
+            <div className={c.next}>
+              <span className={c.nextWhen}>
+                Next <b>{until(next.at - now)}</b>
+              </span>
+              <strong>{next.title}</strong>
+              <span className={c.nextMeta}>
+                <Pips n={next.impact} />
+                {SRC[next.src]} · {dayKey(next.at) === today ? "today" : DAY_LONG.format(next.at)}
+                {!next.allDay && ` ${clock(next.at)} ET`}
+              </span>
+            </div>
+          )}
+          <div className={c.calStage}>
+            <div className={`${c.scroll} ${c.calList}`} data-on={view === "list" ? "" : undefined} aria-hidden={view !== "list"} inert={view !== "list"}>
+              {groups.map((g) => (
+                <section key={g.key}>
+                  <h4>{g.label}</h4>
+                  <ul>
+                    {g.rows.map((e) => (
+                      <li key={e.id} data-past={e.at < now ? "" : undefined} data-next={e === next ? "" : undefined}>
+                        <time>{e.allDay ? "Day" : clock(e.at)}</time>
+                        <Pips n={e.impact} />
+                        <span className={c.calTitle} title={e.title}>
+                          {e.title}
+                        </span>
+                        <span className={c.calSrc}>{e.src}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              ))}
+              {!events.length && <p className={c.none}>{keyOnly ? "No key releases in the next ten days. Switch to All for the rest." : "Nothing scheduled in the next ten days."}</p>}
+            </div>
+            <div className={c.week} data-on={view === "week" ? "" : undefined} aria-hidden={view !== "week"} inert={view !== "week"}>
+              {days.map((d) => {
+                const rows = events.filter((e) => dayKey(e.at) === d.key);
+                const shown = rows.slice(0, 5);
+                return (
+                  <div key={d.key} className={c.day} data-today={d.key === today ? "" : undefined}>
+                    <header>
+                      <span>{WD.format(d.at)}</span>
+                      <b>{DN.format(d.at)}</b>
+                    </header>
+                    <ul>
+                      {shown.map((e) => (
+                        <li key={e.id} data-n={e.impact} data-past={e.at < now ? "" : undefined} title={`${e.title} · ${SRC[e.src]}`}>
+                          <time>{e.allDay ? "Day" : clock(e.at).replace(/ (AM|PM)$/, (m) => m.trim().toLowerCase().slice(0, 1))}</time>
+                          <span>{e.title}</span>
+                        </li>
+                      ))}
+                    </ul>
+                    {rows.length > shown.length && <em>+{rows.length - shown.length} more</em>}
+                    {!rows.length && <em>Nothing</em>}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -481,7 +603,7 @@ function Market({ under, s, marks, hot }: { under: Under; s: Session | null; mar
   );
 }
 
-function MovesPanel({ now }: { now: number }) {
+export function Moves({ now }: { now: number }) {
   const ready = useDesk((st) => st.ready);
   const [state, setState] = useState<{ sessions: Partial<Record<Under, Session>>; moves: Move[] }>({ sessions: {}, moves: [] });
   const [hot, setHot] = useState<string | null>(null);
@@ -526,73 +648,5 @@ function MovesPanel({ now }: { now: number }) {
         {!state.moves.length && <li className={c.none}>The session is just getting going.</li>}
       </ol>
     </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/* the watcher                                                         */
-/* ------------------------------------------------------------------ */
-
-function Light({ name, state, at, now }: { name: string; state: "ok" | "quiet" | "loading"; at: number; now: number }) {
-  return (
-    <span className={c.light} data-state={state}>
-      <i />
-      {name}
-      {state === "ok" && at > 0 && <em>{ago(at, now)}</em>}
-    </span>
-  );
-}
-
-export function Watcher() {
-  useEffect(() => startWatch(), []);
-  const [voice, setVoice] = useState<VoiceState>("loading");
-  const wire = useFeed<Wire>("/api/watch/wire", 60_000);
-  const cal = useFeed<Calendar>("/api/watch/calendar", 15 * 60_000);
-  const now = useNow(15_000);
-  const lit = <T,>(f: FeedState<T>, has: boolean) => (f.state === "loading" ? "loading" : has ? "ok" : "quiet");
-
-  return (
-    <>
-      <Cell i={4} className={c.aBand} bodyClass={c.band}>
-        <div>
-          <h2>Altron Watcher</h2>
-          <p>What can move the tape: who is posting, what just crossed the wire, what is due, and what price has already done.</p>
-        </div>
-        <div className={c.lights}>
-          <Light name="Voices" state={voice} at={0} now={now} />
-          <Light name="Wire" state={lit(wire, !!wire.data?.items.length)} at={wire.at} now={now} />
-          <Light name="Calendar" state={lit(cal, !!cal.data?.events.length)} at={cal.at} now={now} />
-          <Light name="Moves" state="ok" at={0} now={now} />
-        </div>
-      </Cell>
-      <section className={c.watch} aria-label="Altron Watcher">
-        <Cell i={5} className={c.aVoices} label="Voices" aside="Posts on X" bodyClass={c.bodyTall}>
-          <VoicesPanel onState={setVoice} />
-        </Cell>
-        <Cell i={6} className={c.aWire} label="Wire" aside="Breaking" bodyClass={c.bodyTall}>
-          <WirePanel feed={wire} now={now} />
-        </Cell>
-        <Cell i={7} className={c.aCal} label="Calendar" aside={<CalToggle />} bodyClass={c.bodyTall}>
-          <CalendarPanel feed={cal} now={now} />
-        </Cell>
-      </section>
-      <Cell i={8} className={c.aMoves} label="Moves" aside="NQ and ES futures · this session" bodyClass={c.body}>
-        <MovesPanel now={now} />
-      </Cell>
-    </>
-  );
-}
-
-function CalToggle() {
-  const keyOnly = useWatch((s) => s.keyOnly);
-  return (
-    <span className={c.calToggle} role="group" aria-label="Which releases">
-      <button type="button" aria-pressed={keyOnly} onClick={() => useWatch.setState({ keyOnly: true })}>
-        Key
-      </button>
-      <button type="button" aria-pressed={!keyOnly} onClick={() => useWatch.setState({ keyOnly: false })}>
-        All
-      </button>
-    </span>
   );
 }

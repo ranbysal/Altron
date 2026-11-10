@@ -118,7 +118,7 @@ function PositionsTab() {
         {!open.length && (
           <tr>
             <td colSpan={9} className={s.none}>
-              Flat across all four markets.
+              No open positions. All four markets are closed.
             </td>
           </tr>
         )}
@@ -362,7 +362,7 @@ export function Blotter() {
             Cancel orders
           </button>
           <button type="button" className={s.flat} onClick={() => flatten()} disabled={!nPos && !nOrd}>
-            Flatten all
+            Close all
           </button>
           <button type="button" className={s.fold} aria-expanded={shown} onClick={() => toggleBlotter()} title="Put the blotter away" aria-label="Put the blotter away">
             <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">

@@ -326,6 +326,7 @@
 .symS { background: var(--ember); }
 
 .quote { display: flex; align-items: baseline; gap: 12px; min-width: 0; overflow: hidden; }
+.quote[hidden] { display: none; }
 .quotePx { font-size: 25px; font-weight: 300; letter-spacing: -0.025em; line-height: 1; color: var(--text-strong); font-variant-numeric: tabular-nums; }
 .quoteChg { display: inline-flex; gap: 8px; font-family: var(--mono); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .quoteChg span { opacity: 0.7; }
@@ -656,6 +657,7 @@
 .line_target { --lc: var(--blue); }
 .line_order { --lc: var(--muted); }
 .line_alert { --lc: var(--text-strong); }
+.line_exit { --lc: var(--text-strong); }
 .line_alert .lineTag { gap: 7px; }
 .line_alert .lineTag svg { color: var(--lc); }
 .liveVal[data-tone="pos"] { color: var(--pos); }
@@ -1484,7 +1486,9 @@
 }
 
 /* ---------- the chart as members see it (Community page) ---------- */
-.bar[data-viewer] :is(.barMk, .barPnl, .barKeys), .bar[data-viewer] .barRight > .barSep { display: none; }
+.bar[data-viewer] :is(.barMk, .barPnl, .barKeys, .barFull), .bar[data-viewer] .barRight > .barSep { display: none; }
+.bar[data-viewer] :is(.syms, .syms + .barSep) { display: none; }
+.bar[data-viewer] { padding-left: 16px; }
 .bar[data-viewer] .seg { margin-right: 4px; }
 .chart[data-viewer] :is(.railToggle, .ranges, .toastsInline, .lineNotify) { display: none; }
 .chart[data-viewer] .lineTag button { display: none; }

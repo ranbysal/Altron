@@ -121,7 +121,7 @@ export function PnlBody({ onLocked, compact = false }: { onLocked: () => void; c
         </button>
         {pos && (
           <button type="button" className={s.instFlat} onClick={() => (armed ? closePercent(sym, 1) : onLocked())}>
-            <span>Flat</span>
+            <span>Close</span>
           </button>
         )}
       </div>
