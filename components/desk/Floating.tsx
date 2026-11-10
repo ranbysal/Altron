@@ -5,11 +5,10 @@ import { createRoot, type Root } from "react-dom/client";
 import { create } from "zustand";
 import { fmt, money } from "@/lib/format";
 import { INSTRUMENTS, type Sym } from "@/lib/desk/instruments";
-import { arm, closePercent, disarm, instant, keepArmed, openPnl, setSettings, toggleNotes, togglePanel, useDesk, type Side } from "@/lib/desk/store";
+import { arm, closePercent, disarm, instant, keepArmed, openPnl, setSettings, togglePanel, useDesk, type Side } from "@/lib/desk/store";
 import { onThemeChange } from "@/lib/theme";
 import { Odometer } from "@/components/trader/parts";
 import t from "@/components/trader/trader.module.css";
-import { Thread } from "./Thread";
 import s from "./desk.module.css";
 
 type Which = "pnl" | "notes";
@@ -87,7 +86,8 @@ export function PnlBody({ onLocked, compact = false }: { onLocked: () => void; c
     <div className={`${s.pnl} ${armed ? s.isArmed : s.isLocked} ${compact ? s.instCompact : ""}`}>
       {pos ? (
         <>
-          <Odometer value={money(open)} className={`${s.pnlBig} ${open >= 0 ? s.pos : s.neg}`} delay={0} />
+          {/* the P&L changes in place, digit for digit, like the blotter's */}
+          <span className={`${s.pnlBig} ${s.pnlLive} ${open >= 0 ? s.pos : s.neg}`}>{money(open)}</span>
           <div className={s.pnlSub}>
             <span className={`${s.side} ${pos.qty > 0 ? s.sideL : s.sideS}`}>{pos.qty > 0 ? "Long" : "Short"}</span>
             <span>
@@ -368,20 +368,12 @@ function Floating({ id, title, children, nudge, onClose, extra }: { id: Which; t
 export function FloatLayer() {
   const ready = useDesk((st) => st.ready);
   const pnl = useDesk((st) => st.settings.panels.pnl);
-  const notesOpen = useDesk((st) => st.notesOpen);
   const pipOpen = usePip((st) => st.open);
   const [nudge, setNudge] = useState(0);
   const locked = useCallback(() => setNudge((n) => n + 1), []);
   if (!ready) return null;
   return (
     <div className={s.floatLayer}>
-      {notesOpen && (
-        <Floating id="notes" title="Notes" onClose={() => toggleNotes(false)} extra={<span className={s.members}>Members see these</span>}>
-          <div className={s.notesBody}>
-            <Thread autoFocus />
-          </div>
-        </Floating>
-      )}
       {pnl && !pipOpen && (
         <Floating id="pnl" title="Live P&L" nudge={nudge} onClose={() => togglePanel("pnl", false)}>
           <PnlBody onLocked={locked} />

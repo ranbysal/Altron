@@ -1,9 +1,29 @@
 "use client";
 
-import { useEffect, useState, type CSSProperties } from "react";
-import { fmt } from "@/lib/format";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useShallow } from "zustand/react/shallow";
+import { fmt, money } from "@/lib/format";
 import { DAY_MARGIN, INSTRUMENTS, snap, tickValue } from "@/lib/desk/instruments";
-import { ACCOUNT, openPnl, placeOrder, setPick, setPreview, setSettings, setTicket, useDesk, type OrderType, type Side } from "@/lib/desk/store";
+import {
+  ACCOUNT,
+  EXIT_UNITS,
+  openPnl,
+  sendTicket,
+  setExitUnits,
+  setExitValue,
+  setPick,
+  setPreview,
+  setSettings,
+  setTicket,
+  sizeWords,
+  ticketEntry,
+  ticketExits,
+  ticketProblem,
+  useDesk,
+  type ExitUnit,
+  type OrderType,
+  type Side,
+} from "@/lib/desk/store";
 import { Odometer } from "@/components/trader/parts";
 import { BAYER4 } from "@/lib/noise";
 import s from "./desk.module.css";
@@ -33,12 +53,10 @@ function dither(): string {
   return ditherUrl;
 }
 
-const TYPES: { id: OrderType; label: string; name: string }[] = [
-  { id: "MKT", label: "Mkt", name: "Market" },
-  { id: "LMT", label: "Lmt", name: "Limit" },
-  { id: "STP", label: "Stp", name: "Stop" },
-  { id: "STPLMT", label: "Stp lmt", name: "Stop limit" },
-  { id: "TRAIL", label: "Trail", name: "Trailing stop" },
+const TYPES: { id: OrderType; label: string }[] = [
+  { id: "MKT", label: "Market" },
+  { id: "LMT", label: "Limit" },
+  { id: "STP", label: "Stop" },
 ];
 
 /** A number with a minus and a plus either side. Typing works; arrow keys step. */
@@ -103,91 +121,274 @@ function PickBtn({ on, onClick }: { on: boolean; onClick: () => void }) {
   );
 }
 
+/** A number field that's typed into freely and committed on Enter or blur; arrows step it. */
+function NumField({ value, text, onCommit, step, label, disabled, invalid }: { value: number; text: string; onCommit: (v: number) => void; step: number; label: string; disabled?: boolean; invalid?: boolean }) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const commit = () => {
+    if (draft === null) return;
+    const v = parseFloat(draft.replace(/[,$\s]/g, "").replace(/^[+−-]/, (m) => (m === "−" ? "-" : m)));
+    if (Number.isFinite(v)) onCommit(v);
+    setDraft(null);
+  };
+  return (
+    <input
+      className={s.numIn}
+      aria-label={label}
+      aria-invalid={invalid || undefined}
+      inputMode="decimal"
+      disabled={disabled}
+      value={draft ?? text}
+      onFocus={(e) => {
+        setDraft(text);
+        e.currentTarget.select();
+      }}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") e.currentTarget.blur();
+        if (e.key === "Escape") {
+          setDraft(null);
+          e.currentTarget.blur();
+        }
+        if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+          e.preventDefault();
+          setDraft(null);
+          onCommit(+(value + (e.key === "ArrowUp" ? step : -step)).toFixed(6));
+        }
+      }}
+    />
+  );
+}
+
+const SwapIcon = () => (
+  <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M3 5.5h10M10.5 3 13 5.5 10.5 8M13 10.5H3M5.5 8 3 10.5 5.5 13" />
+  </svg>
+);
+const Caret = () => (
+  <svg width="8" height="8" viewBox="0 0 10 10" aria-hidden="true">
+    <path d="M2 3.8l3 3 3-3" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+/** A stop loss or take profit: on or off, typed in one unit, read back in another. */
+function ExitRow({ which, entry, price }: { which: "stop" | "target"; entry: number; price: number | null }) {
+  const sym = useDesk((st) => st.settings.sym);
+  const on = useDesk((st) => (which === "stop" ? st.settings.stopOn : st.settings.targetOn));
+  const units = useDesk((st) => st.settings.exitUnits[which]);
+  const qty = useDesk((st) => st.settings.qty[st.settings.sym]);
+  const inst = INSTRUMENTS[sym];
+  const tv = tickValue(sym);
+  const [main, alt] = units;
+  const dist = price === null ? 0 : Math.abs(price - entry);
+  const ticks = Math.round(dist / inst.tick);
+  const sign = which === "stop" ? -1 : 1;
+  const valueIn = (u: ExitUnit) => (u === "price" ? (price ?? entry) : u === "ticks" ? ticks : u === "pts" ? dist : ticks * tv * qty);
+  const textIn = (u: ExitUnit) => (u === "price" ? fmt(price ?? entry) : u === "ticks" ? String(ticks) : u === "pts" ? dist.toFixed(2) : (ticks * tv * qty).toFixed(2));
+  const readback = (u: ExitUnit) =>
+    u === "price" ? fmt(price ?? entry) : u === "ticks" ? `${ticks} ticks` : u === "pts" ? `${dist.toFixed(2)} pts` : money(sign * ticks * tv * qty);
+  const step = main === "price" ? inst.tick : main === "ticks" ? 1 : main === "pts" ? inst.tick : tv * qty;
+  const name = which === "stop" ? "Stop loss" : "Take profit";
+  const unitLabel = (u: ExitUnit) => EXIT_UNITS.find((x) => x.id === u)!.label;
+  return (
+    <div className={s.exit} data-off={on ? undefined : ""} data-kind={which}>
+      <div className={s.exitHead}>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={on}
+          className={s.miniSwitch}
+          aria-label={`Attach a ${name.toLowerCase()}`}
+          onClick={() => setSettings(which === "stop" ? { stopOn: !on } : { targetOn: !on })}
+        />
+        <span className={s.exitName}>{name}</span>
+        <label className={s.unitPick}>
+          {unitLabel(main)}
+          <Caret />
+          <select aria-label={`${name}: type it in`} value={main} onChange={(e) => {
+            const u = e.target.value as ExitUnit;
+            setExitUnits(which, [u, u === alt ? main : alt]);
+          }}>
+            {EXIT_UNITS.map((u) => (
+              <option key={u.id} value={u.id}>
+                {u.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <div className={s.exitField}>
+        <NumField
+          label={`${name} in ${unitLabel(main).toLowerCase()}`}
+          value={valueIn(main)}
+          text={textIn(main)}
+          step={step}
+          disabled={!on}
+          onCommit={(v) => setExitValue(which, main, v)}
+        />
+        {main !== "price" && <span className={s.numUnit}>{main === "ticks" ? "ticks" : main === "pts" ? "pts" : "USD"}</span>}
+        <button type="button" className={s.swapBtn} disabled={!on} onClick={() => setExitUnits(which, [alt, main])} aria-label={`Type the ${name.toLowerCase()} in ${unitLabel(alt).toLowerCase()} instead`} title="Swap">
+          <SwapIcon />
+        </button>
+        <label className={`${s.altPick} ${main !== "price" ? "" : which === "stop" ? s.neg : s.pos}`}>
+          <span>{readback(alt)}</span>
+          <Caret />
+          <select aria-label={`${name}: read back as`} value={alt} disabled={!on} onChange={(e) => setExitUnits(which, [main, e.target.value as ExitUnit])}>
+            {EXIT_UNITS.filter((u) => u.id !== main).map((u) => (
+              <option key={u.id} value={u.id}>
+                {u.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+    </div>
+  );
+}
+
+const Bell = () => (
+  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M4 11V7.2a4 4 0 0 1 8 0V11l1.3 1.5H2.7z" />
+    <path d="M6.6 14.2a1.6 1.6 0 0 0 2.8 0" />
+  </svg>
+);
+
+/** Before the order goes, a note for members to read with it. */
+function NotifyPop({ onClose }: { onClose: () => void }) {
+  const sym = useDesk((st) => st.settings.sym);
+  const t = useDesk((st) => st.ticket);
+  const qty = useDesk((st) => st.settings.qty[st.settings.sym]);
+  const entry = useDesk((st) => ticketEntry(st, st.settings.sym));
+  const [stop, target] = useDesk(useShallow((st) => { const e = ticketExits(st, st.settings.sym); return [e.stop, e.target]; }));
+  const problem = useDesk((st) => ticketProblem(st, st.settings.sym));
+  const [note, setNote] = useState("");
+  const area = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    const id = requestAnimationFrame(() => area.current?.focus());
+    const key = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopImmediatePropagation();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", key, true);
+    return () => {
+      cancelAnimationFrame(id);
+      window.removeEventListener("keydown", key, true);
+    };
+  }, [onClose]);
+  const verb = t.side > 0 ? "Buy" : "Sell";
+  const go = () => {
+    if (problem) return;
+    sendTicket({ note });
+    onClose();
+  };
+  const exits = [stop !== null ? `Stop ${fmt(stop)}` : "", target !== null ? `Target ${fmt(target)}` : ""].filter(Boolean).join(" · ");
+  return (
+    <div className={s.notifyPop} role="dialog" aria-label="Notify members">
+      <header>
+        <span className={s.label}>Notify members</span>
+        <button type="button" className={s.keysX} onClick={onClose} aria-label="Close">
+          ×
+        </button>
+      </header>
+      <div className={s.notifyCard}>
+        <b>
+          {verb} {sizeWords(sym, qty)} {t.type === "MKT" ? "at market" : `${t.type === "LMT" ? "limit" : "stop"} @ ${fmt(entry)}`}
+        </b>
+        <span>{exits || "No stop or target"}</span>
+        <em>Sent with the time, to the second</em>
+      </div>
+      <textarea
+        ref={area}
+        value={note}
+        onChange={(e) => setNote(e.target.value)}
+        placeholder="Add a note for members (optional)"
+        maxLength={600}
+        rows={3}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) go();
+        }}
+      />
+      <button type="button" className={`${s.send} ${t.side > 0 ? s.sendBuy : s.sendSell}`} disabled={!!problem} onClick={go}>
+        <b>{verb} and notify</b>
+        <span>{problem ?? (typeof navigator !== "undefined" && /Mac|iP/.test(navigator.platform) ? "⌘ Enter" : "Ctrl Enter")}</span>
+      </button>
+    </div>
+  );
+}
+
 export function Ticket() {
   const sym = useDesk((st) => st.settings.sym);
   const settings = useDesk((st) => st.settings);
   const ticket = useDesk((st) => st.ticket);
   const quote = useDesk((st) => st.quotes[sym]);
   const pick = useDesk((st) => st.pick);
+  const positions = useDesk((st) => st.positions);
+  const trades = useDesk((st) => st.trades);
+  const quotes = useDesk((st) => st.quotes);
+  const entry = useDesk((st) => ticketEntry(st, st.settings.sym));
+  const [stopPx, targetPx] = useDesk(useShallow((st) => { const e = ticketExits(st, st.settings.sym); return [e.stop, e.target]; }));
+  const problem = useDesk((st) => ticketProblem(st, st.settings.sym));
   const inst = INSTRUMENTS[sym];
   const qty = settings.qty[sym];
   const sizes = inst.micro ? settings.sizes.micro : settings.sizes.mini;
   const tv = tickValue(sym);
   const t = ticket.type;
+  const side = ticket.side;
   const [tex, setTex] = useState<string | null>(null);
+  const [notify, setNotify] = useState(false);
   useEffect(() => setTex(dither()), []);
+  useEffect(() => setNotify(false), [sym]);
 
+  // a fresh price each time: resting on its own side of the market
   const setType = (type: OrderType) => {
-    const last = quote.last;
     setPick(null);
-    setTicket({
-      type,
-      limit: type === "LMT" || type === "STPLMT" ? ticket.limit ?? snap(sym, last) : ticket.limit,
-      stop: type === "STP" || type === "STPLMT" ? ticket.stop ?? snap(sym, last + 10 * inst.tick) : ticket.stop,
-    });
+    const tk = inst.tick;
+    if (type === "LMT") setTicket({ type, limit: snap(sym, side > 0 ? quote.bid - 4 * tk : quote.ask + 4 * tk) });
+    else if (type === "STP") setTicket({ type, stop: snap(sym, side > 0 ? quote.ask + 10 * tk : quote.bid - 10 * tk) });
+    else setTicket({ type });
   };
 
-  const send = (side: Side) => {
-    const base = { sym, side, qty, bracket: true };
-    if (t === "MKT") placeOrder({ ...base, type: "MKT" });
-    else if (t === "LMT" && ticket.limit !== null) placeOrder({ ...base, type: "LMT", limit: ticket.limit });
-    else if (t === "STP" && ticket.stop !== null) placeOrder({ ...base, type: "STP", stop: ticket.stop });
-    else if (t === "STPLMT" && ticket.stop !== null && ticket.limit !== null) placeOrder({ ...base, type: "STPLMT", stop: ticket.stop, limit: ticket.limit });
-    else if (t === "TRAIL") placeOrder({ ...base, type: "TRAIL", trail: ticket.trail });
+  // turning the ticket round: a working price that would now fill at once is mirrored across the market
+  const setSide = (next: Side) => {
+    if (next === side) return;
+    const mid = (quote.bid + quote.ask) / 2;
+    const flip = (p: number | null) => (p === null ? p : snap(sym, 2 * mid - p));
+    const patch: Partial<typeof ticket> = { side: next, stopPx: null, targetPx: null, pxSym: null };
+    if (t === "LMT" && ticket.limit !== null && (next > 0 ? ticket.limit >= quote.ask : ticket.limit <= quote.bid)) patch.limit = flip(ticket.limit);
+    if (t === "STP" && ticket.stop !== null && (next > 0 ? ticket.stop <= quote.ask : ticket.stop >= quote.bid)) patch.stop = flip(ticket.stop);
+    setTicket(patch);
   };
 
-  const priceFor = (side: Side) => {
-    if (t === "MKT") return side > 0 ? quote.ask : quote.bid;
-    if (t === "LMT") return ticket.limit ?? quote.last;
-    if (t === "STP" || t === "STPLMT") return ticket.stop ?? quote.last;
-    return side > 0 ? quote.ask + ticket.trail : quote.bid - ticket.trail;
-  };
-  const verb = t === "MKT" ? "" : t === "LMT" ? "limit" : t === "STP" ? "stop" : t === "STPLMT" ? "stop lmt" : "trail";
-
-  const stopT = settings.stopTicks[sym];
-  const tgtT = settings.targetTicks[sym];
-  const risk = stopT * tv * qty;
-  const reward = tgtT * tv * qty;
   const ti = TYPES.findIndex((x) => x.id === t);
-  const preview = useDesk((st) => st.preview);
-  const positions = useDesk((st) => st.positions);
-  const trades = useDesk((st) => st.trades);
-  const quotes = useDesk((st) => st.quotes);
-  const unit = settings.unit;
-
-  // what the order would tie up, as on a broker's ticket
-  const notional = quote.last * inst.pv * qty;
+  const notional = entry * inst.pv * qty;
   const used = Object.values(positions).reduce((a, p) => a + (p ? Math.abs(p.qty) * DAY_MARGIN[p.sym] : 0), 0);
   const equity = ACCOUNT.start + trades.reduce((a, x) => a + x.pnl, 0) + openPnl({ positions, quotes });
   const avail = equity - used;
+  const rr = stopPx !== null && targetPx !== null && Math.abs(entry - stopPx) > 0 ? Math.abs(targetPx - entry) / Math.abs(entry - stopPx) : null;
 
-  // bracket distances in the chosen unit; stored as ticks
-  const perTick = { t: 1, pts: inst.tick, $: tv * qty }[unit];
-  const toTicks = (v: number) => Math.max(1, Math.round(v / perTick));
-  const shown = (ticks: number) => +(ticks * perTick).toFixed(2);
-  const stepOf = { t: 4, pts: 4 * inst.tick, $: 4 * tv * qty }[unit];
-  const entryFor = (side: Side) => (side > 0 ? quote.ask : quote.bid);
-  const hover = (side: 0 | Side) => ({
-    onMouseEnter: () => setPreview(side),
+  const touch = side > 0 ? quote.ask : quote.bid;
+  const off = Math.round((entry - touch) / inst.tick);
+  const priceBad = t === "STP" && problem !== null && /stop goes/.test(problem);
+  const hover = (h: 0 | Side) => ({
+    onMouseEnter: () => setPreview(h),
     onMouseLeave: () => setPreview(0),
-    onFocus: () => setPreview(side),
+    onFocus: () => setPreview(h),
     onBlur: () => setPreview(0),
   });
+  const what = t === "MKT" ? `${qty} ${inst.code} market` : `${qty} ${inst.code} @ ${fmt(entry)} ${t === "LMT" ? "limit" : "stop"}`;
 
   return (
     <div className={s.ticket}>
       <div className={s.deal} style={tex ? ({ "--dither": `url(${tex})` } as CSSProperties) : undefined}>
-        <button type="button" className={`${s.dealBtn} ${s.dealSell}`} onClick={() => send(-1)} disabled={!quote.last} {...hover(-1)}>
-          <span className={s.dealTop}>
-            Sell<em>{verb}</em>
-          </span>
-          <Odometer value={fmt(priceFor(-1))} className={s.dealPx} delay={0} />
+        <button type="button" className={`${s.dealBtn} ${s.dealSell}`} aria-pressed={side < 0} onClick={() => setSide(-1)} disabled={!quote.last} {...hover(-1)} aria-label="Sell side">
+          <span className={s.dealTop}>Sell</span>
+          <Odometer value={fmt(quote.bid)} className={s.dealPx} delay={0} />
         </button>
-        <button type="button" className={`${s.dealBtn} ${s.dealBuy}`} onClick={() => send(1)} disabled={!quote.last} {...hover(1)}>
-          <span className={s.dealTop}>
-            Buy<em>{verb}</em>
-          </span>
-          <Odometer value={fmt(priceFor(1))} className={s.dealPx} delay={0} />
+        <button type="button" className={`${s.dealBtn} ${s.dealBuy}`} aria-pressed={side > 0} onClick={() => setSide(1)} disabled={!quote.last} {...hover(1)} aria-label="Buy side">
+          <span className={s.dealTop}>Buy</span>
+          <Odometer value={fmt(quote.ask)} className={s.dealPx} delay={0} />
         </button>
         <span className={s.spread}>{((quote.ask - quote.bid) / inst.tick).toFixed(0)} tick</span>
       </div>
@@ -195,11 +396,31 @@ export function Ticket() {
       <div className={s.types} role="tablist" aria-label="Order type" style={{ "--i": ti, "--n": TYPES.length } as CSSProperties}>
         <span className={s.typePill} aria-hidden="true" />
         {TYPES.map((x) => (
-          <button key={x.id} type="button" role="tab" aria-selected={x.id === t} title={x.name} onClick={() => setType(x.id)}>
+          <button key={x.id} type="button" role="tab" aria-selected={x.id === t} onClick={() => setType(x.id)}>
             {x.label}
           </button>
         ))}
       </div>
+
+      {t !== "MKT" && (
+        <div className={s.tRow}>
+          <span className={s.tLabel}>Price</span>
+          <div className={s.pxField} data-bad={priceBad ? "" : undefined}>
+            <NumField
+              label={t === "LMT" ? "Limit price" : "Stop price"}
+              value={entry}
+              text={fmt(entry)}
+              step={inst.tick}
+              invalid={priceBad}
+              onCommit={(v) => setTicket(t === "LMT" ? { limit: snap(sym, v) } : { stop: snap(sym, v) })}
+            />
+            <span className={s.pxRef} title={`Distance from the ${side > 0 ? "ask" : "bid"}, in ticks`}>
+              {side > 0 ? "Ask" : "Bid"} {off >= 0 ? "+" : "−"} {Math.abs(off)}
+            </span>
+          </div>
+          <PickBtn on={pick === (t === "LMT" ? "limit" : "stop")} onClick={() => setPick(pick ? null : t === "LMT" ? "limit" : "stop")} />
+        </div>
+      )}
 
       <div className={s.tRow}>
         <span className={s.tLabel}>Qty</span>
@@ -212,23 +433,6 @@ export function Ticket() {
           ))}
         </div>
       </div>
-
-      {t !== "MKT" && (
-        <div className={s.tRow} key={t}>
-          <span className={s.tLabel}>{t === "LMT" ? "Limit" : t === "STP" ? "Stop" : t === "STPLMT" ? "Stop" : "Trail"}</span>
-          {t === "LMT" && <Stepper label="Limit price" value={ticket.limit ?? quote.last} step={inst.tick} digits={2} onChange={(v) => setTicket({ limit: snap(sym, v) })} />}
-          {(t === "STP" || t === "STPLMT") && <Stepper label="Stop price" value={ticket.stop ?? quote.last} step={inst.tick} digits={2} onChange={(v) => setTicket({ stop: snap(sym, v) })} />}
-          {t === "TRAIL" && <Stepper label="Trail distance" value={ticket.trail} step={inst.tick * 4} min={inst.tick} digits={2} unit="pts" onChange={(v) => setTicket({ trail: Math.max(inst.tick, snap(sym, v)) })} />}
-          {t !== "TRAIL" && <PickBtn on={pick === (t === "LMT" ? "limit" : "stop")} onClick={() => setPick(pick ? null : t === "LMT" ? "limit" : "stop")} />}
-        </div>
-      )}
-      {t === "STPLMT" && (
-        <div className={s.tRow}>
-          <span className={s.tLabel}>Limit</span>
-          <Stepper label="Limit price" value={ticket.limit ?? quote.last} step={inst.tick} digits={2} onChange={(v) => setTicket({ limit: snap(sym, v) })} />
-          <span className={s.pickGap} aria-hidden="true" />
-        </div>
-      )}
 
       <dl className={s.facts}>
         <div>
@@ -249,70 +453,24 @@ export function Ticket() {
         </div>
       </dl>
 
-      <div className={s.bracket}>
+      <div className={s.exits}>
         <div className={s.bracketHead}>
           <span className={s.tLabel}>Exits</span>
-          {settings.stopOn && settings.targetOn && <span className={s.rr}>{(tgtT / stopT).toFixed(1)}R</span>}
-          <div className={s.units} role="group" aria-label="Enter exits in">
-            {(["t", "pts", "$"] as const).map((u) => (
-              <button key={u} type="button" aria-pressed={unit === u} onClick={() => setSettings({ unit: u })} title={u === "t" ? "Ticks" : u === "pts" ? "Points" : "Dollars at this size"}>
-                {u === "t" ? "Ticks" : u === "pts" ? "Pts" : "$"}
-              </button>
-            ))}
-          </div>
+          {rr !== null && <span className={s.rr}>{rr.toFixed(2)}R</span>}
         </div>
-        <div className={`${s.bRow} ${settings.stopOn ? "" : s.bOff}`}>
-          <button type="button" role="switch" aria-checked={settings.stopOn} className={`${s.bDot} ${s.bDotStop}`} onClick={() => setSettings({ stopOn: !settings.stopOn })} aria-label="Attach a stop loss" />
-          <span className={`${s.bName} ${s.neg}`}>Stop</span>
-          <Stepper
-            label="Stop distance"
-            value={shown(stopT)}
-            step={stepOf}
-            min={perTick}
-            digits={unit === "t" ? undefined : 2}
-            unit={unit === "t" ? "t" : undefined}
-            onChange={(v) => setSettings({ stopTicks: { ...settings.stopTicks, [sym]: toTicks(v) } })}
-          />
-          <span className={s.bVal}>
-            {preview ? (
-              <>
-                <em className={s.neg}>{fmt(entryFor(preview) - preview * stopT * inst.tick)}</em>
-                {preview > 0 ? "if bought" : "if sold"}
-              </>
-            ) : (
-              <>
-                <em className={s.neg}>−${fmt(risk, 0)}</em>
-                {unit === "pts" ? `${stopT} ticks` : `${fmt(stopT * inst.tick)} pts`}
-              </>
-            )}
-          </span>
-        </div>
-        <div className={`${s.bRow} ${settings.targetOn ? "" : s.bOff}`}>
-          <button type="button" role="switch" aria-checked={settings.targetOn} className={`${s.bDot} ${s.bDotTarget}`} onClick={() => setSettings({ targetOn: !settings.targetOn })} aria-label="Attach a take profit" />
-          <span className={`${s.bName} ${s.pos}`}>Target</span>
-          <Stepper
-            label="Target distance"
-            value={shown(tgtT)}
-            step={stepOf}
-            min={perTick}
-            digits={unit === "t" ? undefined : 2}
-            unit={unit === "t" ? "t" : undefined}
-            onChange={(v) => setSettings({ targetTicks: { ...settings.targetTicks, [sym]: toTicks(v) } })}
-          />
-          <span className={s.bVal}>
-            {preview ? (
-              <>
-                <em className={s.pos}>{fmt(entryFor(preview) + preview * tgtT * inst.tick)}</em>
-                {preview > 0 ? "if bought" : "if sold"}
-              </>
-            ) : (
-              <>
-                <em className={s.pos}>+${fmt(reward, 0)}</em>
-                {unit === "pts" ? `${tgtT} ticks` : `${fmt(tgtT * inst.tick)} pts`}
-              </>
-            )}
-          </span>
-        </div>
+        <ExitRow which="target" entry={entry} price={targetPx} />
+        <ExitRow which="stop" entry={entry} price={stopPx} />
+      </div>
+
+      <div className={s.sendRow}>
+        <button type="button" className={`${s.send} ${side > 0 ? s.sendBuy : s.sendSell}`} disabled={!!problem} onClick={() => sendTicket()} {...hover(t === "MKT" ? side : 0)}>
+          <b>{side > 0 ? "Buy" : "Sell"}</b>
+          <span>{problem ?? what}</span>
+        </button>
+        <button type="button" className={s.notifyBtn} aria-pressed={notify} aria-label="Send with a notification to members" title="Notify members" onClick={() => setNotify((n) => !n)}>
+          <Bell />
+        </button>
+        {notify && <NotifyPop onClose={() => setNotify(false)} />}
       </div>
     </div>
   );

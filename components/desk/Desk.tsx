@@ -5,7 +5,7 @@ import { useShallow } from "zustand/react/shallow";
 import { Cell } from "@/components/trader/parts";
 import t from "@/components/trader/trader.module.css";
 import { INSTRUMENTS, SYMS, TIMEFRAMES } from "@/lib/desk/instruments";
-import { ACCOUNT, cancelAll, flatten, placeOrder, resetPaper, selectSym, setPick, setSettings, showShortcuts, toggleBlotter, toggleFull, toggleNotes, togglePanel, useDesk } from "@/lib/desk/store";
+import { ACCOUNT, cancelAll, flatten, placeOrder, resetPaper, selectSym, setPick, setSettings, showShortcuts, toggleBlotter, toggleFull, togglePanel, useDesk } from "@/lib/desk/store";
 import { Blotter } from "./Blotter";
 import { Chart } from "./Chart";
 import { Position } from "./Position";
@@ -21,7 +21,6 @@ const KEYS: [string, string][] = [
   ["1 – 4", "Switch market"],
   ["T", "Next timeframe"],
   ["M", "Markets panel"],
-  ["N", "Notes (other keys pause while it's open)"],
   ["L", "Live P&L panel"],
   ["Shift F", "Full screen chart (Esc to leave)"],
   ["Del", "Remove the selected drawing"],
@@ -105,28 +104,18 @@ export function Desk() {
       if (k === "Escape") {
         if (st.pick) setPick(null);
         else if (st.shortcuts) showShortcuts(false);
-        else if (st.notesOpen) toggleNotes(false);
         else if (st.full) toggleFull(false);
         else if (st.settings.hotkeys) cancelAll(cur);
         return;
       }
       // Shift F is full screen, as on TradingView; it must never reach the flatten key
       if (k === "F" && e.shiftKey) {
-        if (!st.notesOpen) toggleFull();
+        toggleFull();
         return;
       }
       const lower = k.toLowerCase();
-      // with Notes open, a stray letter is far more likely to be a note than an order
-      if (st.notesOpen && lower !== "n") {
-        if (k.length === 1) e.preventDefault();
-        return;
-      }
       if (lower === "l") return togglePanel("pnl");
       if (lower === "m") return togglePanel("markets");
-      if (lower === "n") {
-        e.preventDefault();
-        return toggleNotes();
-      }
       if (lower === "t") {
         const i = TIMEFRAMES.findIndex((x) => x.id === st.settings.tf);
         return setSettings({ tf: TIMEFRAMES[(i + 1) % TIMEFRAMES.length].id });
