@@ -4,7 +4,7 @@ import { memo, useState, type CSSProperties } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { fmt, money } from "@/lib/format";
 import { DAY_MARGIN, INSTRUMENTS, SYMS, type Sym } from "@/lib/desk/instruments";
-import { ACCOUNT, cancelAll, cancelOrder, closePercent, dayStart, describe, flatten, openPnl, realizedSince, selectSym, setThread, toggleBlotter, toggleNotes, useDesk, type Trade } from "@/lib/desk/store";
+import { ACCOUNT, cancelAll, cancelOrder, closePercent, dayStart, describe, flatten, noticeText, openPnl, realizedSince, selectSym, toggleBlotter, useDesk, type Trade } from "@/lib/desk/store";
 import s from "./desk.module.css";
 
 /*
@@ -13,7 +13,7 @@ import s from "./desk.module.css";
  * fills and closed trades sit still between ticks.
  */
 
-type Tab = "positions" | "orders" | "fills" | "trades";
+type Tab = "positions" | "orders" | "fills" | "trades" | "notified";
 
 function clock(t: number): string {
   return new Date(t).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit", second: "2-digit" });
@@ -234,8 +234,6 @@ function TradeNumbers({ t }: { t: Trade }) {
 
 function TradesTab() {
   const trades = useDesk((st) => st.trades);
-  const notes = useDesk((st) => st.notes);
-  const thread = useDesk((st) => st.thread);
   return (
     <table className={s.tbl}>
       <thead>
@@ -246,24 +244,15 @@ function TradesTab() {
           <th>Size</th>
           <th>Entry</th>
           <th>Exit</th>
-          <th>Notes</th>
+          <th>Members</th>
           <th>R</th>
           <th className={s.r}>P&amp;L</th>
         </tr>
       </thead>
       <tbody>
         {[...trades].reverse().map((t, i) => {
-          const n = notes.filter((x) => x.tradeId === t.id).length;
           return (
-            <tr
-              key={t.id}
-              style={{ "--k": Math.min(i, 8) } as CSSProperties}
-              className={thread === t.id ? s.rowOn : undefined}
-              onClick={() => {
-                setThread(t.id);
-                toggleNotes(true);
-              }}
-            >
+            <tr key={t.id} style={{ "--k": Math.min(i, 8) } as CSSProperties}>
               <td className={s.dimCell}>{clock(t.openedAt)}</td>
               <td className={s.sym}>{INSTRUMENTS[t.sym].code}</td>
               <td>
@@ -272,7 +261,7 @@ function TradesTab() {
               <td>{t.qty}</td>
               <td>{fmt(t.entryValue / t.entryQty)}</td>
               <td>{t.closedAt ? fmt(t.exitValue / Math.max(1, t.exitQty)) : <span className={s.liveTag}>Open</span>}</td>
-              <td className={s.dimCell}>{n ? `${n} note${n > 1 ? "s" : ""}` : "–"}</td>
+              <td className={s.dimCell}>{t.notify ? "Notified" : "–"}</td>
               <TradeNumbers t={t} />
             </tr>
           );
@@ -289,11 +278,54 @@ function TradesTab() {
   );
 }
 
+/** Everything members have been sent, newest first, to the second. */
+function NotifiedTab() {
+  const notices = useDesk((st) => st.notices);
+  return (
+    <table className={s.tbl}>
+      <thead>
+        <tr>
+          <th>Sent</th>
+          <th>Market</th>
+          <th>What members read</th>
+          <th>Note</th>
+        </tr>
+      </thead>
+      <tbody>
+        {[...notices]
+          .reverse()
+          .slice(0, 120)
+          .map((n, i) => {
+            const { head, body } = noticeText(n);
+            return (
+              <tr key={n.id} style={{ "--k": Math.min(i, 8) } as CSSProperties}>
+                <td className={s.dimCell}>{clock(n.at)}</td>
+                <td className={s.sym}>{INSTRUMENTS[n.sym].code}</td>
+                <td className={s.noticeCell}>
+                  <b>{head}</b>
+                  {body && <span>{body}</span>}
+                </td>
+                <td className={s.noteCell}>{n.note ?? "–"}</td>
+              </tr>
+            );
+          })}
+        {!notices.length && (
+          <tr>
+            <td colSpan={4} className={s.none}>
+              Nothing sent yet. Use the bell next to Buy or Sell to notify members with an order.
+            </td>
+          </tr>
+        )}
+      </tbody>
+    </table>
+  );
+}
+
 /** Positions, working orders, fills and the day's trades, with the account alongside. */
 export function Blotter() {
   const shown = useDesk((st) => st.settings.blotter);
-  const [nPos, nOrd, nFill, nTrade, cancellable] = useDesk(
-    useShallow((st) => [SYMS.filter((x) => st.positions[x]).length, st.orders.length, st.fills.length, st.trades.length, st.orders.some((o) => !o.reduceOnly)] as const),
+  const [nPos, nOrd, nFill, nTrade, nSent, cancellable] = useDesk(
+    useShallow((st) => [SYMS.filter((x) => st.positions[x]).length, st.orders.length, st.fills.length, st.trades.length, st.notices.length, st.orders.some((o) => !o.reduceOnly)] as const),
   );
   const [tab, setTab] = useState<Tab>("positions");
   const tabs: { id: Tab; label: string; n: number }[] = [
@@ -301,6 +333,7 @@ export function Blotter() {
     { id: "orders", label: "Orders", n: nOrd },
     { id: "fills", label: "Fills", n: nFill },
     { id: "trades", label: "Trades", n: nTrade },
+    { id: "notified", label: "Notified", n: nSent },
   ];
 
   return (
@@ -325,7 +358,7 @@ export function Blotter() {
         </div>
         <AccountLine />
         <div className={s.blotActions}>
-          <button type="button" onClick={() => cancelAll()} disabled={!cancellable}>
+          <button type="button" className={s.blotCancel} onClick={() => cancelAll()} disabled={!cancellable}>
             Cancel orders
           </button>
           <button type="button" className={s.flat} onClick={() => flatten()} disabled={!nPos && !nOrd}>
@@ -344,6 +377,7 @@ export function Blotter() {
         {tab === "orders" && <OrdersTab />}
         {tab === "fills" && <FillsTab />}
         {tab === "trades" && <TradesTab />}
+        {tab === "notified" && <NotifiedTab />}
       </div>
     </div>
   );

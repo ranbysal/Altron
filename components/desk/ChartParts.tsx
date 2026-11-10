@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import { fmt } from "@/lib/format";
 import { INSTRUMENTS, type Sym } from "@/lib/desk/instruments";
 import { setSettings, useDesk } from "@/lib/desk/store";
-import { FIB_COMMON, FIB_DEFAULT, TOOL_NAMES, addFibLevel, removeFibLevel, resetFibLevels, setTool, toggleDraw, useDraw, type Drawing, type Tool } from "@/lib/desk/drawings";
+import { FIB_COMMON, FIB_DEFAULT, SWATCHES, TOOL_NAMES, addFibLevel, removeFibLevel, resetFibLevels, setTool, toggleDraw, useDraw, type Drawing, type PosColors, type Tool } from "@/lib/desk/drawings";
 import s from "./desk.module.css";
 
 /* ------------------------------------------------------------------ */
@@ -79,6 +79,22 @@ const ICONS: Record<Tool | "magnet" | "keep" | "locked" | "hidden" | "trash", Re
   arrow: (
     <I>
       <path d="M9 15V4.5M5 8.5l4-4 4 4" />
+    </I>
+  ),
+  long: (
+    <I>
+      <rect x="3" y="3" width="12" height="6" rx="1" />
+      <path d="M3 11.5h12" />
+      <path d="M3 14.5h12" opacity=".45" />
+      <path d="M6.4 4.6v3h2.2" />
+    </I>
+  ),
+  short: (
+    <I>
+      <path d="M3 3.5h12" opacity=".45" />
+      <path d="M3 6.5h12" />
+      <rect x="3" y="9" width="12" height="6" rx="1" />
+      <path d="M8.6 10.8H7a.9.9 0 0 0 0 1.7h.9a.9.9 0 0 1 0 1.7H6.3" />
     </I>
   ),
   measure: (
@@ -178,7 +194,7 @@ function useRailTips() {
   return { over, out, node };
 }
 
-const GROUPS: Tool[][] = [["cursor"], ["trend", "ray"], ["hline", "vline"], ["rect", "fib"], ["brush", "text", "arrow"], ["measure", "zoom"]];
+const GROUPS: Tool[][] = [["cursor"], ["trend", "ray"], ["hline", "vline"], ["rect", "fib"], ["long", "short"], ["brush", "text", "arrow"], ["measure", "zoom"]];
 
 /** The drawing tools, down the left side of the chart. */
 export function ToolRail({ onClear, count }: { onClear: () => void; count: number }) {
@@ -243,8 +259,42 @@ const EyeShut = () => (
  * A small bar that rides above the selected drawing: hide or show it, fib levels for a
  * fib, and delete. The chart places it each frame through the ref.
  */
-export function DrawPop({ ref, kind, hidden, onHide, onDelete }: { ref: Ref<HTMLDivElement>; kind: Drawing["kind"]; hidden: boolean; onHide: () => void; onDelete: () => void }) {
-  const [levels, setLevels] = useState<null | { up: boolean; align: "l" | "c" | "r" }>(null);
+type Panel = "levels" | "text" | "up" | "down";
+
+export function DrawPop({
+  ref,
+  kind,
+  hidden,
+  colors,
+  onHide,
+  onDelete,
+  onColor,
+  onLimit,
+}: {
+  ref: Ref<HTMLDivElement>;
+  kind: Drawing["kind"];
+  hidden: boolean;
+  colors?: PosColors & { defUp: string; defDown: string };
+  onHide: () => void;
+  onDelete: () => void;
+  onColor?: (which: keyof PosColors, hex: string) => void;
+  onLimit?: () => void;
+}) {
+  const [levels, setLevels] = useState<null | { up: boolean; align: "l" | "c" | "r"; panel: Panel }>(null);
+  const place = (el: HTMLElement, panel: Panel) => {
+    if (levels?.panel === panel) return setLevels(null);
+    const pop = el.parentElement!;
+    const r = pop.getBoundingClientRect();
+    const host = (pop.offsetParent as HTMLElement | null)?.getBoundingClientRect() ?? r;
+    setLevels({ panel, up: host.bottom - r.bottom < 236 && r.top - host.top > host.bottom - r.bottom, align: r.left - host.left < 110 ? "l" : host.right - r.right < 110 ? "r" : "c" });
+  };
+  const isPos = kind === "long" || kind === "short";
+  const swatchBtn = (which: keyof PosColors, label: string, icon: ReactNode, current: string) => (
+    <button type="button" aria-expanded={levels?.panel === which} aria-label={label} title={label} onClick={(e) => place(e.currentTarget, which)} className={s.popColor}>
+      {icon}
+      <i style={{ background: current }} />
+    </button>
+  );
   const stop = (e: React.SyntheticEvent) => e.stopPropagation();
   useEffect(() => {
     if (!levels) return;
@@ -262,19 +312,52 @@ export function DrawPop({ ref, kind, hidden, onHide, onDelete }: { ref: Ref<HTML
       <button type="button" aria-pressed={hidden} aria-label={hidden ? "Show drawing" : "Hide drawing"} title={hidden ? "Hidden: tap to show" : "Hide"} onClick={onHide}>
         {hidden ? <EyeShut /> : <EyeOpen />}
       </button>
+      {isPos && colors && (
+        <>
+          {swatchBtn(
+            "text",
+            "Text colour",
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" aria-hidden="true">
+              <path d="M4 3h8M8 3v8" />
+            </svg>,
+            colors.text ?? "#ffffff",
+          )}
+          {swatchBtn(
+            "up",
+            "Profit zone colour",
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" aria-hidden="true">
+              <path d="m7.5 2 5 5-4.5 4.5L3 6.5z" />
+              <path d="M12.8 9.5s1.2 1.4 1.2 2.1a1.2 1.2 0 0 1-2.4 0c0-.7 1.2-2.1 1.2-2.1z" />
+            </svg>,
+            colors.up ?? colors.defUp,
+          )}
+          {swatchBtn(
+            "down",
+            "Loss zone colour",
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" aria-hidden="true">
+              <path d="m7.5 2 5 5-4.5 4.5L3 6.5z" />
+              <path d="M12.8 9.5s1.2 1.4 1.2 2.1a1.2 1.2 0 0 1-2.4 0c0-.7 1.2-2.1 1.2-2.1z" />
+            </svg>,
+            colors.down ?? colors.defDown,
+          )}
+          <button type="button" className={s.popLimit} aria-label="Create limit order" title="Create limit order" onClick={onLimit}>
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <rect x="2" y="2.5" width="12" height="11" rx="2" />
+              <path d="m4.5 10 2.5-2.5 2 2 2.5-3" />
+              <path d="M11 3.8v2.4M9.8 5h2.4" />
+            </svg>
+            Limit order
+          </button>
+          <i className={s.popSep} aria-hidden="true" />
+        </>
+      )}
       {kind === "fib" && (
         <button
           type="button"
-          aria-expanded={!!levels}
+          aria-expanded={levels?.panel === "levels"}
           aria-label="Fib levels"
           title="Fib levels"
-          onClick={(e) => {
-            if (levels) return setLevels(null);
-            const pop = (e.currentTarget as HTMLElement).parentElement!;
-            const r = pop.getBoundingClientRect();
-            const host = (pop.offsetParent as HTMLElement | null)?.getBoundingClientRect() ?? r;
-            setLevels({ up: host.bottom - r.bottom < 236 && r.top - host.top > host.bottom - r.bottom, align: r.left - host.left < 110 ? "l" : host.right - r.right < 110 ? "r" : "c" });
-          }}
+          onClick={(e) => place(e.currentTarget, "levels")}
         >
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" aria-hidden="true">
             <path d="M2 3.5h12M2 6.8h12M2 12.5h12" />
@@ -290,7 +373,29 @@ export function DrawPop({ ref, kind, hidden, onHide, onDelete }: { ref: Ref<HTML
       </button>
       {levels && (
         <div className={s.popLevels} data-up={levels.up ? "1" : ""} data-align={levels.align}>
-          <FibLevels />
+          {levels.panel === "levels" ? (
+            <FibLevels />
+          ) : (
+            <div className={s.swatches} role="listbox" aria-label={levels.panel === "text" ? "Text colour" : levels.panel === "up" ? "Profit zone colour" : "Loss zone colour"}>
+              {SWATCHES.map((hex) => {
+                const cur = levels.panel === "text" ? (colors?.text ?? "#ffffff") : levels.panel === "up" ? (colors?.up ?? colors?.defUp) : (colors?.down ?? colors?.defDown);
+                return (
+                  <button
+                    key={hex}
+                    type="button"
+                    role="option"
+                    aria-selected={cur?.toLowerCase() === hex.toLowerCase()}
+                    aria-label={hex}
+                    style={{ background: hex }}
+                    onClick={() => {
+                      onColor?.(levels.panel as keyof PosColors, hex);
+                      setLevels(null);
+                    }}
+                  />
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
     </div>

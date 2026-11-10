@@ -1,6 +1,6 @@
 # Altron backend (Supabase)
 
-The desk runs on a simulated market and keeps its paper book in the browser until this is connected. `schema.sql` holds everything the live version needs: the one trading account, orders, fills, trades, and the trade notes members read.
+The desk runs on a simulated market and keeps its paper book in the browser until this is connected. `schema.sql` holds everything the live version needs: the one trading account, orders, fills, trades, the trade notes members read, and the notices members are sent (entries, working orders, fills, moved stops and targets, exits), which can't be edited or deleted once sent.
 
 ## Set up
 
@@ -37,4 +37,4 @@ The desk runs on a simulated market and keeps its paper book in the browser unti
 
 ## Live updates
 
-Trades, fills, notes and note history are added to Supabase Realtime, so members' screens update as Yazan trades and writes.
+Trades, fills, notes, note history and notices are added to Supabase Realtime, so members' screens update as Yazan trades and writes.

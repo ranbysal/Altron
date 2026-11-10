@@ -26,7 +26,13 @@ export type Order = {
   anchor?: number;
   oco?: string;
   reduceOnly?: boolean;
-  attach?: { stopTicks?: number; targetTicks?: number };
+  /** the bracket set around the fill: a distance in ticks, or an exact price typed on the ticket */
+  attach?: { stopTicks?: number; targetTicks?: number; stopPx?: number; targetPx?: number };
+  /** members are told when this order is placed and when it fills */
+  notify?: { note?: string };
+  /** a stop or target: the price members were last told, and a price he chose not to announce */
+  told?: number;
+  quiet?: number;
   at: number;
 };
 
@@ -45,10 +51,42 @@ export type Trade = {
   exitValue: number;
   pnl: number;
   risk?: number;
+  /** opened with a notification: its exits are announced too */
+  notify?: boolean;
 };
 export type Phase = "before" | "during" | "after";
 export type Note = { id: string; tradeId: string | null; sym: Sym; phase: Phase; text: string; at: number; edits: { text: string; at: number }[] };
 export type Toast = { id: string; tone: "pos" | "neg" | "plain"; title: string; body?: string; at: number };
+
+/** What members are sent: entries, working orders, fills, moved stops and targets, exits. */
+export type NoticeKind = "entry" | "order" | "fill" | "stop" | "target" | "exit";
+export type Notice = {
+  id: string;
+  kind: NoticeKind;
+  sym: Sym;
+  at: number;
+  side?: Side;
+  qty?: number;
+  price?: number;
+  type?: OrderType;
+  stop?: number;
+  target?: number;
+  /** a moved stop or target: what members were told before */
+  was?: number;
+  pnl?: number;
+  why?: string;
+  note?: string;
+  tradeId?: string;
+};
+
+/** Units an exit can be typed in or read back as. */
+export type ExitUnit = "price" | "ticks" | "usd" | "pts";
+export const EXIT_UNITS: { id: ExitUnit; label: string }[] = [
+  { id: "price", label: "Price" },
+  { id: "ticks", label: "Ticks" },
+  { id: "usd", label: "USD" },
+  { id: "pts", label: "Points" },
+];
 
 export type Settings = {
   sym: Sym;
@@ -65,13 +103,25 @@ export type Settings = {
   blotter: boolean;
   layout: { blot: number; right: number };
   chart: { volume: boolean; fills: boolean; zone: boolean; grid: boolean; log: boolean };
-  /** how the bracket distances are entered */
-  unit: "t" | "pts" | "$";
+  /** each exit is typed in one unit and read back in another, as on TradingView */
+  exitUnits: { stop: [ExitUnit, ExitUnit]; target: [ExitUnit, ExitUnit] };
 };
 
 export type Alert = { id: string; sym: Sym; price: number; above: boolean; at: number };
 
-export type Ticket = { type: OrderType; limit: number | null; stop: number | null; trail: number };
+export type Ticket = {
+  type: OrderType;
+  /** the side the big button sends; picked with the Sell and Buy tiles */
+  side: Side;
+  limit: number | null;
+  stop: number | null;
+  trail: number;
+  /** exits typed or dragged to an exact price; null follows the tick distance in settings */
+  stopPx: number | null;
+  targetPx: number | null;
+  /** the market those exact prices were set on */
+  pxSym: Sym | null;
+};
 
 export type DeskState = {
   ready: boolean;
@@ -89,8 +139,8 @@ export type DeskState = {
   thread: string | null;
   pick: null | "limit" | "stop";
   shortcuts: boolean;
-  /** the notes pop-up; always starts closed */
-  notesOpen: boolean;
+  /** what members have been sent, newest last */
+  notices: Notice[];
   /** the chart fills the window; the order column and blotter step aside */
   full: boolean;
   alerts: Alert[];
@@ -117,7 +167,7 @@ const DEFAULT_SETTINGS: Settings = {
   blotter: true,
   layout: { blot: 158, right: 300 },
   chart: { volume: true, fills: true, zone: true, grid: true, log: false },
-  unit: "t",
+  exitUnits: { stop: ["price", "usd"], target: ["price", "usd"] },
 };
 
 const blankQuote = (): Quote => ({ last: 0, bid: 0, ask: 0, prev: 0, hi: 0, lo: 0, dir: 0, at: 0 });
@@ -132,13 +182,13 @@ export const useDesk = create<DeskState>(() => ({
   notes: [],
   start: ACCOUNT.start,
   settings: DEFAULT_SETTINGS,
-  ticket: { type: "MKT", limit: null, stop: null, trail: 20 },
+  ticket: { type: "MKT", side: 1, limit: null, stop: null, trail: 20, stopPx: null, targetPx: null, pxSym: null },
   armedUntil: 0,
   toasts: [],
   thread: null,
   pick: null,
   shortcuts: false,
-  notesOpen: false,
+  notices: [],
   full: false,
   alerts: [],
   preview: 0,
@@ -172,11 +222,11 @@ export function mid(sym: Sym): number {
 /* fills, positions and trades                                         */
 /* ------------------------------------------------------------------ */
 
-type Draft = Pick<DeskState, "positions" | "orders" | "fills" | "trades" | "notes" | "toasts">;
+type Draft = Pick<DeskState, "positions" | "orders" | "fills" | "trades" | "notes" | "toasts" | "notices">;
 
 function draft(): Draft {
   const s = get();
-  return { positions: { ...s.positions }, orders: s.orders.slice(), fills: s.fills.slice(), trades: s.trades.slice(), notes: s.notes.slice(), toasts: s.toasts.slice() };
+  return { positions: { ...s.positions }, orders: s.orders.slice(), fills: s.fills.slice(), trades: s.trades.slice(), notes: s.notes.slice(), toasts: s.toasts.slice(), notices: s.notices.slice() };
 }
 
 function fmtPx(p: number): string {
@@ -188,6 +238,14 @@ function fmtUsd(n: number): string {
 
 function pushToast(d: Draft, t: Omit<Toast, "id" | "at">) {
   d.toasts = [...d.toasts.slice(-3), { ...t, id: uid("t"), at: Date.now() }];
+}
+
+/** Sends a notice to members (kept here until the backend relays it) and says so on the desk. */
+function publish(d: Draft, n: Omit<Notice, "id">) {
+  const full: Notice = { ...n, id: uid("N") };
+  d.notices = [...d.notices.slice(-299), full];
+  const { head } = noticeText(full);
+  pushToast(d, { tone: "plain", title: "Members notified", body: head });
 }
 
 function openTrade(d: Draft, sym: Sym, side: Side, qty: number, price: number, at: number, riskTicks?: number): Trade {
@@ -223,8 +281,11 @@ function applyFill(d: Draft, o: Order, qty: number, price: number, at: number) {
   let tradeId = pos?.tradeId ?? "";
   let pnl = 0;
 
+  const wasTrade = pos?.tradeId;
+  let closedQty = 0;
   if (!pos || pos.qty === 0) {
-    const t = openTrade(d, sym, side, qty, price, at, o.attach?.stopTicks);
+    const riskTicks = o.attach?.stopPx !== undefined ? Math.abs(price - o.attach.stopPx) / inst.tick : o.attach?.stopTicks;
+    const t = openTrade(d, sym, side, qty, price, at, riskTicks);
     tradeId = t.id;
     pos = { sym, qty: side * qty, avg: price, openedAt: at, tradeId };
   } else if (Math.sign(pos.qty) === side) {
@@ -236,6 +297,7 @@ function applyFill(d: Draft, o: Order, qty: number, price: number, at: number) {
     const dir = Math.sign(pos.qty);
     const q = Math.abs(pos.qty);
     const closing = Math.min(q, qty);
+    closedQty = closing;
     pnl = (price - pos.avg) * dir * closing * inst.pv;
     updateTrade(d, pos.tradeId, (t) => ({ ...t, pnl: t.pnl + pnl, exitQty: t.exitQty + closing, exitValue: t.exitValue + price * closing }));
     const left = q - closing;
@@ -274,11 +336,15 @@ function applyFill(d: Draft, o: Order, qty: number, price: number, at: number) {
     if (!existing) {
       const oco = uid("O");
       const size = Math.abs(pos.qty);
-      if (o.attach.stopTicks) {
-        d.orders.push({ id: uid("o"), sym, side: (-side) as Side, qty: size, type: "STP", role: "stop", stop: snap(sym, price - side * o.attach.stopTicks * inst.tick), oco, reduceOnly: true, at });
+      const stopAt = o.attach.stopPx ?? (o.attach.stopTicks ? price - side * o.attach.stopTicks * inst.tick : undefined);
+      const targetAt = o.attach.targetPx ?? (o.attach.targetTicks ? price + side * o.attach.targetTicks * inst.tick : undefined);
+      if (stopAt !== undefined) {
+        const p = snap(sym, stopAt);
+        d.orders.push({ id: uid("o"), sym, side: (-side) as Side, qty: size, type: "STP", role: "stop", stop: p, oco, reduceOnly: true, at, told: p });
       }
-      if (o.attach.targetTicks) {
-        d.orders.push({ id: uid("o"), sym, side: (-side) as Side, qty: size, type: "LMT", role: "target", limit: snap(sym, price + side * o.attach.targetTicks * inst.tick), oco, reduceOnly: true, at });
+      if (targetAt !== undefined) {
+        const p = snap(sym, targetAt);
+        d.orders.push({ id: uid("o"), sym, side: (-side) as Side, qty: size, type: "LMT", role: "target", limit: p, oco, reduceOnly: true, at, told: p });
       }
     }
   }
@@ -286,6 +352,30 @@ function applyFill(d: Draft, o: Order, qty: number, price: number, at: number) {
   if (pos) {
     const size = Math.abs(pos.qty);
     d.orders = d.orders.map((x) => (x.sym === sym && x.reduceOnly && (x.role === "stop" || x.role === "target") ? { ...x, qty: size } : x));
+  }
+
+  // members hear about an exit from a trade they were told about
+  if (closedQty && wasTrade && d.trades.find((t) => t.id === wasTrade)?.notify) {
+    publish(d, { kind: "exit", sym, at, side, qty: closedQty, price, pnl, why: o.role === "stop" ? "stop" : o.role === "target" ? "target" : undefined, tradeId: wasTrade });
+  }
+  // and about an entry that was sent with a notification
+  if (o.notify && pos && Math.sign(pos.qty) === side) {
+    const stopO = d.orders.find((x) => x.sym === sym && x.role === "stop");
+    const tgtO = d.orders.find((x) => x.sym === sym && x.role === "target");
+    updateTrade(d, pos.tradeId, (t) => ({ ...t, notify: true }));
+    publish(d, {
+      kind: o.type === "MKT" ? "entry" : "fill",
+      sym,
+      at,
+      side,
+      qty,
+      price,
+      type: o.type,
+      stop: stopO?.stop,
+      target: tgtO?.limit,
+      note: o.type === "MKT" ? o.notify.note : undefined,
+      tradeId: pos.tradeId,
+    });
   }
 }
 
@@ -358,11 +448,12 @@ function changes(d: Draft, s: Draft): Partial<Draft> {
   if (!sameList(d.trades, s.trades)) out.trades = d.trades;
   if (!sameList(d.notes, s.notes)) out.notes = d.notes;
   if (!sameList(d.toasts, s.toasts)) out.toasts = d.toasts;
+  if (!sameList(d.notices, s.notices)) out.notices = d.notices;
   return out;
 }
 
 function commit(d: Draft) {
-  set({ positions: d.positions, orders: d.orders, fills: d.fills, trades: d.trades, notes: d.notes, toasts: d.toasts });
+  set({ positions: d.positions, orders: d.orders, fills: d.fills, trades: d.trades, notes: d.notes, toasts: d.toasts, notices: d.notices });
 }
 
 /* ------------------------------------------------------------------ */
@@ -378,6 +469,9 @@ export type OrderInput = {
   stop?: number;
   trail?: number;
   bracket?: boolean;
+  /** the ticket's exits, exact prices or tick distances; otherwise the settings' distances */
+  exits?: Order["attach"];
+  notify?: { note?: string };
 };
 
 export function placeOrder(input: OrderInput): void {
@@ -385,9 +479,11 @@ export function placeOrder(input: OrderInput): void {
   if (!s.ready || input.qty <= 0) return;
   const at = Date.now();
   const { settings } = s;
-  const attach = input.bracket
-    ? { stopTicks: settings.stopOn ? settings.stopTicks[input.sym] : undefined, targetTicks: settings.targetOn ? settings.targetTicks[input.sym] : undefined }
-    : undefined;
+  const attach = input.exits
+    ? input.exits
+    : input.bracket
+      ? { stopTicks: settings.stopOn ? settings.stopTicks[input.sym] : undefined, targetTicks: settings.targetOn ? settings.targetTicks[input.sym] : undefined }
+      : undefined;
   const o: Order = {
     id: uid("o"),
     sym: input.sym,
@@ -398,7 +494,8 @@ export function placeOrder(input: OrderInput): void {
     limit: input.limit !== undefined ? snap(input.sym, input.limit) : undefined,
     stop: input.stop !== undefined ? snap(input.sym, input.stop) : undefined,
     trail: input.trail,
-    attach: attach && (attach.stopTicks || attach.targetTicks) ? attach : undefined,
+    attach: attach && (attach.stopTicks || attach.targetTicks || attach.stopPx !== undefined || attach.targetPx !== undefined) ? attach : undefined,
+    notify: input.notify ? { note: input.notify.note?.trim() || undefined } : undefined,
     at,
   };
   const d = draft();
@@ -407,6 +504,12 @@ export function placeOrder(input: OrderInput): void {
     applyFill(d, o, o.qty, o.side > 0 ? q.ask : q.bid, at);
   } else {
     d.orders = [...d.orders, o];
+    if (o.notify) {
+      const px = o.type === "LMT" ? o.limit : o.stop;
+      const tk = INSTRUMENTS[o.sym].tick;
+      const exit = (abs: number | undefined, ticks: number | undefined, dir: number) => (abs !== undefined ? snap(o.sym, abs) : ticks && px !== undefined ? snap(o.sym, px + dir * o.side * ticks * tk) : undefined);
+      publish(d, { kind: "order", sym: o.sym, at, side: o.side, qty: o.qty, price: px, type: o.type, stop: exit(o.attach?.stopPx, o.attach?.stopTicks, -1), target: exit(o.attach?.targetPx, o.attach?.targetTicks, 1), note: o.notify.note });
+    }
     work(d, input.sym, q, at);
     if (d.orders.includes(o)) pushToast(d, { tone: "plain", title: `Working ${o.side > 0 ? "buy" : "sell"} ${o.qty} ${INSTRUMENTS[o.sym].code}`, body: describe(o) });
   }
@@ -468,6 +571,24 @@ export function moveOrder(id: string, price: number) {
   commit(d);
 }
 
+/** Tell members where a stop or target now sits. */
+export function notifyMove(id: string) {
+  const s = get();
+  const o = s.orders.find((x) => x.id === id);
+  if (!o || (o.role !== "stop" && o.role !== "target")) return;
+  const price = o.role === "stop" ? o.stop : o.limit;
+  if (price === undefined) return;
+  const d = draft();
+  d.orders = d.orders.map((x) => (x.id === id ? { ...x, told: price, quiet: undefined } : x));
+  publish(d, { kind: o.role, sym: o.sym, at: Date.now(), price, was: o.told, side: o.side, qty: o.qty, tradeId: s.positions[o.sym]?.tradeId });
+  commit(d);
+}
+
+/** Keep a move to himself; the button comes back if the line moves again. */
+export function dismissMove(id: string) {
+  set({ orders: get().orders.map((x) => (x.id === id ? { ...x, quiet: x.role === "stop" ? x.stop : x.limit } : x)) });
+}
+
 /** Add a stop or target to an open position that doesn't have one. */
 export function addBracket(sym: Sym, role: "stop" | "target", price?: number) {
   const s = get();
@@ -497,6 +618,173 @@ export function addBracket(sym: Sym, role: "stop" | "target", price?: number) {
   // a stop added later still defines the trade's risk
   if (role === "stop") updateTrade(d, pos.tradeId, (t) => (t.risk ? t : { ...t, risk: Math.abs(pos.avg - p) * inst.pv * Math.abs(pos.qty) }));
   commit(d);
+}
+
+/* notices: what members read --------------------------------------- */
+
+const NY_TIME = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit", second: "2-digit" });
+/** New York wall-clock time to the second, as members see it. */
+export const noticeTime = (ms: number) => `${NY_TIME.format(ms)} ET`;
+
+/** "1 NQ mini", "5 MNQ micros". */
+export function sizeWords(sym: Sym, qty: number): string {
+  const inst = INSTRUMENTS[sym];
+  const root = inst.code.replace(/[FGHJKMNQUVXZ]\d$/, "");
+  return `${qty} ${root} ${inst.micro ? "micro" : "mini"}${qty === 1 ? "" : "s"}`;
+}
+
+export function noticeText(n: Notice): { head: string; body: string } {
+  const px = (p?: number) => (p === undefined ? "" : fmtPx(p));
+  const root = INSTRUMENTS[n.sym].code.replace(/[FGHJKMNQUVXZ]\d$/, "");
+  const size = sizeWords(n.sym, n.qty ?? 1);
+  const exits = [n.stop !== undefined ? `Stop ${px(n.stop)}` : "", n.target !== undefined ? `Target ${px(n.target)}` : ""].filter(Boolean).join(" · ");
+  switch (n.kind) {
+    case "entry":
+      return { head: `${n.side! > 0 ? "Bought" : "Sold"} ${size} @ ${px(n.price)}`, body: exits || "No stop or target set" };
+    case "fill":
+      return { head: `Filled: ${n.side! > 0 ? "bought" : "sold"} ${size} @ ${px(n.price)}`, body: exits || "No stop or target set" };
+    case "order":
+      return { head: `${n.side! > 0 ? "Buy" : "Sell"} ${n.type === "STP" ? "stop" : "limit"} ${size} @ ${px(n.price)}`, body: exits ? `${exits} · working` : "Working" };
+    case "stop":
+    case "target":
+      return { head: n.was === undefined ? `${root} ${n.kind} set at ${px(n.price)}` : `${root} ${n.kind} moved to ${px(n.price)}`, body: n.was === undefined ? "" : `Was ${px(n.was)}` };
+    case "exit":
+      return { head: `Closed ${n.side! < 0 ? "long" : "short"} ${size} @ ${px(n.price)}`, body: `${fmtUsd(n.pnl ?? 0)}${n.why ? ` · ${n.why} hit` : ""}` };
+  }
+}
+
+/* the ticket -------------------------------------------------------- */
+
+/** Where the ticket's order would come in: the typed price, or the touch for a market order. */
+export function ticketEntry(s: Pick<DeskState, "ticket" | "quotes">, sym: Sym): number {
+  const t = s.ticket;
+  const q = s.quotes[sym];
+  if (t.type === "LMT" && t.limit !== null) return t.limit;
+  if (t.type === "STP" && t.stop !== null) return t.stop;
+  return t.side > 0 ? q.ask : q.bid;
+}
+
+const usesExact = (s: Pick<DeskState, "ticket" | "settings">, sym: Sym, which: "stop" | "target") =>
+  s.ticket.pxSym === sym && s.settings.exitUnits[which][0] === "price" && (which === "stop" ? s.ticket.stopPx : s.ticket.targetPx) !== null;
+
+/** The ticket's stop and target as prices: exact where typed, otherwise their distance from the entry. */
+export function ticketExits(s: Pick<DeskState, "ticket" | "quotes" | "settings">, sym: Sym): { stop: number | null; target: number | null } {
+  const st = s.settings;
+  const tk = INSTRUMENTS[sym].tick;
+  const entry = ticketEntry(s, sym);
+  const side = s.ticket.side;
+  const stop = !st.stopOn ? null : usesExact(s, sym, "stop") ? s.ticket.stopPx! : snap(sym, entry - side * st.stopTicks[sym] * tk);
+  const target = !st.targetOn ? null : usesExact(s, sym, "target") ? s.ticket.targetPx! : snap(sym, entry + side * st.targetTicks[sym] * tk);
+  return { stop, target };
+}
+
+/** What a ticket order carries for its bracket. */
+function ticketAttach(s: DeskState, sym: Sym): NonNullable<Order["attach"]> {
+  const st = s.settings;
+  const out: NonNullable<Order["attach"]> = {};
+  if (st.stopOn) {
+    if (usesExact(s, sym, "stop")) out.stopPx = s.ticket.stopPx!;
+    else out.stopTicks = st.stopTicks[sym];
+  }
+  if (st.targetOn) {
+    if (usesExact(s, sym, "target")) out.targetPx = s.ticket.targetPx!;
+    else out.targetTicks = st.targetTicks[sym];
+  }
+  return out;
+}
+
+/** Why the ticket can't send right now, or null. */
+export function ticketProblem(s: Pick<DeskState, "ticket" | "quotes" | "settings">, sym: Sym): string | null {
+  const t = s.ticket;
+  const q = s.quotes[sym];
+  if (!q.last) return "Waiting for the market";
+  if (t.type === "LMT" && t.limit === null) return "Set a limit price";
+  if (t.type === "STP") {
+    if (t.stop === null) return "Set a stop price";
+    if (t.side > 0 && t.stop <= q.ask) return "A buy stop goes above the ask";
+    if (t.side < 0 && t.stop >= q.bid) return "A sell stop goes below the bid";
+  }
+  const entry = ticketEntry(s, sym);
+  const { stop, target } = ticketExits(s, sym);
+  if (stop !== null && (entry - stop) * t.side <= 0) return `The stop must be ${t.side > 0 ? "below" : "above"} the entry`;
+  if (target !== null && (target - entry) * t.side <= 0) return `The target must be ${t.side > 0 ? "above" : "below"} the entry`;
+  return null;
+}
+
+/** Sets an exit from a price: dragged on the chart or typed in price. */
+export function setExitPrice(which: "stop" | "target", price: number) {
+  const s = get();
+  const sym = s.settings.sym;
+  const tk = INSTRUMENTS[sym].tick;
+  const entry = ticketEntry(s, sym);
+  const dir = which === "stop" ? -s.ticket.side : s.ticket.side;
+  let p = snap(sym, price);
+  if ((p - entry) * dir < tk) p = snap(sym, entry + dir * tk); // stays on its own side, a tick away at least
+  if (s.settings.exitUnits[which][0] === "price") {
+    const key = which === "stop" ? "stopPx" : "targetPx";
+    const other = which === "stop" ? "targetPx" : "stopPx";
+    setTicket({ [key]: p, pxSym: sym, ...(s.ticket.pxSym !== sym ? { [other]: null } : {}) });
+  } else {
+    setExitTicks(which, Math.abs(p - entry) / tk);
+  }
+}
+
+function setExitTicks(which: "stop" | "target", ticks: number) {
+  const st = get().settings;
+  const key = which === "stop" ? "stopTicks" : "targetTicks";
+  setSettings({ [key]: { ...st[key], [st.sym]: Math.max(1, Math.round(ticks)) } });
+}
+
+/** Sets an exit from a number typed in one of the units. */
+export function setExitValue(which: "stop" | "target", unit: ExitUnit, value: number) {
+  if (!Number.isFinite(value)) return;
+  const s = get();
+  const sym = s.settings.sym;
+  const tk = INSTRUMENTS[sym].tick;
+  if (unit === "price") return setExitPrice(which, value);
+  const ticks = unit === "ticks" ? value : unit === "pts" ? value / tk : value / (tickValue(sym) * s.settings.qty[sym]);
+  setExitTicks(which, Math.abs(ticks));
+}
+
+/** Picks the units an exit is typed in and read back as. Switching keeps the exit where it is. */
+export function setExitUnits(which: "stop" | "target", units: [ExitUnit, ExitUnit]) {
+  const s = get();
+  const sym = s.settings.sym;
+  const was = s.settings.exitUnits[which][0];
+  if (was === "price" && units[0] !== "price" && usesExact(s, sym, which)) {
+    const exact = (which === "stop" ? s.ticket.stopPx : s.ticket.targetPx)!;
+    setExitTicks(which, Math.abs(exact - ticketEntry(s, sym)) / INSTRUMENTS[sym].tick);
+  }
+  if (units[0] === "price" && was !== "price") setTicket({ [which === "stop" ? "stopPx" : "targetPx"]: null });
+  setSettings({ exitUnits: { ...get().settings.exitUnits, [which]: units } });
+}
+
+/** A long or short position drawn on the chart becomes the ticket's limit order, exits and all. */
+export function ticketFromPosition(side: Side, entry: number, stop: number, target: number) {
+  const s = get();
+  const sym = s.settings.sym;
+  const u = s.settings.exitUnits;
+  setSettings({
+    stopOn: true,
+    targetOn: true,
+    exitUnits: { stop: u.stop[0] === "price" ? u.stop : ["price", u.stop[0]], target: u.target[0] === "price" ? u.target : ["price", u.target[0]] },
+  });
+  setPick(null);
+  setTicket({ type: "LMT", side, limit: snap(sym, entry), stopPx: snap(sym, stop), targetPx: snap(sym, target), pxSym: sym });
+}
+
+/** Sends what's on the ticket, with a notification to members when asked. */
+export function sendTicket(notify?: { note?: string }) {
+  const s = get();
+  const sym = s.settings.sym;
+  if (ticketProblem(s, sym)) return;
+  const t = s.ticket;
+  const base = { sym, side: t.side, qty: s.settings.qty[sym], exits: ticketAttach(s, sym), notify };
+  if (t.type === "LMT") placeOrder({ ...base, type: "LMT", limit: t.limit! });
+  else if (t.type === "STP") placeOrder({ ...base, type: "STP", stop: t.stop! });
+  else placeOrder({ ...base, type: "MKT" });
+  // the next order starts from market, its exits back on their distances
+  set({ ticket: { ...get().ticket, type: "MKT", stopPx: null, targetPx: null, pxSym: null }, preview: 0 });
 }
 
 /* notes ------------------------------------------------------------- */
@@ -604,9 +892,6 @@ export function setPreview(side: 0 | 1 | -1) {
 export function toggleFull(on?: boolean) {
   set({ full: on ?? !get().full });
 }
-export function toggleNotes(open?: boolean) {
-  set({ notesOpen: open ?? !get().notesOpen });
-}
 export function toggleBlotter(open?: boolean) {
   const s = get().settings;
   const next = open ?? !s.blotter;
@@ -619,7 +904,7 @@ export function showShortcuts(v: boolean) {
 }
 
 export function resetPaper() {
-  set({ positions: {}, orders: [], fills: [], trades: [], notes: [], thread: null });
+  set({ positions: {}, orders: [], fills: [], trades: [], notes: [], notices: [], thread: null });
 }
 
 /* ------------------------------------------------------------------ */
@@ -653,7 +938,7 @@ export function realizedSince(trades: Trade[], since: number): number {
 /* boot, tape and persistence                                          */
 /* ------------------------------------------------------------------ */
 
-type Saved = Pick<DeskState, "positions" | "orders" | "fills" | "trades" | "notes" | "settings"> & { alerts?: Alert[] } & { prices?: { NQ: number; ES: number }; v: 1 };
+type Saved = Pick<DeskState, "positions" | "orders" | "fills" | "trades" | "notes" | "settings"> & { alerts?: Alert[]; notices?: Notice[] } & { prices?: { NQ: number; ES: number }; v: 1 };
 
 function load(): Saved | null {
   try {
@@ -677,6 +962,7 @@ function save() {
     trades: s.trades.slice(-300),
     notes: s.notes,
     alerts: s.alerts,
+    notices: s.notices.slice(-300),
     settings: s.settings,
     prices: { NQ: market.quote("NQ").last, ES: market.quote("ES").last },
   };
@@ -691,7 +977,7 @@ function save() {
 function seed(): Partial<DeskState> {
   const m = market!;
   const now = Date.now();
-  const d: Draft = { positions: {}, orders: [], fills: [], trades: [], notes: [], toasts: [] };
+  const d: Draft = { positions: {}, orders: [], fills: [], trades: [], notes: [], toasts: [], notices: [] };
   type Bars = ReturnType<Market["bars"]>;
 
   const trade = (sym: Sym, side: Side, qty: number, entryAgo: number, outcome: "win" | "loss" | "open", notes: [Phase, string, number][]) => {
@@ -815,6 +1101,7 @@ export function startDesk() {
         trades: saved.trades,
         notes: saved.notes,
         alerts: saved.alerts ?? [],
+        notices: saved.notices ?? [],
         settings: {
           ...DEFAULT_SETTINGS,
           ...saved.settings,
@@ -822,6 +1109,7 @@ export function startDesk() {
           panels: { pnl: !!saved.settings?.panels?.pnl, markets: !!saved.settings?.panels?.markets },
           layout: { ...DEFAULT_SETTINGS.layout, ...saved.settings?.layout },
           chart: { ...DEFAULT_SETTINGS.chart, ...saved.settings?.chart },
+          exitUnits: { ...DEFAULT_SETTINGS.exitUnits, ...saved.settings?.exitUnits },
         },
       }
     : {};
@@ -864,7 +1152,7 @@ export function startDesk() {
   // persist the book soon after it changes (never starved by a busy tape), and prices now and then
   let timer = 0;
   useDesk.subscribe((s, prev) => {
-    if (s.positions === prev.positions && s.orders === prev.orders && s.trades === prev.trades && s.notes === prev.notes && s.settings === prev.settings && s.alerts === prev.alerts) return;
+    if (s.positions === prev.positions && s.orders === prev.orders && s.trades === prev.trades && s.notes === prev.notes && s.settings === prev.settings && s.alerts === prev.alerts && s.notices === prev.notices) return;
     if (timer) return;
     timer = window.setTimeout(() => {
       timer = 0;

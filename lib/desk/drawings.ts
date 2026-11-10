@@ -8,6 +8,8 @@ import type { Under } from "./instruments";
  */
 
 export type Pt = { t: number; p: number };
+/** A position tool's own colours: its labels' text, the profit zone and the loss zone. Unset follows the theme. */
+export type PosColors = { text?: string; up?: string; down?: string };
 
 export type Drawing = (
   | { id: string; kind: "trend" | "ray" | "rect" | "fib"; a: Pt; b: Pt }
@@ -15,12 +17,14 @@ export type Drawing = (
   | { id: string; kind: "brush"; pts: Pt[] }
   | { id: string; kind: "text"; a: Pt; text: string }
   | { id: string; kind: "arrow"; a: Pt; up: boolean }
+  /** TradingView's long / short position: entry at `a` from a.t to t2, a target and a stop */
+  | { id: string; kind: "long" | "short"; a: Pt; t2: number; target: number; stop: number; colors?: PosColors }
 ) & {
   /** hidden from the chart; shows faintly while the drawing tools are open, so it can be found again */
   hidden?: boolean;
 };
 
-export type Tool = "cursor" | "trend" | "ray" | "hline" | "vline" | "rect" | "fib" | "brush" | "text" | "arrow" | "measure" | "zoom";
+export type Tool = "cursor" | "trend" | "ray" | "hline" | "vline" | "rect" | "fib" | "brush" | "text" | "arrow" | "long" | "short" | "measure" | "zoom";
 
 export const TOOL_NAMES: Record<Tool, string> = {
   cursor: "Cross",
@@ -33,6 +37,8 @@ export const TOOL_NAMES: Record<Tool, string> = {
   brush: "Brush",
   text: "Text",
   arrow: "Arrow mark",
+  long: "Long position",
+  short: "Short position",
   measure: "Measure",
   zoom: "Zoom in",
 };
@@ -163,3 +169,12 @@ export function removeFibLevel(r: number) {
 export function resetFibLevels() {
   set({ fib: FIB_DEFAULT });
 }
+
+/** Recolours a position tool's text or zones. */
+export function restyle(u: Under, id: string, colors: PosColors) {
+  const by = get().byUnder;
+  set({ byUnder: { ...by, [u]: by[u].map((x) => (x.id === id && (x.kind === "long" || x.kind === "short") ? { ...x, colors: { ...x.colors, ...colors } } : x)) } });
+}
+
+/** Colours offered for a position tool's text and zones. */
+export const SWATCHES = ["#4DA3FF", "#FF2EC4", "#3CCF7F", "#2BB3A3", "#F5A524", "#8B5CF6", "#A8B5C2", "#FFFFFF", "#0E1116"];

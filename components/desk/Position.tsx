@@ -6,7 +6,6 @@ import { INSTRUMENTS } from "@/lib/desk/instruments";
 import { closePercent, dayStart, flatten, getMarket, openPnl, realizedSince, useDesk } from "@/lib/desk/store";
 import { BAYER4 } from "@/lib/noise";
 import { onThemeChange } from "@/lib/theme";
-import { Odometer } from "@/components/trader/parts";
 import s from "./desk.module.css";
 
 /**
@@ -171,9 +170,9 @@ export function Position() {
       </div>
       <div className={s.posNum}>
         {pos ? (
-          <Odometer value={money(open)} className={`${s.posBig} ${open >= 0 ? s.pos : s.neg}`} delay={0} />
+          <span className={`${s.posBig} ${s.pnlLive} ${open >= 0 ? s.pos : s.neg}`}>{money(open)}</span>
         ) : (
-          <Odometer value={money(day)} className={`${s.posBig} ${s.posQuiet}`} delay={0} />
+          <span className={`${s.posBig} ${s.pnlLive} ${s.posQuiet}`}>{money(day)}</span>
         )}
         {pos && r !== null && <span className={`${s.posR} ${r >= 0 ? s.pos : s.neg}`}>{`${r >= 0 ? "+" : "−"}${Math.abs(r).toFixed(2)}R`}</span>}
       </div>

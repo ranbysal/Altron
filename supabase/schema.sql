@@ -168,6 +168,33 @@ create trigger trade_notes_history
   for each row execute function public.keep_note_history();
 
 -- ---------------------------------------------------------------------------
+-- notices: what members are sent. Entries, working orders, fills, moved stops
+-- and targets, and exits, each with the moment it went out, to the second.
+-- Never edited or deleted: this is the record of what members were told.
+-- ---------------------------------------------------------------------------
+
+create table if not exists public.notices (
+  id text primary key,
+  account_id uuid not null references public.accounts (id) on delete cascade,
+  trade_id text references public.trades (id) on delete set null,
+  kind text not null check (kind in ('entry', 'order', 'fill', 'stop', 'target', 'exit')),
+  sym text not null check (sym in ('NQ', 'ES', 'MNQ', 'MES')),
+  side smallint check (side in (-1, 1)),
+  qty integer check (qty > 0),
+  price numeric(12, 2),
+  order_type text check (order_type in ('MKT', 'LMT', 'STP', 'STPLMT', 'TRAIL')),
+  stop numeric(12, 2),
+  target numeric(12, 2),
+  was numeric(12, 2), -- a moved stop or target: what members were told before
+  pnl numeric(14, 2),
+  why text,
+  note text check (note is null or length(note) between 1 and 600),
+  sent_at timestamptz not null default now()
+);
+create index if not exists notices_sent on public.notices (sent_at desc);
+create index if not exists notices_trade on public.notices (trade_id, sent_at);
+
+-- ---------------------------------------------------------------------------
 -- desk settings (sizes, brackets, panels), one row per account
 -- ---------------------------------------------------------------------------
 
@@ -245,6 +272,13 @@ drop policy if exists "note edits: members read" on public.trade_note_edits;
 create policy "note edits: members read" on public.trade_note_edits for select using (public.is_member());
 -- rows here are written only by the history trigger
 
+alter table public.notices enable row level security;
+drop policy if exists "notices: members read" on public.notices;
+create policy "notices: members read" on public.notices for select using (public.is_member());
+drop policy if exists "notices: trader sends" on public.notices;
+create policy "notices: trader sends" on public.notices for insert with check (public.is_trader());
+-- no update or delete policy: a notice stays as it was sent
+
 drop policy if exists "settings: trader only" on public.desk_settings;
 create policy "settings: trader only" on public.desk_settings for all using (public.is_trader()) with check (public.is_trader());
 
@@ -255,7 +289,7 @@ create policy "settings: trader only" on public.desk_settings for all using (pub
 do $$
 declare t text;
 begin
-  foreach t in array array['trades', 'fills', 'trade_notes', 'trade_note_edits'] loop
+  foreach t in array array['trades', 'fills', 'trade_notes', 'trade_note_edits', 'notices'] loop
     if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t) then
       execute format('alter publication supabase_realtime add table public.%I', t);
     end if;

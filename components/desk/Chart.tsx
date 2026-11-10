@@ -19,12 +19,17 @@ import {
   setTicket,
   showShortcuts,
   toggleFull,
-  toggleNotes,
+  dismissMove,
+  notifyMove,
+  setExitPrice,
+  ticketEntry,
+  ticketExits,
+  ticketFromPosition,
   togglePanel,
   useDesk,
   type Order,
 } from "@/lib/desk/store";
-import { addDrawing, clearDrawings, drawId, removeDrawing, replaceDrawing, selectDrawing, setTool, startDrawings, toggleDraw, toggleHidden, useDraw, type Drawing, type Pt } from "@/lib/desk/drawings";
+import { addDrawing, clearDrawings, drawId, removeDrawing, replaceDrawing, restyle, selectDrawing, setTool, startDrawings, toggleDraw, toggleHidden, useDraw, type Drawing, type Pt } from "@/lib/desk/drawings";
 import { BAYER4 } from "@/lib/noise";
 import { onThemeChange } from "@/lib/theme";
 import { Odometer } from "@/components/trader/parts";
@@ -42,14 +47,9 @@ function ChartBar() {
   const tf = useDesk((st) => st.settings.tf);
   const pnl = useDesk((st) => st.settings.panels.pnl);
   const markets = useDesk((st) => st.settings.panels.markets);
-  const notesOpen = useDesk((st) => st.notesOpen);
   const full = useDesk((st) => st.full);
   const quote = useDesk((st) => st.quotes[sym]);
   const held = useDesk(useShallow((st) => SYMS.map((x) => Math.sign(st.positions[x]?.qty ?? 0))));
-  const noteCount = useDesk((st) => {
-    const p = st.positions[st.settings.sym];
-    return st.notes.filter((n) => (p && n.tradeId === p.tradeId) || (n.tradeId === null && n.sym === st.settings.sym)).length;
-  });
   const chg = quote.last - quote.prev;
   const ti = TIMEFRAMES.findIndex((t) => t.id === tf);
 
@@ -108,13 +108,6 @@ function ChartBar() {
           </svg>
           Live P&amp;L
         </button>
-        <button type="button" className={s.barBtn} aria-pressed={notesOpen} onClick={() => toggleNotes()} title="Notes (N)">
-          <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true">
-            <path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinejoin="round" />
-          </svg>
-          Notes
-          {noteCount > 0 && <em>{noteCount}</em>}
-        </button>
         <button type="button" className={`${s.barIcon} ${s.barKeys}`} onClick={() => showShortcuts(true)} title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">
           <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
             <rect x="1.5" y="4" width="13" height="8.5" rx="2" fill="none" stroke="currentColor" strokeWidth="1.2" />
@@ -150,12 +143,18 @@ function ChartBar() {
 type Line = {
   id: string;
   price: number;
-  kind: "entry" | "stop" | "target" | "order" | "alert";
+  kind: "entry" | "stop" | "target" | "order" | "alert" | "dbuy" | "dsell" | "dstop" | "dtarget";
   title: string;
   value?: string;
   tone?: "pos" | "neg";
   order?: Order;
   alertId?: string;
+  /** the ticket's order, drawn before it's sent */
+  draft?: "entry" | "stop" | "target";
+  /** a draft exit that keeps its distance when the draft entry is dragged */
+  follows?: boolean;
+  /** a stop or target moved since members last heard: offer to tell them */
+  moved?: boolean;
   drag: boolean;
 };
 
@@ -228,6 +227,15 @@ export function Chart() {
   const pos = useDesk((st) => st.positions[sym]);
   const orders = useDesk(useShallow((st) => st.orders.filter((o) => o.sym === sym)));
   const alerts = useDesk(useShallow((st) => st.alerts.filter((a) => a.sym === sym)));
+  const ticket = useDesk((st) => st.ticket);
+  const tQty = useDesk((st) => st.settings.qty[sym]);
+  const [dStop, dTarget, dFollowStop, dFollowTarget] = useDesk(
+    useShallow((st) => {
+      const e = ticketExits(st, sym);
+      const exact = (w: "stop" | "target") => st.ticket.pxSym === sym && st.settings.exitUnits[w][0] === "price" && (w === "stop" ? st.ticket.stopPx : st.ticket.targetPx) !== null;
+      return [e.stop, e.target, !exact("stop"), !exact("target")] as const;
+    }),
+  );
   const log = useDesk((st) => st.settings.chart.log);
   const chartCfg = useDesk((st) => st.settings.chart);
   const rail = useDraw((st) => st.rail);
@@ -236,6 +244,12 @@ export function Chart() {
   const selId = useDraw((st) => (st.hidden ? null : st.selected));
   const selKind = useDraw((st) => (st.selected ? st.byUnder[INSTRUMENTS[sym].under].find((d) => d.id === st.selected)?.kind ?? null : null));
   const selHidden = useDraw((st) => (st.selected ? !!st.byUnder[INSTRUMENTS[sym].under].find((d) => d.id === st.selected)?.hidden : false));
+  const selPos = useDraw(
+    useShallow((st) => {
+      const d = st.selected ? st.byUnder[INSTRUMENTS[sym].under].find((x) => x.id === st.selected) : undefined;
+      return d && (d.kind === "long" || d.kind === "short") ? [d.colors?.text, d.colors?.up, d.colors?.down] : null;
+    }),
+  );
   const inst = INSTRUMENTS[sym];
 
   const [auto, setAuto] = useState(true);
@@ -305,7 +319,8 @@ export function Chart() {
         if (o.role !== "stop" && o.role !== "target") continue;
         const p = o.role === "stop" ? o.stop! : o.limit!;
         const pnl = (p - pos.avg) * pos.qty * inst.pv;
-        out.push({ id: o.id, price: p, kind: o.role, title: o.role === "stop" ? (o.type === "TRAIL" ? "Trail" : "Stop") : "Target", value: money(pnl), tone: pnl >= 0 ? "pos" : "neg", order: o, drag: true });
+        const moved = p !== o.told && p !== o.quiet;
+        out.push({ id: o.id, price: p, kind: o.role, title: o.role === "stop" ? (o.type === "TRAIL" ? "Trail" : "Stop") : "Target", value: money(pnl), tone: pnl >= 0 ? "pos" : "neg", order: o, moved, drag: true });
       }
     }
     for (const o of orders) {
@@ -315,8 +330,17 @@ export function Chart() {
       out.push({ id: o.id, price: p, kind: "order", title: `${o.side > 0 ? "Buy" : "Sell"} ${o.type === "LMT" ? "lmt" : o.type === "STP" ? "stp" : o.type === "STPLMT" ? "stp lmt" : "trail"} ${o.qty}`, order: o, drag: o.type !== "TRAIL" });
     }
     for (const a of alerts) out.push({ id: a.id, price: a.price, kind: "alert", title: "Alert", alertId: a.id, drag: true });
+    // the ticket's limit or stop order, with its exits, before it's sent: drag any of them
+    const dp = ticket.type === "LMT" ? ticket.limit : ticket.type === "STP" ? ticket.stop : null;
+    if (dp !== null) {
+      const side = ticket.side;
+      const legPnl = (p: number) => (p - dp) * side * tQty * inst.pv;
+      out.push({ id: "d-entry", price: dp, kind: side > 0 ? "dbuy" : "dsell", title: `${side > 0 ? "Buy" : "Sell"} ${tQty}`, value: ticket.type === "LMT" ? "Limit" : "Stop", draft: "entry", drag: true });
+      if (dTarget !== null) out.push({ id: "d-target", price: dTarget, kind: "dtarget", title: "TP", value: money(legPnl(dTarget)), tone: "pos", draft: "target", follows: dFollowTarget, drag: true });
+      if (dStop !== null) out.push({ id: "d-stop", price: dStop, kind: "dstop", title: "SL", value: money(legPnl(dStop)), tone: "neg", draft: "stop", follows: dFollowStop, drag: true });
+    }
     return out;
-  }, [pos, orders, alerts, inst.pv]);
+  }, [pos, orders, alerts, inst.pv, ticket, tQty, dStop, dTarget, dFollowStop, dFollowTarget]);
   const linesRef = useRef(lines);
   linesRef.current = lines;
 
@@ -354,6 +378,14 @@ export function Chart() {
       e1: g("--cv-ember-1"),
       e2: g("--cv-ember-2"),
     };
+  };
+
+  /** What drawings need from the desk right now: fib levels, the ticket size, the tape. */
+  const drawCtx = (): K.DrawCtx => {
+    const ds = useDesk.getState();
+    const sy = ds.settings.sym;
+    const ins = INSTRUMENTS[sy];
+    return { fib: useDraw.getState().fib, qty: ds.settings.qty[sy], pv: ins.pv, tick: ins.tick, last: ds.quotes[sy].last };
   };
 
   /* ---------- the frame: bars, scales and geometry ---------- */
@@ -670,24 +702,26 @@ export function Chart() {
     // drawings
     const dr = useDraw.getState();
     const mine = dr.byUnder[ins.under];
+    const dc = drawCtx();
     if (!dr.hidden && fo > 0) {
       for (const d of mine) {
         // a hidden drawing only shows, faintly, while the tools are open or it's selected
         if (d.hidden && !dr.rail && d.id !== dr.selected) continue;
         ctx.globalAlpha = fo * (d.hidden ? 0.26 : 1);
-        K.paintDrawing(ctx, f, d, C, d.id === dr.selected, dr.fib);
+        K.paintDrawing(ctx, f, d, C, d.id === dr.selected, dc);
       }
       ctx.globalAlpha = 1;
     }
 
     // the bracket a hovered deal button would send
-    if (ds.preview) {
+    if (ds.preview && ds.ticket.type === "MKT") {
       const side = ds.preview;
-      const entry = side > 0 ? quote.ask : quote.bid;
-      const tk = ins.tick;
+      const look = { ...ds, ticket: { ...ds.ticket, side } };
+      const entry = ticketEntry(look, symNow);
+      const ex = ticketExits(look, symNow);
       const rows: { p: number; label: string; color: string }[] = [{ p: entry, label: side > 0 ? "Buy" : "Sell", color: C.strong }];
-      if (ds.settings.stopOn) rows.push({ p: entry - side * ds.settings.stopTicks[symNow] * tk, label: "Stop", color: C.ember });
-      if (ds.settings.targetOn) rows.push({ p: entry + side * ds.settings.targetTicks[symNow] * tk, label: "Target", color: C.blue });
+      if (ex.stop !== null) rows.push({ p: ex.stop, label: "Stop", color: C.ember });
+      if (ex.target !== null) rows.push({ p: ex.target, label: "Target", color: C.blue });
       ctx.font = `10px ${C.mono}`;
       ctx.textAlign = "right";
       for (const r of rows) {
@@ -765,10 +799,12 @@ export function Chart() {
 
     // order, position and alert lines (DOM): tags that would overlap gather into a stack
     const placed: { el: HTMLDivElement; y: number }[] = [];
+    const draftEntry = linesRef.current.find((x) => x.draft === "entry");
+    const entryShift = draftEntry && st.lineDrag?.id === draftEntry.id ? st.lineDrag.price - draftEntry.price : 0;
     for (const l of linesRef.current) {
       const el = lineEls.current.get(l.id);
       if (!el) continue;
-      const p = st.lineDrag?.id === l.id ? st.lineDrag.price : l.price;
+      const p = st.lineDrag?.id === l.id ? st.lineDrag.price : l.follows ? l.price + entryShift : l.price;
       const y = K.yOf(f, p);
       const cy = Math.max(f.pTop - 8, Math.min(f.pBot + 8, y));
       const tf = `translateY(${cy.toFixed(1)}px)`;
@@ -781,7 +817,10 @@ export function Chart() {
         const px = el.querySelector<HTMLElement>("[data-px]");
         if (px) px.textContent = fmt(p);
         const val = el.querySelector<HTMLElement>("[data-val]");
-        if (val && posNow) val.textContent = money((p - posNow.avg) * posNow.qty * ins.pv);
+        if (val && l.draft && l.draft !== "entry" && draftEntry) {
+          const t = useDesk.getState().ticket;
+          val.textContent = money((p - draftEntry.price) * t.side * ds.settings.qty[symNow] * ins.pv);
+        } else if (val && posNow) val.textContent = money((p - posNow.avg) * posNow.qty * ins.pv);
       }
       if (l.kind === "entry" && posNow) {
         const live = el.querySelector<HTMLElement>("[data-live]");
@@ -841,7 +880,7 @@ export function Chart() {
     ctx.rect(0, 0, f.plotW, f.plotH);
     ctx.clip();
     const draft = st.draft;
-    if (draft && draft.tool !== "measure" && draft.tool !== "zoom") K.paintDrawing(ctx, f, { id: "draft", kind: draft.tool, a: draft.a, b: draft.b } as Drawing, C, true);
+    if (draft && draft.tool !== "measure" && draft.tool !== "zoom") K.paintDrawing(ctx, f, { id: "draft", kind: draft.tool, a: draft.a, b: draft.b } as Drawing, C, true, drawCtx());
     if (st.drag?.kind === "brush") K.paintDrawing(ctx, f, { id: "draft", kind: "brush", pts: st.drag.pts }, C, true);
     const meas = draft?.tool === "measure" ? draft : st.measure;
     if (meas) {
@@ -897,14 +936,14 @@ export function Chart() {
       const hot = mine.find((d) => d.id === st.hover && d.id !== dr.selected);
       if (hot) {
         ctx.globalAlpha = st.fo * (hot.hidden ? 0.45 : 1);
-        K.paintDrawing(ctx, f, hot, C, true, dr.fib);
+        K.paintDrawing(ctx, f, hot, C, true, drawCtx());
         ctx.globalAlpha = st.fo;
       }
       if (sel && !dr.locked) {
         ctx.globalAlpha = st.fo;
         for (const h of K.handlesOf(f, sel)) {
           ctx.fillStyle = C.bg;
-          ctx.strokeStyle = C.strong;
+          ctx.strokeStyle = K.accentOf(sel, C);
           ctx.lineWidth = 1.5;
           ctx.beginPath();
           ctx.arc(h.x, h.y, 4.5, 0, Math.PI * 2);
@@ -1275,6 +1314,27 @@ export function Chart() {
         finish({ id: drawId(), kind: toolNow, a: p });
         return;
       }
+      if (toolNow === "long" || toolNow === "short") {
+        const f = st.frame!;
+        const ds = useDesk.getState();
+        const sy = ds.settings.sym;
+        const tk = INSTRUMENTS[sy].tick;
+        const dir = toolNow === "long" ? 1 : -1;
+        const i = Math.round(K.idxOfTime(f, p.t));
+        // sized to be workable at this zoom, at the ticket's usual reward-to-risk
+        const sT = ds.settings.stopTicks[sy];
+        const tT = ds.settings.targetTicks[sy];
+        const stopDist = Math.max(sT * tk, (f.hi - f.lo) * 0.08);
+        finish({
+          id: drawId(),
+          kind: toolNow,
+          a: p,
+          t2: K.timeOfIdx(f, i + Math.max(12, Math.round(150 / st.bw))),
+          target: snap(sy, p.p + dir * stopDist * (tT / sT)),
+          stop: snap(sy, p.p - dir * stopDist),
+        });
+        return;
+      }
       if (toolNow === "arrow") {
         const f = st.frame!;
         const i = Math.max(0, Math.min(f.bars.length - 1, Math.round(K.iOfX(f, x))));
@@ -1395,6 +1455,15 @@ export function Chart() {
       if (o.kind === "hline") next = { ...o, a: { ...o.a, p: p.p } };
       else if (o.kind === "vline") next = { ...o, a: { ...o.a, t: p.t } };
       else if (o.kind === "trend" || o.kind === "ray" || o.kind === "rect" || o.kind === "fib") next = d.idx === 0 ? { ...o, a: p } : { ...o, b: p };
+      else if (o.kind === "long" || o.kind === "short") {
+        // entry stays between its stop and target; each exit stays on its own side
+        const dir = o.kind === "long" ? 1 : -1;
+        const tk = INSTRUMENTS[useDesk.getState().settings.sym].tick;
+        if (d.idx === 0) next = (o.target - p.p) * dir > 0 && (p.p - o.stop) * dir > 0 ? { ...o, a: p } : { ...o, a: { ...o.a, t: p.t } };
+        else if (d.idx === 1) next = { ...o, t2: p.t > o.a.t ? p.t : o.t2 };
+        else if (d.idx === 2) next = { ...o, target: (p.p - o.a.p) * dir >= tk ? p.p : o.a.p + dir * tk };
+        else next = { ...o, stop: (o.a.p - p.p) * dir >= tk ? p.p : o.a.p - dir * tk };
+      }
       replaceDrawing(under(), next);
       return;
     }
@@ -1567,6 +1636,8 @@ export function Chart() {
     if (p !== l.price) {
       if (l.order) moveOrder(l.order.id, p);
       if (l.alertId) moveAlert(l.alertId, p);
+      if (l.draft === "entry") setTicket(useDesk.getState().ticket.type === "LMT" ? { limit: p } : { stop: p });
+      if (l.draft === "stop" || l.draft === "target") setExitPrice(l.draft, p);
     }
     invalidate(true);
   };
@@ -1706,18 +1777,39 @@ export function Chart() {
                     + Target
                   </button>
                 )}
-                {(l.order || l.alertId) && (
+                {(l.order || l.alertId || l.draft) && (
                   <button
                     type="button"
                     className={s.lineX}
-                    aria-label={`Cancel ${l.title}`}
+                    aria-label={l.draft === "entry" ? "Back to a market order" : l.draft ? `Remove the ${l.draft === "stop" ? "stop loss" : "take profit"}` : `Cancel ${l.title}`}
                     onPointerDown={(e) => e.stopPropagation()}
-                    onClick={() => (l.order ? cancelOrder(l.order.id) : removeAlert(l.alertId!))}
+                    onClick={() => {
+                      if (l.draft === "entry") setTicket({ type: "MKT" });
+                      else if (l.draft === "stop") setSettings({ stopOn: false });
+                      else if (l.draft === "target") setSettings({ targetOn: false });
+                      else if (l.order) cancelOrder(l.order.id);
+                      else removeAlert(l.alertId!);
+                    }}
                   >
                     ×
                   </button>
                 )}
+                {l.moved && l.order && (
+                  <span className={s.lineNotify} onPointerDown={(e) => e.stopPropagation()}>
+                    <button type="button" onClick={() => notifyMove(l.order!.id)} title={`Tell members the ${l.kind} is now ${fmt(l.price)}`}>
+                      <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M4 11V7.2a4 4 0 0 1 8 0V11l1.3 1.5H2.7z" />
+                        <path d="M6.6 14.2a1.6 1.6 0 0 0 2.8 0" />
+                      </svg>
+                      Notify
+                    </button>
+                    <button type="button" className={s.lineNotifyX} onClick={() => dismissMove(l.order!.id)} aria-label="Don't notify this move">
+                      ×
+                    </button>
+                  </span>
+                )}
               </span>
+
             </div>
           ))}
           <div
@@ -1763,8 +1855,17 @@ export function Chart() {
               ref={popRef}
               kind={selKind}
               hidden={selHidden}
+              colors={selPos ? { text: selPos[0], up: selPos[1], down: selPos[2], defUp: v.current.ink?.pos ?? "#4DA3FF", defDown: v.current.ink?.neg ?? "#FF2EC4" } : undefined}
               onHide={() => toggleHidden(inst.under, selId)}
               onDelete={() => removeDrawing(inst.under, selId)}
+              onColor={(which, hex) => restyle(inst.under, selId, { [which]: hex })}
+              onLimit={() => {
+                const d = useDraw.getState().byUnder[inst.under].find((x) => x.id === selId);
+                if (d && (d.kind === "long" || d.kind === "short")) {
+                  ticketFromPosition(d.kind === "long" ? 1 : -1, d.a.p, d.stop, d.target);
+                  selectDrawing(null);
+                }
+              }}
             />
           )}
           <Toaster inline />
