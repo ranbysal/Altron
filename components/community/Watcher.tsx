@@ -1,37 +1,14 @@
 "use client";
 
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type CSSProperties,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { dayStart, getMarket, useDesk } from "@/lib/desk/store";
 import { INSTRUMENTS, type Under } from "@/lib/desk/instruments";
 import { fmt } from "@/lib/format";
 import { BAYER4 } from "@/lib/noise";
 import { onThemeChange } from "@/lib/theme";
-import {
-  movesOf,
-  sessionOf,
-  type Move,
-  type Session,
-} from "@/lib/community/moves";
+import { movesOf, sessionOf, type Move, type Session } from "@/lib/community/moves";
 import { clock, dayKey } from "@/lib/community/trades";
-import {
-  ago,
-  startWatch,
-  useWatch,
-  POSTS,
-  type CalEvent,
-  type Calendar,
-  type FeedState,
-  type Post,
-  type Wire,
-  type WireItem,
-} from "@/lib/community/watch";
+import { ago, startWatch, useWatch, POSTS, type CalEvent, type Calendar, type FeedState, type Post, type Wire, type WireItem } from "@/lib/community/watch";
 import c from "./community.module.css";
 
 /*
@@ -67,11 +44,7 @@ function hue(name: string): number {
 type Twttr = {
   ready?: (cb: (t: Twttr) => void) => void;
   widgets?: {
-    createTweet: (
-      id: string,
-      el: HTMLElement,
-      opts: Record<string, unknown>,
-    ) => Promise<HTMLElement | undefined>;
+    createTweet: (id: string, el: HTMLElement, opts: Record<string, unknown>) => Promise<HTMLElement | undefined>;
   };
 };
 let widgets: Promise<Twttr> | null = null;
@@ -99,17 +72,9 @@ function loadWidgets(): Promise<Twttr> {
 }
 
 function useTheme(): "light" | "dark" {
-  const [theme, setTheme] = useState<"light" | "dark">(() =>
-    typeof document !== "undefined" &&
-    document.documentElement.dataset.theme === "dark"
-      ? "dark"
-      : "light",
-  );
+  const [theme, setTheme] = useState<"light" | "dark">(() => (typeof document !== "undefined" && document.documentElement.dataset.theme === "dark" ? "dark" : "light"));
   useEffect(() => {
-    const read = () =>
-      setTheme(
-        document.documentElement.dataset.theme === "dark" ? "dark" : "light",
-      );
+    const read = () => setTheme(document.documentElement.dataset.theme === "dark" ? "dark" : "light");
     read();
     return onThemeChange(read);
   }, []);
@@ -165,16 +130,8 @@ function XPost({ post, theme }: { post: Post; theme: "light" | "dark" }) {
         </div>
       )}
       {state === "quiet" && (
-        <a
-          className={c.xmiss}
-          href={url}
-          target="_blank"
-          rel="noreferrer noopener"
-        >
-          <span
-            className={c.mono2}
-            style={{ "--h": hue(post.handle) } as CSSProperties}
-          >
+        <a className={c.xmiss} href={url} target="_blank" rel="noreferrer noopener">
+          <span className={c.mono2} style={{ "--h": hue(post.handle) } as CSSProperties}>
             {mono(post.handle)}
           </span>
           <span>
@@ -207,22 +164,10 @@ function Thumb({ item }: { item: WireItem }) {
   if (item.image && !bad)
     return (
       // eslint-disable-next-line @next/next/no-img-element
-      <img
-        className={c.thumb}
-        src={item.image}
-        alt=""
-        loading="lazy"
-        decoding="async"
-        referrerPolicy="no-referrer"
-        onError={() => setBad(true)}
-      />
+      <img className={c.thumb} src={item.image} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" onError={() => setBad(true)} />
     );
   return (
-    <span
-      className={`${c.thumb} ${c.thumbMono}`}
-      style={{ "--h": hue(item.source) } as CSSProperties}
-      aria-hidden="true"
-    >
+    <span className={`${c.thumb} ${c.thumbMono}`} style={{ "--h": hue(item.source) } as CSSProperties} aria-hidden="true">
       {mono(item.source)}
     </span>
   );
@@ -243,10 +188,7 @@ export function News({ feed, now }: { feed: FeedState<Wire>; now: number }) {
         ) : (
           <>
             <p>No headlines right now.</p>
-            <span>
-              Headlines come straight from publishers&apos; own feeds and
-              refresh every minute.
-            </span>
+            <span>Headlines come straight from publishers&apos; own feeds and refresh every minute.</span>
           </>
         )}
       </div>
@@ -258,9 +200,7 @@ export function News({ feed, now }: { feed: FeedState<Wire>; now: number }) {
           <a href={x.url} target="_blank" rel="noreferrer noopener">
             <span className={c.newsText}>
               <span className={c.wMeta}>
-                <time dateTime={new Date(x.at).toISOString()}>
-                  {dayKey(x.at) === today ? clock(x.at) : ago(x.at, now)}
-                </time>
+                <time dateTime={new Date(x.at).toISOString()}>{dayKey(x.at) === today ? clock(x.at) : ago(x.at, now)}</time>
                 <em>{x.source}</em>
               </span>
               <b>{x.title}</b>
@@ -302,20 +242,13 @@ function until(ms: number): string {
   const m = Math.max(0, Math.round(ms / 60_000));
   if (m < 1) return "now";
   if (m < 60) return `in ${m}m`;
-  if (m < 1440)
-    return `in ${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m`;
+  if (m < 1440) return `in ${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m`;
   return `in ${Math.floor(m / 1440)}d ${Math.floor((m % 1440) / 60)}h`;
 }
 
 function Pips({ n }: { n: number }) {
   return (
-    <span
-      className={c.pips}
-      data-n={n}
-      aria-label={
-        n === 3 ? "High impact" : n === 2 ? "Medium impact" : "Low impact"
-      }
-    >
+    <span className={c.pips} data-n={n} aria-label={n === 3 ? "High impact" : n === 2 ? "Medium impact" : "Low impact"}>
       <i />
       <i />
       <i />
@@ -340,9 +273,7 @@ export function useCalView(on: boolean) {
   const [view, setView] = useState<"list" | "week">("list");
   const [held, setHeld] = useState(false);
   const [lap, setLap] = useState(0);
-  const reduce =
-    typeof window !== "undefined" &&
-    !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  const reduce = typeof window !== "undefined" && !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
   useEffect(() => {
     if (held || reduce || !on) return;
     const id = window.setTimeout(() => {
@@ -367,39 +298,18 @@ export function CalControls({ v }: { v: CalView }) {
     <span className={c.calCtl}>
       <span className={c.views} role="tablist" aria-label="Calendar view">
         {(["list", "week"] as const).map((x) => (
-          <button
-            key={x}
-            type="button"
-            role="tab"
-            aria-selected={v.view === x}
-            onClick={() => v.choose(x)}
-          >
+          <button key={x} type="button" role="tab" aria-selected={v.view === x} onClick={() => v.choose(x)}>
             {x === "list" ? "List" : "Week"}
-            {v.view === x && v.on && !v.held && !v.reduce && (
-              <i
-                key={v.lap}
-                className={c.lapBar}
-                style={{ animationDuration: `${CYCLE_MS}ms` }}
-                aria-hidden="true"
-              />
-            )}
+            {v.view === x && v.on && !v.held && !v.reduce && <i key={v.lap} className={c.lapBar} style={{ animationDuration: `${CYCLE_MS}ms` }} aria-hidden="true" />}
           </button>
         ))}
       </span>
       <i className={c.calSep} aria-hidden="true" />
       <span className={c.calToggle} role="group" aria-label="Which releases">
-        <button
-          type="button"
-          aria-pressed={keyOnly}
-          onClick={() => useWatch.setState({ keyOnly: true })}
-        >
+        <button type="button" aria-pressed={keyOnly} onClick={() => useWatch.setState({ keyOnly: true })}>
           Key
         </button>
-        <button
-          type="button"
-          aria-pressed={!keyOnly}
-          onClick={() => useWatch.setState({ keyOnly: false })}
-        >
+        <button type="button" aria-pressed={!keyOnly} onClick={() => useWatch.setState({ keyOnly: false })}>
           All
         </button>
       </span>
@@ -407,27 +317,13 @@ export function CalControls({ v }: { v: CalView }) {
   );
 }
 
-export function CalendarCard({
-  feed,
-  now,
-  v,
-}: {
-  feed: FeedState<Calendar>;
-  now: number;
-  v: CalView;
-}) {
+export function CalendarCard({ feed, now, v }: { feed: FeedState<Calendar>; now: number; v: CalView }) {
   const keyOnly = useWatch((s) => s.keyOnly);
   const { view, setHeld } = v;
   const all = feed.data?.events ?? [];
   const today = dayKey(now);
-  const events = useMemo(
-    () =>
-      all.filter((e) => (!keyOnly || e.impact >= 2) && dayKey(e.at) >= today),
-    [all, keyOnly, today],
-  );
-  const next =
-    events.find((e) => e.at > now && e.impact >= 2 && !e.allDay) ??
-    events.find((e) => e.at > now);
+  const events = useMemo(() => all.filter((e) => (!keyOnly || e.impact >= 2) && dayKey(e.at) >= today), [all, keyOnly, today]);
+  const next = events.find((e) => e.at > now && e.impact >= 2 && !e.allDay) ?? events.find((e) => e.at > now);
 
   const groups = useMemo(() => {
     const out: { key: string; label: string; rows: CalEvent[] }[] = [];
@@ -449,13 +345,7 @@ export function CalendarCard({
   const days = useMemo(() => weekdays(now), [now]);
 
   return (
-    <div
-      className={c.cal}
-      onPointerEnter={() => setHeld(true)}
-      onPointerLeave={() => setHeld(false)}
-      onFocus={() => setHeld(true)}
-      onBlur={() => setHeld(false)}
-    >
+    <div className={c.cal} onPointerEnter={() => setHeld(true)} onPointerLeave={() => setHeld(false)} onFocus={() => setHeld(true)} onBlur={() => setHeld(false)}>
       {!all.length ? (
         <div className={c.empty}>
           {feed.state === "loading" ? (
@@ -467,10 +357,7 @@ export function CalendarCard({
           ) : (
             <>
               <p>No calendar right now.</p>
-              <span>
-                Releases and Fed events load from the agencies&apos; own
-                calendars and refresh through the day.
-              </span>
+              <span>Releases and Fed events load from the agencies&apos; own calendars and refresh through the day.</span>
             </>
           )}
         </div>
@@ -484,29 +371,19 @@ export function CalendarCard({
               <strong>{next.title}</strong>
               <span className={c.nextMeta}>
                 <Pips n={next.impact} />
-                {SRC[next.src]} ·{" "}
-                {dayKey(next.at) === today ? "today" : DAY_LONG.format(next.at)}
+                {SRC[next.src]} · {dayKey(next.at) === today ? "today" : DAY_LONG.format(next.at)}
                 {!next.allDay && ` ${clock(next.at)} ET`}
               </span>
             </div>
           )}
           <div className={c.calStage}>
-            <div
-              className={`${c.scroll} ${c.calList}`}
-              data-on={view === "list" ? "" : undefined}
-              aria-hidden={view !== "list"}
-              inert={view !== "list"}
-            >
+            <div className={`${c.scroll} ${c.calList}`} data-on={view === "list" ? "" : undefined} aria-hidden={view !== "list"} inert={view !== "list"}>
               {groups.map((g) => (
                 <section key={g.key}>
                   <h4>{g.label}</h4>
                   <ul>
                     {g.rows.map((e) => (
-                      <li
-                        key={e.id}
-                        data-past={e.at < now ? "" : undefined}
-                        data-next={e === next ? "" : undefined}
-                      >
+                      <li key={e.id} data-past={e.at < now ? "" : undefined} data-next={e === next ? "" : undefined}>
                         <time>{e.allDay ? "Day" : clock(e.at)}</time>
                         <Pips n={e.impact} />
                         <span className={c.calTitle} title={e.title}>
@@ -518,55 +395,27 @@ export function CalendarCard({
                   </ul>
                 </section>
               ))}
-              {!events.length && (
-                <p className={c.none}>
-                  {keyOnly
-                    ? "No key releases in the next ten days. Switch to All for the rest."
-                    : "Nothing scheduled in the next ten days."}
-                </p>
-              )}
+              {!events.length && <p className={c.none}>{keyOnly ? "No key releases in the next ten days. Switch to All for the rest." : "Nothing scheduled in the next ten days."}</p>}
             </div>
-            <div
-              className={c.week}
-              data-on={view === "week" ? "" : undefined}
-              aria-hidden={view !== "week"}
-              inert={view !== "week"}
-            >
+            <div className={c.week} data-on={view === "week" ? "" : undefined} aria-hidden={view !== "week"} inert={view !== "week"}>
               {days.map((d) => {
                 const rows = events.filter((e) => dayKey(e.at) === d.key);
                 const shown = rows.slice(0, 5);
                 return (
-                  <div
-                    key={d.key}
-                    className={c.day}
-                    data-today={d.key === today ? "" : undefined}
-                  >
+                  <div key={d.key} className={c.day} data-today={d.key === today ? "" : undefined}>
                     <header>
                       <span>{WD.format(d.at)}</span>
                       <b>{DN.format(d.at)}</b>
                     </header>
                     <ul>
                       {shown.map((e) => (
-                        <li
-                          key={e.id}
-                          data-n={e.impact}
-                          data-past={e.at < now ? "" : undefined}
-                          title={`${e.title} · ${SRC[e.src]}`}
-                        >
-                          <time>
-                            {e.allDay
-                              ? "Day"
-                              : clock(e.at).replace(/ (AM|PM)$/, (m) =>
-                                  m.trim().toLowerCase().slice(0, 1),
-                                )}
-                          </time>
+                        <li key={e.id} data-n={e.impact} data-past={e.at < now ? "" : undefined} title={`${e.title} · ${SRC[e.src]}`}>
+                          <time>{e.allDay ? "Day" : clock(e.at).replace(/ (AM|PM)$/, (m) => m.trim().toLowerCase().slice(0, 1))}</time>
                           <span>{e.title}</span>
                         </li>
                       ))}
                     </ul>
-                    {rows.length > shown.length && (
-                      <em>+{rows.length - shown.length} more</em>
-                    )}
+                    {rows.length > shown.length && <em>+{rows.length - shown.length} more</em>}
                     {!rows.length && <em>Nothing</em>}
                   </div>
                 );
@@ -584,17 +433,7 @@ export function CalendarCard({
 /* ------------------------------------------------------------------ */
 
 /** The session as a thin line over a dithered glow, as on the landing band. Marks sit where the pushes ended. */
-function SessionLine({
-  s,
-  up,
-  marks,
-  hot,
-}: {
-  s: Session;
-  up: boolean;
-  marks: Move[];
-  hot: string | null;
-}) {
+function SessionLine({ s, up, marks, hot }: { s: Session; up: boolean; marks: Move[]; hot: string | null }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const [theme, setTheme] = useState(0);
   useEffect(() => onThemeChange(() => setTheme((n) => n + 1)), []);
@@ -624,18 +463,14 @@ function SessionLine({
       const a = new Path2D();
       const b = new Path2D();
       for (let x = 0; x < W - pad; x += cell) {
-        const i = Math.min(
-          n - 1,
-          Math.round(((x - 1) / (W - pad - 2)) * (n - 1)),
-        );
+        const i = Math.min(n - 1, Math.round(((x - 1) / (W - pad - 2)) * (n - 1)));
         if (i < 0) continue;
         const y0 = Y(s.line[i]);
         const reach = Math.max(1, H - y0);
         for (let y = Math.ceil(y0 / cell) * cell; y < H; y += cell) {
           const k = 1 - (y - y0) / reach;
           const I = 0.03 + 0.5 * k * k * k;
-          if (I > (BAYER4[((y / cell) & 3) * 4 + ((x / cell) & 3)] + 0.5) / 16)
-            (I > 0.3 ? b : a).rect(x, y, 2, 2);
+          if (I > (BAYER4[((y / cell) & 3) * 4 + ((x / cell) & 3)] + 0.5) / 16) (I > 0.3 ? b : a).rect(x, y, 2, 2);
         }
       }
       g.fillStyle = v(up ? "--cv-dither-1" : "--cv-ember-1");
@@ -644,9 +479,7 @@ function SessionLine({
       g.fill(b);
       // line
       g.beginPath();
-      s.line.forEach((p, i) =>
-        i ? g.lineTo(X(i), Y(p)) : g.moveTo(X(i), Y(p)),
-      );
+      s.line.forEach((p, i) => (i ? g.lineTo(X(i), Y(p)) : g.moveTo(X(i), Y(p))));
       g.strokeStyle = v("--text-strong");
       g.lineWidth = 1.25;
       g.lineJoin = "round";
@@ -679,27 +512,10 @@ function SessionLine({
     ro.observe(cv);
     return () => ro.disconnect();
   }, [s, up, marks, hot, theme]);
-  return (
-    <canvas
-      ref={ref}
-      className={c.sLine}
-      role="img"
-      aria-label={`${s.under} session, low ${fmt(s.lo)} to high ${fmt(s.hi)}`}
-    />
-  );
+  return <canvas ref={ref} className={c.sLine} role="img" aria-label={`${s.under} session, low ${fmt(s.lo)} to high ${fmt(s.hi)}`} />;
 }
 
-function Market({
-  under,
-  s,
-  marks,
-  hot,
-}: {
-  under: Under;
-  s: Session | null;
-  marks: Move[];
-  hot: string | null;
-}) {
+function Market({ under, s, marks, hot }: { under: Under; s: Session | null; marks: Move[]; hot: string | null }) {
   const q = useDesk((st) => st.quotes[under]);
   const inst = INSTRUMENTS[under];
   const chg = q.last - q.prev;
@@ -725,11 +541,7 @@ function Market({
           </em>
         </span>
       </div>
-      {s ? (
-        <SessionLine s={s} up={up} marks={marks} hot={hot} />
-      ) : (
-        <div className={c.sLine} />
-      )}
+      {s ? <SessionLine s={s} up={up} marks={marks} hot={hot} /> : <div className={c.sLine} />}
       <div className={c.range} style={{ "--at": at } as CSSProperties}>
         <span>{fmt(lo)}</span>
         <span className={c.rangeBar} aria-hidden="true">
@@ -772,18 +584,9 @@ export function Moves({ now }: { now: number }) {
   return (
     <div className={c.moves}>
       {(["NQ", "ES"] as Under[]).map((u) => (
-        <Market
-          key={u}
-          under={u}
-          s={state.sessions[u] ?? null}
-          marks={state.moves.filter((x) => x.under === u)}
-          hot={hot}
-        />
+        <Market key={u} under={u} s={state.sessions[u] ?? null} marks={state.moves.filter((x) => x.under === u)} hot={hot} />
       ))}
-      <ol
-        className={`${c.scroll} ${c.moveLog}`}
-        onMouseLeave={() => setHot(null)}
-      >
+      <ol className={`${c.scroll} ${c.moveLog}`} onMouseLeave={() => setHot(null)}>
         {state.moves.map((m) => (
           <li key={m.id} data-kind={m.kind} onMouseEnter={() => setHot(m.id)}>
             <time>{dayKey(m.at) === today ? clock(m.at) : ago(m.at, now)}</time>
@@ -795,9 +598,7 @@ export function Moves({ now }: { now: number }) {
             </em>
           </li>
         ))}
-        {!state.moves.length && (
-          <li className={c.none}>The session is just getting going.</li>
-        )}
+        {!state.moves.length && <li className={c.none}>The session is just getting going.</li>}
       </ol>
     </div>
   );

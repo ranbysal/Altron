@@ -24,8 +24,7 @@ export function startWatch() {
   started = true;
   try {
     const raw = JSON.parse(localStorage.getItem(KEY) ?? "null");
-    if (raw && typeof raw.keyOnly === "boolean")
-      useWatch.setState({ keyOnly: raw.keyOnly });
+    if (raw && typeof raw.keyOnly === "boolean") useWatch.setState({ keyOnly: raw.keyOnly });
   } catch {
     /* nothing saved */
   }
