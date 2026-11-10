@@ -11,7 +11,14 @@ import type { Under } from "./instruments";
  * Swap for the Databento stream when it's back.
  */
 
-export type Bar = { t: number; o: number; h: number; l: number; c: number; v: number };
+export type Bar = {
+  t: number;
+  o: number;
+  h: number;
+  l: number;
+  c: number;
+  v: number;
+};
 
 export type Quote = {
   last: number;
@@ -24,7 +31,10 @@ export type Quote = {
   at: number;
 };
 
-const SPEC: Record<Under, { tick: number; start: number; sigma: number; vol: number; dayVol: number }> = {
+const SPEC: Record<
+  Under,
+  { tick: number; start: number; sigma: number; vol: number; dayVol: number }
+> = {
   NQ: { tick: 0.25, start: 24486.25, sigma: 9.5, vol: 950, dayVol: 0.0145 },
   ES: { tick: 0.25, start: 6836.5, sigma: 2.3, vol: 2300, dayVol: 0.0105 },
 };
@@ -103,16 +113,33 @@ export function nyOffset(ms: number): number {
     // second Sunday of March 2:00 EST, first Sunday of November 2:00 EDT
     const mar = new Date(Date.UTC(y, 2, 1)).getUTCDay();
     const nov = new Date(Date.UTC(y, 10, 1)).getUTCDay();
-    r = [Date.UTC(y, 2, 1 + ((7 - mar) % 7) + 7, 7), Date.UTC(y, 10, 1 + ((7 - nov) % 7), 6)];
+    r = [
+      Date.UTC(y, 2, 1 + ((7 - mar) % 7) + 7, 7),
+      Date.UTC(y, 10, 1 + ((7 - nov) % 7), 6),
+    ];
     dst.set(y, r);
   }
   return ms >= r[0] && ms < r[1] ? -240 : -300;
 }
 
-export type NyParts = { y: number; mo: number; d: number; wd: number; min: number; sec: number };
+export type NyParts = {
+  y: number;
+  mo: number;
+  d: number;
+  wd: number;
+  min: number;
+  sec: number;
+};
 export function nyParts(ms: number): NyParts {
   const l = new Date(ms + nyOffset(ms) * MIN);
-  return { y: l.getUTCFullYear(), mo: l.getUTCMonth(), d: l.getUTCDate(), wd: l.getUTCDay(), min: l.getUTCHours() * 60 + l.getUTCMinutes(), sec: l.getUTCSeconds() };
+  return {
+    y: l.getUTCFullYear(),
+    mo: l.getUTCMonth(),
+    d: l.getUTCDate(),
+    wd: l.getUTCDay(),
+    min: l.getUTCHours() * 60 + l.getUTCMinutes(),
+    sec: l.getUTCSeconds(),
+  };
 }
 
 /** Minutes past midnight in New York, and the weekday (0 = Sunday). */
@@ -171,6 +198,98 @@ function lowerBound(bars: Bar[], t: number): number {
   return lo;
 }
 
+/** A price the history has to pass through: a fill on the book. */
+export type Pin = { t: number; p: number };
+/** A stretch the price stayed inside: a trade between its stop and target, before it ended. */
+export type Band = { from: number; to: number; lo: number; hi: number };
+export type Pins = {
+  at?: Partial<Record<Under, Pin[]>>;
+  bands?: Partial<Record<Under, Band[]>>;
+};
+
+/**
+ * Bends generated history so it agrees with the book: each pinned bar closes at the
+ * pinned price, the bend fades linearly between pins and to nothing at the last bar,
+ * and bars inside a trade stay between its stop and target until the bar it ended in.
+ * Works on unsnapped prices; the caller snaps to the tick after.
+ */
+function pinBars(
+  bars: Bar[],
+  span: number,
+  tick: number,
+  pins: Pin[] = [],
+  bands: Band[] = [],
+) {
+  if (bars.length < 2) return;
+  const t0 = bars[0].t;
+  const tEnd = bars[bars.length - 1].t;
+  const at = (t: number) => {
+    const i = lowerBound(bars, t + 1) - 1;
+    return i >= 0 && t < bars[i].t + span ? i : -1;
+  };
+  const byBar = new Map<number, Pin[]>();
+  for (const p of pins) {
+    if (p.t < t0 || p.t >= tEnd) continue; // the live bar is the tape's
+    const i = at(p.t);
+    if (i < 0) continue;
+    const list = byBar.get(i) ?? [];
+    list.push(p);
+    byBar.set(i, list);
+  }
+  if (byBar.size) {
+    const anchors: { t: number; d: number }[] = [];
+    for (const i of [...byBar.keys()].sort((a, b) => a - b)) {
+      const ps = byBar.get(i)!.sort((a, b) => a.t - b.t);
+      anchors.push({ t: bars[i].t + span, d: ps[ps.length - 1].p - bars[i].c });
+    }
+    anchors.push({ t: tEnd + span, d: 0 });
+    let k = 0;
+    const dAt = (t: number) => {
+      if (t <= anchors[0].t) return anchors[0].d;
+      while (k < anchors.length - 2 && anchors[k + 1].t < t) k++;
+      const a = anchors[k];
+      const b = anchors[k + 1];
+      if (t >= b.t) return b.d;
+      return a.d + ((b.d - a.d) * (t - a.t)) / (b.t - a.t);
+    };
+    for (const b of bars) {
+      const dO = dAt(b.t);
+      const dC = dAt(b.t + span);
+      const o = b.o + dO;
+      const c = b.c + dC;
+      b.h = Math.max(b.h + Math.max(dO, dC), o, c);
+      b.l = Math.min(b.l + Math.min(dO, dC), o, c);
+      b.o = o;
+      b.c = c;
+    }
+  }
+  for (const band of bands) {
+    const i0 = at(band.from);
+    const i1 = at(band.to);
+    if (i0 < 0 || i1 < 0) continue;
+    const lo = band.lo + tick;
+    const hi = band.hi - tick;
+    if (hi <= lo) continue;
+    const fit = (x: number) => Math.min(hi, Math.max(lo, x));
+    for (let i = i0; i < i1; i++) {
+      const b = bars[i];
+      b.o = fit(b.o);
+      b.c = fit(b.c);
+      b.h = fit(b.h);
+      b.l = fit(b.l);
+    }
+    bars[i1].o = fit(bars[i1].o);
+  }
+  // every pinned price sits inside its bar
+  for (const [i, ps] of byBar) {
+    const b = bars[i];
+    for (const p of ps) {
+      if (p.p > b.h) b.h = p.p;
+      if (p.p < b.l) b.l = p.p;
+    }
+  }
+}
+
 /**
  * Buckets source bars by `keyOf`. Only the last bucket is rebuilt as the source
  * grows, and the same object is reused for it, so any array holding it sees the
@@ -186,7 +305,8 @@ class Rollup {
 
   get(src: Bar[]): Bar[] {
     if (!src.length) return this.out;
-    if (src.length === this.len && src[0].t === this.head && this.out.length) return this.refresh(src);
+    if (src.length === this.len && src[0].t === this.head && this.out.length)
+      return this.refresh(src);
     const last = this.out.length ? this.out[this.out.length - 1] : null;
     let i = 0;
     let reuse: Bar | null = null;
@@ -196,7 +316,8 @@ class Rollup {
         reuse = this.out.pop()!;
       } else {
         i = lowerBound(src, last.t + 1);
-        while (i < src.length && this.keyOf(src[i].t) === this.keyOf(last.t)) i++;
+        while (i < src.length && this.keyOf(src[i].t) === this.keyOf(last.t))
+          i++;
       }
     }
     let cur: Bar | null = null;
@@ -280,7 +401,10 @@ export class Market {
   private rolls = new Map<string, Rollup>();
   private joined = new Map<string, { n: number; bars: Bar[] }>();
 
-  constructor(endPrices?: Partial<Record<Under, number>>) {
+  private pins: Pins;
+
+  constructor(endPrices?: Partial<Record<Under, number>>, pins: Pins = {}) {
+    this.pins = pins;
     let seed = (Date.now() % 2147483647) | 0;
     this.rnd = () => {
       seed = (seed + 0x6d2b79f5) | 0;
@@ -289,7 +413,10 @@ export class Market {
       return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
     };
     const now = Date.now();
-    this.series = { NQ: this.build("NQ", now, endPrices?.NQ), ES: this.build("ES", now, endPrices?.ES) };
+    this.series = {
+      NQ: this.build("NQ", now, endPrices?.NQ),
+      ES: this.build("ES", now, endPrices?.ES),
+    };
     this.lastStep = now;
   }
 
@@ -319,15 +446,35 @@ export class Market {
         if (p > h) h = p;
         if (p < l) l = p;
       }
-      bars.push({ t, o, h, l, c: p, v: Math.round(sp.vol * f * heat * Math.exp(gauss(rnd) * 0.35)) });
+      bars.push({
+        t,
+        o,
+        h,
+        l,
+        c: p,
+        v: Math.round(sp.vol * f * heat * Math.exp(gauss(rnd) * 0.35)),
+      });
     }
     const shift = end - bars[bars.length - 1].c;
+    for (const b of bars) {
+      b.o += shift;
+      b.h += shift;
+      b.l += shift;
+      b.c += shift;
+    }
+    pinBars(
+      bars,
+      MIN,
+      sp.tick,
+      this.pins.at?.[under],
+      this.pins.bands?.[under],
+    );
     const q = this.snapper(sp.tick);
     for (const b of bars) {
-      b.o = q(b.o + shift);
-      b.h = q(b.h + shift);
-      b.l = q(b.l + shift);
-      b.c = q(b.c + shift);
+      b.o = q(b.o);
+      b.h = q(b.h);
+      b.l = q(b.l);
+      b.c = q(b.c);
       b.h = Math.max(b.h, b.o, b.c);
       b.l = Math.min(b.l, b.o, b.c);
     }
@@ -340,7 +487,8 @@ export class Market {
     const rnd = this.rnd;
     const rel = sp.sigma / sp.start; // per-minute move, as a share of price
     const bars: Bar[] = [];
-    const startT = Math.floor((before - M30_DAYS * DAY) / (30 * MIN)) * 30 * MIN;
+    const startT =
+      Math.floor((before - M30_DAYS * DAY) / (30 * MIN)) * 30 * MIN;
     let lp = Math.log(end);
     let heat = 1;
     for (let t = startT; t < before - 30 * MIN + 1; t += 30 * MIN) {
@@ -357,15 +505,35 @@ export class Market {
         if (x > h) h = x;
         if (x < l) l = x;
       }
-      bars.push({ t, o, h, l, c: Math.exp(lp), v: Math.round(sp.vol * 30 * f * heat * Math.exp(gauss(rnd) * 0.3)) });
+      bars.push({
+        t,
+        o,
+        h,
+        l,
+        c: Math.exp(lp),
+        v: Math.round(sp.vol * 30 * f * heat * Math.exp(gauss(rnd) * 0.3)),
+      });
     }
     const k = end / bars[bars.length - 1].c;
+    for (const b of bars) {
+      b.o *= k;
+      b.h *= k;
+      b.l *= k;
+      b.c *= k;
+    }
+    pinBars(
+      bars,
+      30 * MIN,
+      sp.tick,
+      this.pins.at?.[under],
+      this.pins.bands?.[under],
+    );
     const q = this.snapper(sp.tick);
     for (const b of bars) {
-      b.o = q(b.o * k);
-      b.h = q(b.h * k);
-      b.l = q(b.l * k);
-      b.c = q(b.c * k);
+      b.o = q(b.o);
+      b.h = q(b.h);
+      b.l = q(b.l);
+      b.c = q(b.c);
       b.h = Math.max(b.h, b.o, b.c);
       b.l = Math.min(b.l, b.o, b.c);
     }
@@ -430,7 +598,9 @@ export class Market {
         h: q(h),
         l: q(l),
         c: q(c),
-        v: Math.round(sp.vol * 1380 * (0.7 + 0.6 * move) * Math.exp(gauss(rnd) * 0.25)),
+        v: Math.round(
+          sp.vol * 1380 * (0.7 + 0.6 * move) * Math.exp(gauss(rnd) * 0.25),
+        ),
       });
       prev = c;
     }
@@ -454,7 +624,11 @@ export class Market {
       const path: number[] = [0];
       for (let k = 1; k <= 60; k++) path.push(path[k - 1] + gauss(rnd));
       const end = path[60];
-      for (let k = 0; k <= 60; k++) path[k] = m.o + (m.c - m.o) * (k / 60) + (path[k] - (k / 60) * end) * (sp.sigma / 9);
+      for (let k = 0; k <= 60; k++)
+        path[k] =
+          m.o +
+          (m.c - m.o) * (k / 60) +
+          (path[k] - (k / 60) * end) * (sp.sigma / 9);
       let hi = 0;
       let lo = 0;
       for (let k = 1; k < 60; k++) {
@@ -463,18 +637,36 @@ export class Market {
       }
       path[hi || 30] = m.h;
       path[lo || 31] = m.l;
-      for (let k = 0; k <= 60; k++) path[k] = Math.min(m.h, Math.max(m.l, path[k]));
+      for (let k = 0; k <= 60; k++)
+        path[k] = Math.min(m.h, Math.max(m.l, path[k]));
       let left = m.v;
       for (let k = 0; k < 60; k++) {
         const o = q(path[k]);
         const c = q(path[k + 1]);
-        const v = k === 59 ? left : Math.min(left, Math.round((m.v / 60) * (0.4 + rnd() * 1.2)));
+        const v =
+          k === 59
+            ? left
+            : Math.min(left, Math.round((m.v / 60) * (0.4 + rnd() * 1.2)));
         left -= v;
-        out.push({ t: m.t + k * SEC, o, h: Math.max(o, c), l: Math.min(o, c), c, v: Math.max(0, v) });
+        out.push({
+          t: m.t + k * SEC,
+          o,
+          h: Math.max(o, c),
+          l: Math.min(o, c),
+          c,
+          v: Math.max(0, v),
+        });
       }
     }
     const live = m1[m1.length - 1];
-    out.push({ t: Math.floor(Date.now() / SEC) * SEC, o: live.c, h: live.c, l: live.c, c: live.c, v: 0 });
+    out.push({
+      t: Math.floor(Date.now() / SEC) * SEC,
+      o: live.c,
+      h: live.c,
+      l: live.c,
+      c: live.c,
+      v: 0,
+    });
     return out;
   }
 
@@ -496,7 +688,16 @@ export class Market {
       d1,
       version: 0,
       heat: 1,
-      quote: { last, bid: last, ask: last + sp.tick, prev: last, hi: last, lo: last, dir: 0, at: now },
+      quote: {
+        last,
+        bid: last,
+        ask: last + sp.tick,
+        prev: last,
+        hi: last,
+        lo: last,
+        dir: 0,
+        at: now,
+      },
     };
     this.sessionStats(s, now);
     return s;
@@ -527,22 +728,45 @@ export class Market {
     let changed = false;
     // after a long sleep (hidden tab), pick the tape up again instead of racing through it
     if (now - this.lastStep > 20_000) this.lastStep = now - 20_000;
-    const steps = Math.min(40, Math.max(0, Math.floor((now - this.lastStep) / STEP_MS)));
+    const steps = Math.min(
+      40,
+      Math.max(0, Math.floor((now - this.lastStep) / STEP_MS)),
+    );
     if (!steps) return false;
     for (let k = 0; k < steps; k++) {
       const t = this.lastStep + (k + 1) * STEP_MS;
       const z1 = gauss(this.rnd);
       const z2 = gauss(this.rnd);
-      const shocks: Record<Under, number> = { NQ: z1, ES: 0.86 * z1 + 0.51 * z2 };
+      const shocks: Record<Under, number> = {
+        NQ: z1,
+        ES: 0.86 * z1 + 0.51 * z2,
+      };
       for (const under of ["NQ", "ES"] as Under[]) {
         const s = this.series[under];
         const sp = SPEC[under];
         // bursts: volatility clusters, then calms
-        s.heat = Math.max(0.55, Math.min(2.6, 0.985 * s.heat + 0.015 * (0.7 + Math.abs(shocks[under]) * 0.9) + (this.rnd() < 0.0015 ? 0.9 : 0)));
-        const sigma = (sp.sigma * Math.max(0.8, activity(t)) * s.heat) / Math.sqrt(240);
+        s.heat = Math.max(
+          0.55,
+          Math.min(
+            2.6,
+            0.985 * s.heat +
+              0.015 * (0.7 + Math.abs(shocks[under]) * 0.9) +
+              (this.rnd() < 0.0015 ? 0.9 : 0),
+          ),
+        );
+        const sigma =
+          (sp.sigma * Math.max(0.8, activity(t)) * s.heat) / Math.sqrt(240);
         s.latent += shocks[under] * sigma + (s.anchor - s.latent) * 0.00004;
         const last = Math.round(s.latent / s.tick) * s.tick;
-        const vol = Math.max(1, Math.round((sp.vol / 240) * activity(t) * s.heat * Math.exp(gauss(this.rnd) * 0.5)));
+        const vol = Math.max(
+          1,
+          Math.round(
+            (sp.vol / 240) *
+              activity(t) *
+              s.heat *
+              Math.exp(gauss(this.rnd) * 0.5),
+          ),
+        );
 
         let bar = s.m1[s.m1.length - 1];
         const barT = Math.floor(t / MIN) * MIN;
@@ -623,18 +847,28 @@ export class Market {
     if (tf <= 1) return s.s1;
     if (tf === 30) return this.roll(`${under}:30s`, bucket(30 * SEC), s.s1);
     if (tf === 60) return s.m1;
-    if (tf === 300 || tf === 900) return this.roll(`${under}:${tf}`, bucket(tf * SEC), s.m1);
-    const half = this.join(`${under}:30m`, s.m30, this.roll(`${under}:30m-recent`, bucket(30 * MIN), s.m1));
+    if (tf === 300 || tf === 900)
+      return this.roll(`${under}:${tf}`, bucket(tf * SEC), s.m1);
+    const half = this.join(
+      `${under}:30m`,
+      s.m30,
+      this.roll(`${under}:30m-recent`, bucket(30 * MIN), s.m1),
+    );
     if (tf === 1800) return half;
     if (tf === 3600) return this.roll(`${under}:1h`, bucket(HOUR), half);
-    return this.join(`${under}:1d`, s.d1, this.roll(`${under}:1d-recent`, sessionDay, half));
+    return this.join(
+      `${under}:1d`,
+      s.d1,
+      this.roll(`${under}:1d-recent`, sessionDay, half),
+    );
   }
 
   /** Recent one-minute closes for sparklines. */
   closes(under: Under, n: number, every = 5): number[] {
     const b = this.series[under].m1;
     const out: number[] = [];
-    for (let i = Math.max(0, b.length - n * every); i < b.length; i += every) out.push(b[i].c);
+    for (let i = Math.max(0, b.length - n * every); i < b.length; i += every)
+      out.push(b[i].c);
     out.push(b[b.length - 1].c);
     return out;
   }

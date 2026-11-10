@@ -1,30 +1,22 @@
 import { useEffect, useRef, useState } from "react";
 import { create } from "zustand";
 
-/** The Altron Watcher's client side: who it follows, and feeds that refresh themselves. */
+/** The Watcher's client side: the posts it shows, the calendar's filter, and feeds that refresh themselves. */
 
-export type Account = { handle: string; name: string };
+export type Post = { id: string; handle: string };
 
-/** Who the Watcher follows to begin with. Anyone can be added or removed on the page. */
-export const DEFAULT_ACCOUNTS: Account[] = [
-  { handle: "realDonaldTrump", name: "Donald J. Trump" },
-  { handle: "elonmusk", name: "Elon Musk" },
-  { handle: "nvidia", name: "NVIDIA" },
-  { handle: "OpenAI", name: "OpenAI" },
-  { handle: "sama", name: "Sam Altman" },
-  { handle: "federalreserve", name: "Federal Reserve" },
-  { handle: "USTreasury", name: "Treasury Department" },
-  { handle: "WhiteHouse", name: "The White House" },
-  { handle: "NickTimiraos", name: "Nick Timiraos" },
-  { handle: "BillAckman", name: "Bill Ackman" },
-  { handle: "RayDalio", name: "Ray Dalio" },
-  { handle: "KobeissiLetter", name: "The Kobeissi Letter" },
+/** The posts the Watcher shows, newest first. Picked by hand for now. */
+export const POSTS: Post[] = [
+  { id: "2120241372737540587", handle: "MarioNawfal" },
+  { id: "2120234042889224479", handle: "wallstengine" },
+  { id: "2120229563418710438", handle: "wallstengine" },
+  { id: "2120217511526576335", handle: "KobeissiLetter" },
 ];
 
-type WatchState = { accounts: Account[]; keyOnly: boolean };
+type WatchState = { keyOnly: boolean };
 const KEY = "altron-watch-v1";
 
-export const useWatch = create<WatchState>(() => ({ accounts: DEFAULT_ACCOUNTS, keyOnly: true }));
+export const useWatch = create<WatchState>(() => ({ keyOnly: true }));
 
 let started = false;
 export function startWatch() {
@@ -32,44 +24,33 @@ export function startWatch() {
   started = true;
   try {
     const raw = JSON.parse(localStorage.getItem(KEY) ?? "null");
-    if (raw && Array.isArray(raw.accounts)) {
-      const accounts = (raw.accounts as Account[]).filter((a) => a && /^[A-Za-z0-9_]{1,15}$/.test(a.handle)).slice(0, 30);
-      useWatch.setState({ accounts, keyOnly: raw.keyOnly !== false });
-    }
+    if (raw && typeof raw.keyOnly === "boolean")
+      useWatch.setState({ keyOnly: raw.keyOnly });
   } catch {
     /* nothing saved */
   }
   useWatch.subscribe((s) => {
     try {
-      localStorage.setItem(KEY, JSON.stringify(s));
+      localStorage.setItem(KEY, JSON.stringify({ keyOnly: s.keyOnly }));
     } catch {
       /* storage full or blocked */
     }
   });
 }
 
-/** Accepts "@handle", "handle" or a profile link. Returns why it was refused, or null. */
-export function addAccount(input: string): string | null {
-  const m = input.trim().match(/(?:x\.com\/|twitter\.com\/|^@?)([A-Za-z0-9_]{1,15})\/?$/);
-  if (!m) return "That doesn't look like an X handle";
-  const handle = m[1];
-  const { accounts } = useWatch.getState();
-  if (accounts.some((a) => a.handle.toLowerCase() === handle.toLowerCase())) return "Already on the list";
-  if (accounts.length >= 30) return "Thirty accounts is the limit";
-  useWatch.setState({ accounts: [...accounts, { handle, name: handle }] });
-  return null;
-}
-export function removeAccount(handle: string) {
-  useWatch.setState({ accounts: useWatch.getState().accounts.filter((a) => a.handle !== handle) });
-}
-export function resetAccounts() {
-  useWatch.setState({ accounts: DEFAULT_ACCOUNTS });
-}
-export type FeedState<T> = { data: T | null; state: "loading" | "ok" | "error"; at: number };
+export type FeedState<T> = {
+  data: T | null;
+  state: "loading" | "ok" | "error";
+  at: number;
+};
 
 /** Fetches a JSON feed now and every `every` ms while the tab is in view. Keeps the last answer through a failed refresh. */
 export function useFeed<T>(url: string | null, every: number): FeedState<T> {
-  const [st, setSt] = useState<FeedState<T>>({ data: null, state: "loading", at: 0 });
+  const [st, setSt] = useState<FeedState<T>>({
+    data: null,
+    state: "loading",
+    at: 0,
+  });
   const live = useRef(true);
   useEffect(() => {
     if (!url) return;
@@ -124,7 +105,31 @@ export function useNow(every = 15_000): number {
 }
 
 /* shapes returned by /api/watch/* */
-export type WireItem = { id: string; source: string; title: string; url: string; at: number; image?: string };
-export type Wire = { at: number; sources: { id: string; name: string; ok: boolean; n: number }[]; items: WireItem[] };
-export type CalEvent = { id: string; title: string; src: "BLS" | "BEA" | "Fed"; at: number; impact: 1 | 2 | 3; allDay?: boolean };
-export type Calendar = { ok: boolean; stale?: boolean; at: number; events: CalEvent[]; sources?: { id: string; ok: boolean }[] };
+export type WireItem = {
+  id: string;
+  source: string;
+  title: string;
+  url: string;
+  at: number;
+  image?: string;
+};
+export type Wire = {
+  at: number;
+  sources: { id: string; name: string; ok: boolean; n: number }[];
+  items: WireItem[];
+};
+export type CalEvent = {
+  id: string;
+  title: string;
+  src: "BLS" | "BEA" | "Fed";
+  at: number;
+  impact: 1 | 2 | 3;
+  allDay?: boolean;
+};
+export type Calendar = {
+  ok: boolean;
+  stale?: boolean;
+  at: number;
+  events: CalEvent[];
+  sources?: { id: string; ok: boolean }[];
+};

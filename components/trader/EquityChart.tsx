@@ -10,10 +10,10 @@ import s from "./trader.module.css";
 
 type Point = { eq: number; dd: number };
 
-/** Full size on the dashboard; `compact` is the same band at under half the height. */
+/** Full size on the dashboard; `compact` is the same band at a little over half the height. */
 const GEO = {
   full: { EQ_TOP: 22, EQ_BASE: 262, UW_TOP: 286, UW_DEPTH: 58, HEIGHT: 352, GLOW: 74, UW_GLOW: 30 },
-  compact: { EQ_TOP: 12, EQ_BASE: 104, UW_TOP: 116, UW_DEPTH: 26, HEIGHT: 146, GLOW: 36, UW_GLOW: 16 },
+  compact: { EQ_TOP: 14, EQ_BASE: 146, UW_TOP: 160, UW_DEPTH: 36, HEIGHT: 202, GLOW: 50, UW_GLOW: 22 },
 };
 /** The curve stops short of the right edge, leaving room ahead of the live point. */
 const plotOf = (W: number) => W - Math.max(110, Math.round(W * 0.09));

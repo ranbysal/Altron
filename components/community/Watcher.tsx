@@ -1,14 +1,37 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import { dayStart, getMarket, useDesk } from "@/lib/desk/store";
 import { INSTRUMENTS, type Under } from "@/lib/desk/instruments";
 import { fmt } from "@/lib/format";
 import { BAYER4 } from "@/lib/noise";
 import { onThemeChange } from "@/lib/theme";
-import { movesOf, sessionOf, type Move, type Session } from "@/lib/community/moves";
+import {
+  movesOf,
+  sessionOf,
+  type Move,
+  type Session,
+} from "@/lib/community/moves";
 import { clock, dayKey } from "@/lib/community/trades";
-import { addAccount, ago, removeAccount, resetAccounts, startWatch, useWatch, DEFAULT_ACCOUNTS, type CalEvent, type Calendar, type FeedState, type Wire, type WireItem } from "@/lib/community/watch";
+import {
+  ago,
+  startWatch,
+  useWatch,
+  POSTS,
+  type CalEvent,
+  type Calendar,
+  type FeedState,
+  type Post,
+  type Wire,
+  type WireItem,
+} from "@/lib/community/watch";
 import c from "./community.module.css";
 
 /*
@@ -32,21 +55,24 @@ function hue(name: string): number {
   return h;
 }
 
-export type VoiceState = "loading" | "ok" | "quiet";
-
 /* ------------------------------------------------------------------ */
 /* watcher: posts on X                                                 */
 /* ------------------------------------------------------------------ */
 
 /*
  * X has no free feed to read on a server: its robots rules close the embed endpoint to
- * automated readers, and it has pursued the services that read it anyway. So the Watcher
- * uses the one route X offers without the API, its own embedded timeline, loaded by the
- * visitor's browser. The list of accounts is ours; the posts, with their photos, are X's.
+ * automated readers. So the Watcher shows posts through X's own embed, loaded by the
+ * visitor's browser, which brings the text, photos and video exactly as X shows them.
  */
 type Twttr = {
   ready?: (cb: (t: Twttr) => void) => void;
-  widgets?: { createTimeline: (src: { sourceType: "profile"; screenName: string }, el: HTMLElement, opts: Record<string, unknown>) => Promise<HTMLElement | undefined> };
+  widgets?: {
+    createTweet: (
+      id: string,
+      el: HTMLElement,
+      opts: Record<string, unknown>,
+    ) => Promise<HTMLElement | undefined>;
+  };
 };
 let widgets: Promise<Twttr> | null = null;
 function loadWidgets(): Promise<Twttr> {
@@ -72,30 +98,46 @@ function loadWidgets(): Promise<Twttr> {
   return widgets;
 }
 
-
-function XTimeline({ handle, onState }: { handle: string; onState: (s: VoiceState) => void }) {
-  const box = useRef<HTMLDivElement>(null);
-  const [state, setState] = useState<VoiceState>("loading");
-  const [theme, setTheme] = useState("light");
+function useTheme(): "light" | "dark" {
+  const [theme, setTheme] = useState<"light" | "dark">(() =>
+    typeof document !== "undefined" &&
+    document.documentElement.dataset.theme === "dark"
+      ? "dark"
+      : "light",
+  );
   useEffect(() => {
-    const read = () => setTheme(document.documentElement.dataset.theme === "dark" ? "dark" : "light");
+    const read = () =>
+      setTheme(
+        document.documentElement.dataset.theme === "dark" ? "dark" : "light",
+      );
     read();
     return onThemeChange(read);
   }, []);
+  return theme;
+}
+
+function XPost({ post, theme }: { post: Post; theme: "light" | "dark" }) {
+  const box = useRef<HTMLDivElement>(null);
+  const [state, setState] = useState<"loading" | "ok" | "quiet">("loading");
   useEffect(() => {
     const el = box.current;
     if (!el) return;
     let dead = false;
-    const set = (v: VoiceState) => {
-      if (dead) return;
-      setState(v);
-      onState(v);
-    };
+    const set = (v: "loading" | "ok" | "quiet") => !dead && setState(v);
     set("loading");
-    el.replaceChildren();
-    const timer = window.setTimeout(() => set("quiet"), 10_000);
+    // a fresh host each time, so an embed still on its way from an earlier theme lands nowhere
+    const host = document.createElement("div");
+    el.replaceChildren(host);
+    const timer = window.setTimeout(() => set("quiet"), 12_000);
     loadWidgets()
-      .then((tw) => tw.widgets!.createTimeline({ sourceType: "profile", screenName: handle }, el, { theme, chrome: "noheader nofooter noborders transparent", dnt: true, height: Math.max(380, el.clientHeight - 8) }))
+      .then((tw) =>
+        tw.widgets!.createTweet(post.id, host, {
+          theme,
+          dnt: true,
+          conversation: "none",
+          align: "center",
+        }),
+      )
       .then((node) => {
         window.clearTimeout(timer);
         set(node ? "ok" : "quiet");
@@ -107,137 +149,52 @@ function XTimeline({ handle, onState }: { handle: string; onState: (s: VoiceStat
     return () => {
       dead = true;
       window.clearTimeout(timer);
-      el.replaceChildren();
+      host.remove();
     };
-  }, [handle, theme, onState]);
+  }, [post.id, theme]);
+  const url = `https://x.com/${post.handle}/status/${post.id}`;
   return (
-    <div className={c.xwrap}>
-      <div ref={box} className={c.xframe} data-state={state} />
-      {state !== "ok" && (
-        <div className={c.empty}>
-          {state === "loading" ? (
-            <>
-              <i className={c.skel} />
-              <i className={c.skel} />
-              <i className={c.skel} />
-            </>
-          ) : (
-            <>
-              <p>X didn&apos;t load this timeline here.</p>
-              <span>Posts come from X&apos;s own embed, in your browser. A content blocker or X itself can hold it back.</span>
-              <a className={c.outLink} href={`https://x.com/${handle}`} target="_blank" rel="noreferrer noopener">
-                Open @{handle} on X
-              </a>
-            </>
-          )}
+    <li className={c.xpost} data-state={state}>
+      <div ref={box} className={c.xframe} />
+      {state === "loading" && (
+        <div className={c.xskel} aria-hidden="true">
+          <span className={c.mono2}>{mono(post.handle)}</span>
+          <i className={c.skel} />
+          <i className={c.skel} />
+          <i className={c.skel} />
         </div>
       )}
-    </div>
+      {state === "quiet" && (
+        <a
+          className={c.xmiss}
+          href={url}
+          target="_blank"
+          rel="noreferrer noopener"
+        >
+          <span
+            className={c.mono2}
+            style={{ "--h": hue(post.handle) } as CSSProperties}
+          >
+            {mono(post.handle)}
+          </span>
+          <span>
+            <b>@{post.handle}</b>
+            <em>X didn&apos;t load this post here. Open it on X</em>
+          </span>
+        </a>
+      )}
+    </li>
   );
 }
 
-
-export function XWatcher({ onState }: { onState: (s: VoiceState) => void }) {
-  useEffect(() => startWatch(), []);
-  const accounts = useWatch((s) => s.accounts);
-  const [pick, setPick] = useState<string | null>(null);
-  const [adding, setAdding] = useState(false);
-  const [draft, setDraft] = useState("");
-  const [err, setErr] = useState<string | null>(null);
-  const sel = accounts.find((a) => a.handle === pick) ?? accounts[0];
-  const isDefault = accounts.length === DEFAULT_ACCOUNTS.length && accounts.every((a, i) => a.handle === DEFAULT_ACCOUNTS[i].handle);
-  const input = useRef<HTMLInputElement>(null);
-  useEffect(() => {
-    if (adding) input.current?.focus();
-  }, [adding]);
-
+export function XWatcher() {
+  const theme = useTheme();
   return (
-    <div className={c.watcher}>
-      <ul className={c.faces} aria-label="Accounts">
-        {accounts.map((a) => (
-          <li key={a.handle}>
-            <button type="button" className={c.faceBtn} aria-pressed={sel?.handle === a.handle} onClick={() => setPick(a.handle)} style={{ "--h": hue(a.handle) } as CSSProperties} data-tip={a.name}>
-              <span aria-hidden="true">{mono(a.name)}</span>
-              <i className={c.srOnly}>
-                {a.name} @{a.handle}
-              </i>
-            </button>
-          </li>
-        ))}
-        <li>
-          <button type="button" className={`${c.faceBtn} ${c.faceAdd}`} aria-expanded={adding} onClick={() => setAdding((v) => !v)} data-tip="Add an account" aria-label="Add an account">
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" aria-hidden="true">
-              <path d="M8 3v10M3 8h10" />
-            </svg>
-          </button>
-        </li>
-      </ul>
-      {adding && (
-        <form
-          className={c.addAcct}
-          onSubmit={(e) => {
-            e.preventDefault();
-            const before = useWatch.getState().accounts.length;
-            const why = addAccount(draft);
-            setErr(why);
-            if (!why) {
-              setDraft("");
-              setAdding(false);
-              const list = useWatch.getState().accounts;
-              if (list.length > before) setPick(list[list.length - 1].handle);
-            }
-          }}
-        >
-          <input
-            ref={input}
-            value={draft}
-            onChange={(e) => {
-              setDraft(e.target.value);
-              setErr(null);
-            }}
-            onKeyDown={(e) => e.key === "Escape" && setAdding(false)}
-            placeholder="@handle or x.com link"
-            aria-label="Add an X account to follow"
-            spellCheck={false}
-            autoCapitalize="none"
-          />
-          <button type="submit" disabled={!draft.trim()}>
-            Add
-          </button>
-          {err && <span className={c.neg}>{err}</span>}
-          {!isDefault && !err && (
-            <button type="button" className={c.linkBtn} onClick={resetAccounts}>
-              Reset list
-            </button>
-          )}
-        </form>
-      )}
-      {sel ? (
-        <>
-          <div className={c.who}>
-            <span className={c.whoFace} style={{ "--h": hue(sel.handle) } as CSSProperties} aria-hidden="true">
-              {mono(sel.name)}
-            </span>
-            <span className={c.whoName}>
-              <b>{sel.name}</b>
-              <em>@{sel.handle}</em>
-            </span>
-            <a href={`https://x.com/${sel.handle}`} target="_blank" rel="noreferrer noopener">
-              Open on X
-            </a>
-            <button type="button" onClick={() => removeAccount(sel.handle)} aria-label={`Stop following @${sel.handle}`}>
-              Remove
-            </button>
-          </div>
-          <XTimeline key={sel.handle} handle={sel.handle} onState={onState} />
-        </>
-      ) : (
-        <div className={c.empty}>
-          <p>No one on the list.</p>
-          <span>Add an X handle with the plus to follow it here.</span>
-        </div>
-      )}
-    </div>
+    <ol className={c.watcher} aria-label="Posts on X">
+      {POSTS.map((p) => (
+        <XPost key={p.id} post={p} theme={theme} />
+      ))}
+    </ol>
   );
 }
 
@@ -250,10 +207,22 @@ function Thumb({ item }: { item: WireItem }) {
   if (item.image && !bad)
     return (
       // eslint-disable-next-line @next/next/no-img-element
-      <img className={c.thumb} src={item.image} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" onError={() => setBad(true)} />
+      <img
+        className={c.thumb}
+        src={item.image}
+        alt=""
+        loading="lazy"
+        decoding="async"
+        referrerPolicy="no-referrer"
+        onError={() => setBad(true)}
+      />
     );
   return (
-    <span className={`${c.thumb} ${c.thumbMono}`} style={{ "--h": hue(item.source) } as CSSProperties} aria-hidden="true">
+    <span
+      className={`${c.thumb} ${c.thumbMono}`}
+      style={{ "--h": hue(item.source) } as CSSProperties}
+      aria-hidden="true"
+    >
       {mono(item.source)}
     </span>
   );
@@ -274,7 +243,10 @@ export function News({ feed, now }: { feed: FeedState<Wire>; now: number }) {
         ) : (
           <>
             <p>No headlines right now.</p>
-            <span>Headlines come straight from publishers&apos; own feeds and refresh every minute.</span>
+            <span>
+              Headlines come straight from publishers&apos; own feeds and
+              refresh every minute.
+            </span>
           </>
         )}
       </div>
@@ -286,7 +258,9 @@ export function News({ feed, now }: { feed: FeedState<Wire>; now: number }) {
           <a href={x.url} target="_blank" rel="noreferrer noopener">
             <span className={c.newsText}>
               <span className={c.wMeta}>
-                <time dateTime={new Date(x.at).toISOString()}>{dayKey(x.at) === today ? clock(x.at) : ago(x.at, now)}</time>
+                <time dateTime={new Date(x.at).toISOString()}>
+                  {dayKey(x.at) === today ? clock(x.at) : ago(x.at, now)}
+                </time>
                 <em>{x.source}</em>
               </span>
               <b>{x.title}</b>
@@ -303,23 +277,45 @@ export function News({ feed, now }: { feed: FeedState<Wire>; now: number }) {
 /* calendar: a list and a week, taking turns                           */
 /* ------------------------------------------------------------------ */
 
-const SRC = { BLS: "Bureau of Labor Statistics", BEA: "Bureau of Economic Analysis", Fed: "Federal Reserve" } as const;
-const DAY_LONG = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "long", month: "short", day: "numeric" });
-const WD = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "short" });
-const DN = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", day: "numeric" });
+const SRC = {
+  BLS: "Bureau of Labor Statistics",
+  BEA: "Bureau of Economic Analysis",
+  Fed: "Federal Reserve",
+} as const;
+const DAY_LONG = new Intl.DateTimeFormat("en-US", {
+  timeZone: "America/New_York",
+  weekday: "long",
+  month: "short",
+  day: "numeric",
+});
+const WD = new Intl.DateTimeFormat("en-US", {
+  timeZone: "America/New_York",
+  weekday: "short",
+});
+const DN = new Intl.DateTimeFormat("en-US", {
+  timeZone: "America/New_York",
+  day: "numeric",
+});
 const CYCLE_MS = 7000;
 
 function until(ms: number): string {
   const m = Math.max(0, Math.round(ms / 60_000));
   if (m < 1) return "now";
   if (m < 60) return `in ${m}m`;
-  if (m < 1440) return `in ${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m`;
+  if (m < 1440)
+    return `in ${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m`;
   return `in ${Math.floor(m / 1440)}d ${Math.floor((m % 1440) / 60)}h`;
 }
 
 function Pips({ n }: { n: number }) {
   return (
-    <span className={c.pips} data-n={n} aria-label={n === 3 ? "High impact" : n === 2 ? "Medium impact" : "Low impact"}>
+    <span
+      className={c.pips}
+      data-n={n}
+      aria-label={
+        n === 3 ? "High impact" : n === 2 ? "Medium impact" : "Low impact"
+      }
+    >
       <i />
       <i />
       <i />
@@ -339,37 +335,113 @@ function weekdays(now: number): { key: string; at: number }[] {
   return out;
 }
 
-export function CalendarCard({ feed, now }: { feed: FeedState<Calendar>; now: number }) {
-  const keyOnly = useWatch((s) => s.keyOnly);
+/** Which calendar view shows, taking turns every seven seconds unless a hand is on the panel. */
+export function useCalView(on: boolean) {
   const [view, setView] = useState<"list" | "week">("list");
   const [held, setHeld] = useState(false);
   const [lap, setLap] = useState(0);
-  const all = feed.data?.events ?? [];
-  const today = dayKey(now);
-  const events = useMemo(() => all.filter((e) => (!keyOnly || e.impact >= 2) && dayKey(e.at) >= today), [all, keyOnly, today]);
-  const next = events.find((e) => e.at > now && e.impact >= 2 && !e.allDay) ?? events.find((e) => e.at > now);
-
-  // the two views take turns every seven seconds; a hand on the panel holds it still
-  const reduce = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  const reduce =
+    typeof window !== "undefined" &&
+    !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
   useEffect(() => {
-    if (held || reduce || !events.length) return;
+    if (held || reduce || !on) return;
     const id = window.setTimeout(() => {
       setView((v) => (v === "list" ? "week" : "list"));
       setLap((n) => n + 1);
     }, CYCLE_MS);
     return () => window.clearTimeout(id);
-  }, [view, held, reduce, events.length, lap]);
+  }, [view, held, reduce, on, lap]);
   const choose = useCallback((v: "list" | "week") => {
     setView(v);
     setLap((n) => n + 1);
   }, []);
+  return { view, held, setHeld, lap, reduce, choose, on };
+}
+export type CalView = ReturnType<typeof useCalView>;
+
+/** The calendar's controls, in its header: the two views, then key releases or all of them. */
+export function CalControls({ v }: { v: CalView }) {
+  useEffect(() => startWatch(), []);
+  const keyOnly = useWatch((s) => s.keyOnly);
+  return (
+    <span className={c.calCtl}>
+      <span className={c.views} role="tablist" aria-label="Calendar view">
+        {(["list", "week"] as const).map((x) => (
+          <button
+            key={x}
+            type="button"
+            role="tab"
+            aria-selected={v.view === x}
+            onClick={() => v.choose(x)}
+          >
+            {x === "list" ? "List" : "Week"}
+            {v.view === x && v.on && !v.held && !v.reduce && (
+              <i
+                key={v.lap}
+                className={c.lapBar}
+                style={{ animationDuration: `${CYCLE_MS}ms` }}
+                aria-hidden="true"
+              />
+            )}
+          </button>
+        ))}
+      </span>
+      <i className={c.calSep} aria-hidden="true" />
+      <span className={c.calToggle} role="group" aria-label="Which releases">
+        <button
+          type="button"
+          aria-pressed={keyOnly}
+          onClick={() => useWatch.setState({ keyOnly: true })}
+        >
+          Key
+        </button>
+        <button
+          type="button"
+          aria-pressed={!keyOnly}
+          onClick={() => useWatch.setState({ keyOnly: false })}
+        >
+          All
+        </button>
+      </span>
+    </span>
+  );
+}
+
+export function CalendarCard({
+  feed,
+  now,
+  v,
+}: {
+  feed: FeedState<Calendar>;
+  now: number;
+  v: CalView;
+}) {
+  const keyOnly = useWatch((s) => s.keyOnly);
+  const { view, setHeld } = v;
+  const all = feed.data?.events ?? [];
+  const today = dayKey(now);
+  const events = useMemo(
+    () =>
+      all.filter((e) => (!keyOnly || e.impact >= 2) && dayKey(e.at) >= today),
+    [all, keyOnly, today],
+  );
+  const next =
+    events.find((e) => e.at > now && e.impact >= 2 && !e.allDay) ??
+    events.find((e) => e.at > now);
 
   const groups = useMemo(() => {
     const out: { key: string; label: string; rows: CalEvent[] }[] = [];
     for (const e of events) {
       const k = dayKey(e.at);
       let g = out[out.length - 1];
-      if (!g || g.key !== k) out.push((g = { key: k, label: k === today ? "Today" : DAY_LONG.format(e.at), rows: [] }));
+      if (!g || g.key !== k)
+        out.push(
+          (g = {
+            key: k,
+            label: k === today ? "Today" : DAY_LONG.format(e.at),
+            rows: [],
+          }),
+        );
       g.rows.push(e);
     }
     return out;
@@ -377,25 +449,13 @@ export function CalendarCard({ feed, now }: { feed: FeedState<Calendar>; now: nu
   const days = useMemo(() => weekdays(now), [now]);
 
   return (
-    <div className={c.cal} onPointerEnter={() => setHeld(true)} onPointerLeave={() => setHeld(false)} onFocus={() => setHeld(true)} onBlur={() => setHeld(false)}>
-      <div className={c.calBar}>
-        <span className={c.views} role="tablist" aria-label="Calendar view">
-          {(["list", "week"] as const).map((v) => (
-            <button key={v} type="button" role="tab" aria-selected={view === v} onClick={() => choose(v)}>
-              {v === "list" ? "List" : "Week"}
-              {view === v && !held && !reduce && <i key={lap} className={c.lapBar} style={{ animationDuration: `${CYCLE_MS}ms` }} aria-hidden="true" />}
-            </button>
-          ))}
-        </span>
-        <span className={c.calToggle} role="group" aria-label="Which releases">
-          <button type="button" aria-pressed={keyOnly} onClick={() => useWatch.setState({ keyOnly: true })}>
-            Key
-          </button>
-          <button type="button" aria-pressed={!keyOnly} onClick={() => useWatch.setState({ keyOnly: false })}>
-            All
-          </button>
-        </span>
-      </div>
+    <div
+      className={c.cal}
+      onPointerEnter={() => setHeld(true)}
+      onPointerLeave={() => setHeld(false)}
+      onFocus={() => setHeld(true)}
+      onBlur={() => setHeld(false)}
+    >
       {!all.length ? (
         <div className={c.empty}>
           {feed.state === "loading" ? (
@@ -407,7 +467,10 @@ export function CalendarCard({ feed, now }: { feed: FeedState<Calendar>; now: nu
           ) : (
             <>
               <p>No calendar right now.</p>
-              <span>Releases and Fed events load from the agencies&apos; own calendars and refresh through the day.</span>
+              <span>
+                Releases and Fed events load from the agencies&apos; own
+                calendars and refresh through the day.
+              </span>
             </>
           )}
         </div>
@@ -421,19 +484,29 @@ export function CalendarCard({ feed, now }: { feed: FeedState<Calendar>; now: nu
               <strong>{next.title}</strong>
               <span className={c.nextMeta}>
                 <Pips n={next.impact} />
-                {SRC[next.src]} · {dayKey(next.at) === today ? "today" : DAY_LONG.format(next.at)}
+                {SRC[next.src]} ·{" "}
+                {dayKey(next.at) === today ? "today" : DAY_LONG.format(next.at)}
                 {!next.allDay && ` ${clock(next.at)} ET`}
               </span>
             </div>
           )}
           <div className={c.calStage}>
-            <div className={`${c.scroll} ${c.calList}`} data-on={view === "list" ? "" : undefined} aria-hidden={view !== "list"} inert={view !== "list"}>
+            <div
+              className={`${c.scroll} ${c.calList}`}
+              data-on={view === "list" ? "" : undefined}
+              aria-hidden={view !== "list"}
+              inert={view !== "list"}
+            >
               {groups.map((g) => (
                 <section key={g.key}>
                   <h4>{g.label}</h4>
                   <ul>
                     {g.rows.map((e) => (
-                      <li key={e.id} data-past={e.at < now ? "" : undefined} data-next={e === next ? "" : undefined}>
+                      <li
+                        key={e.id}
+                        data-past={e.at < now ? "" : undefined}
+                        data-next={e === next ? "" : undefined}
+                      >
                         <time>{e.allDay ? "Day" : clock(e.at)}</time>
                         <Pips n={e.impact} />
                         <span className={c.calTitle} title={e.title}>
@@ -445,27 +518,55 @@ export function CalendarCard({ feed, now }: { feed: FeedState<Calendar>; now: nu
                   </ul>
                 </section>
               ))}
-              {!events.length && <p className={c.none}>{keyOnly ? "No key releases in the next ten days. Switch to All for the rest." : "Nothing scheduled in the next ten days."}</p>}
+              {!events.length && (
+                <p className={c.none}>
+                  {keyOnly
+                    ? "No key releases in the next ten days. Switch to All for the rest."
+                    : "Nothing scheduled in the next ten days."}
+                </p>
+              )}
             </div>
-            <div className={c.week} data-on={view === "week" ? "" : undefined} aria-hidden={view !== "week"} inert={view !== "week"}>
+            <div
+              className={c.week}
+              data-on={view === "week" ? "" : undefined}
+              aria-hidden={view !== "week"}
+              inert={view !== "week"}
+            >
               {days.map((d) => {
                 const rows = events.filter((e) => dayKey(e.at) === d.key);
                 const shown = rows.slice(0, 5);
                 return (
-                  <div key={d.key} className={c.day} data-today={d.key === today ? "" : undefined}>
+                  <div
+                    key={d.key}
+                    className={c.day}
+                    data-today={d.key === today ? "" : undefined}
+                  >
                     <header>
                       <span>{WD.format(d.at)}</span>
                       <b>{DN.format(d.at)}</b>
                     </header>
                     <ul>
                       {shown.map((e) => (
-                        <li key={e.id} data-n={e.impact} data-past={e.at < now ? "" : undefined} title={`${e.title} · ${SRC[e.src]}`}>
-                          <time>{e.allDay ? "Day" : clock(e.at).replace(/ (AM|PM)$/, (m) => m.trim().toLowerCase().slice(0, 1))}</time>
+                        <li
+                          key={e.id}
+                          data-n={e.impact}
+                          data-past={e.at < now ? "" : undefined}
+                          title={`${e.title} · ${SRC[e.src]}`}
+                        >
+                          <time>
+                            {e.allDay
+                              ? "Day"
+                              : clock(e.at).replace(/ (AM|PM)$/, (m) =>
+                                  m.trim().toLowerCase().slice(0, 1),
+                                )}
+                          </time>
                           <span>{e.title}</span>
                         </li>
                       ))}
                     </ul>
-                    {rows.length > shown.length && <em>+{rows.length - shown.length} more</em>}
+                    {rows.length > shown.length && (
+                      <em>+{rows.length - shown.length} more</em>
+                    )}
                     {!rows.length && <em>Nothing</em>}
                   </div>
                 );
@@ -483,7 +584,17 @@ export function CalendarCard({ feed, now }: { feed: FeedState<Calendar>; now: nu
 /* ------------------------------------------------------------------ */
 
 /** The session as a thin line over a dithered glow, as on the landing band. Marks sit where the pushes ended. */
-function SessionLine({ s, up, marks, hot }: { s: Session; up: boolean; marks: Move[]; hot: string | null }) {
+function SessionLine({
+  s,
+  up,
+  marks,
+  hot,
+}: {
+  s: Session;
+  up: boolean;
+  marks: Move[];
+  hot: string | null;
+}) {
   const ref = useRef<HTMLCanvasElement>(null);
   const [theme, setTheme] = useState(0);
   useEffect(() => onThemeChange(() => setTheme((n) => n + 1)), []);
@@ -513,14 +624,18 @@ function SessionLine({ s, up, marks, hot }: { s: Session; up: boolean; marks: Mo
       const a = new Path2D();
       const b = new Path2D();
       for (let x = 0; x < W - pad; x += cell) {
-        const i = Math.min(n - 1, Math.round(((x - 1) / (W - pad - 2)) * (n - 1)));
+        const i = Math.min(
+          n - 1,
+          Math.round(((x - 1) / (W - pad - 2)) * (n - 1)),
+        );
         if (i < 0) continue;
         const y0 = Y(s.line[i]);
         const reach = Math.max(1, H - y0);
         for (let y = Math.ceil(y0 / cell) * cell; y < H; y += cell) {
           const k = 1 - (y - y0) / reach;
           const I = 0.03 + 0.5 * k * k * k;
-          if (I > (BAYER4[((y / cell) & 3) * 4 + ((x / cell) & 3)] + 0.5) / 16) (I > 0.3 ? b : a).rect(x, y, 2, 2);
+          if (I > (BAYER4[((y / cell) & 3) * 4 + ((x / cell) & 3)] + 0.5) / 16)
+            (I > 0.3 ? b : a).rect(x, y, 2, 2);
         }
       }
       g.fillStyle = v(up ? "--cv-dither-1" : "--cv-ember-1");
@@ -529,7 +644,9 @@ function SessionLine({ s, up, marks, hot }: { s: Session; up: boolean; marks: Mo
       g.fill(b);
       // line
       g.beginPath();
-      s.line.forEach((p, i) => (i ? g.lineTo(X(i), Y(p)) : g.moveTo(X(i), Y(p))));
+      s.line.forEach((p, i) =>
+        i ? g.lineTo(X(i), Y(p)) : g.moveTo(X(i), Y(p)),
+      );
       g.strokeStyle = v("--text-strong");
       g.lineWidth = 1.25;
       g.lineJoin = "round";
@@ -562,10 +679,27 @@ function SessionLine({ s, up, marks, hot }: { s: Session; up: boolean; marks: Mo
     ro.observe(cv);
     return () => ro.disconnect();
   }, [s, up, marks, hot, theme]);
-  return <canvas ref={ref} className={c.sLine} role="img" aria-label={`${s.under} session, low ${fmt(s.lo)} to high ${fmt(s.hi)}`} />;
+  return (
+    <canvas
+      ref={ref}
+      className={c.sLine}
+      role="img"
+      aria-label={`${s.under} session, low ${fmt(s.lo)} to high ${fmt(s.hi)}`}
+    />
+  );
 }
 
-function Market({ under, s, marks, hot }: { under: Under; s: Session | null; marks: Move[]; hot: string | null }) {
+function Market({
+  under,
+  s,
+  marks,
+  hot,
+}: {
+  under: Under;
+  s: Session | null;
+  marks: Move[];
+  hot: string | null;
+}) {
   const q = useDesk((st) => st.quotes[under]);
   const inst = INSTRUMENTS[under];
   const chg = q.last - q.prev;
@@ -591,7 +725,11 @@ function Market({ under, s, marks, hot }: { under: Under; s: Session | null; mar
           </em>
         </span>
       </div>
-      {s ? <SessionLine s={s} up={up} marks={marks} hot={hot} /> : <div className={c.sLine} />}
+      {s ? (
+        <SessionLine s={s} up={up} marks={marks} hot={hot} />
+      ) : (
+        <div className={c.sLine} />
+      )}
       <div className={c.range} style={{ "--at": at } as CSSProperties}>
         <span>{fmt(lo)}</span>
         <span className={c.rangeBar} aria-hidden="true">
@@ -605,7 +743,10 @@ function Market({ under, s, marks, hot }: { under: Under; s: Session | null; mar
 
 export function Moves({ now }: { now: number }) {
   const ready = useDesk((st) => st.ready);
-  const [state, setState] = useState<{ sessions: Partial<Record<Under, Session>>; moves: Move[] }>({ sessions: {}, moves: [] });
+  const [state, setState] = useState<{
+    sessions: Partial<Record<Under, Session>>;
+    moves: Move[];
+  }>({ sessions: {}, moves: [] });
   const [hot, setHot] = useState<string | null>(null);
   useEffect(() => {
     if (!ready) return;
@@ -631,9 +772,18 @@ export function Moves({ now }: { now: number }) {
   return (
     <div className={c.moves}>
       {(["NQ", "ES"] as Under[]).map((u) => (
-        <Market key={u} under={u} s={state.sessions[u] ?? null} marks={state.moves.filter((x) => x.under === u)} hot={hot} />
+        <Market
+          key={u}
+          under={u}
+          s={state.sessions[u] ?? null}
+          marks={state.moves.filter((x) => x.under === u)}
+          hot={hot}
+        />
       ))}
-      <ol className={`${c.scroll} ${c.moveLog}`} onMouseLeave={() => setHot(null)}>
+      <ol
+        className={`${c.scroll} ${c.moveLog}`}
+        onMouseLeave={() => setHot(null)}
+      >
         {state.moves.map((m) => (
           <li key={m.id} data-kind={m.kind} onMouseEnter={() => setHot(m.id)}>
             <time>{dayKey(m.at) === today ? clock(m.at) : ago(m.at, now)}</time>
@@ -645,7 +795,9 @@ export function Moves({ now }: { now: number }) {
             </em>
           </li>
         ))}
-        {!state.moves.length && <li className={c.none}>The session is just getting going.</li>}
+        {!state.moves.length && (
+          <li className={c.none}>The session is just getting going.</li>
+        )}
       </ol>
     </div>
   );
