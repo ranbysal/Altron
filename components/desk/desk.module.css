@@ -582,6 +582,23 @@
 .drawPop > button[aria-pressed="true"], .drawPop > button[aria-expanded="true"] { background: color-mix(in srgb, var(--text) 9%, transparent); color: var(--text-strong); }
 .drawPop > .popDel:hover { color: var(--ember-soft); background: var(--ember-wash); }
 .popSep { width: 1px; height: 16px; margin: 0 2px; background: var(--tl); }
+.drawPop > .popColor { position: relative; }
+.popColor i { position: absolute; left: 8px; right: 8px; bottom: 4px; height: 2.5px; border-radius: 2px; box-shadow: 0 0 0 0.5px color-mix(in srgb, var(--text) 25%, transparent); }
+.drawPop > .popLimit { width: auto; gap: 6px; display: inline-flex; align-items: center; padding: 0 9px; font-family: var(--mono); font-size: 10px; letter-spacing: 0.04em; white-space: nowrap; }
+.swatches {
+  display: grid;
+  grid-template-columns: repeat(5, 22px);
+  gap: 7px;
+  padding: 10px;
+  border: 1px solid var(--line-2);
+  border-radius: 12px;
+  background: var(--page);
+  box-shadow: 0 18px 40px -22px var(--shadow);
+  animation: rise 0.2s var(--ease) backwards;
+}
+.swatches button { width: 22px; height: 22px; padding: 0; border: 0; border-radius: 6px; cursor: pointer; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 18%, transparent); transition: transform 0.15s; }
+.swatches button:hover { transform: scale(1.1); }
+.swatches button[aria-selected="true"] { box-shadow: 0 0 0 2px var(--page), 0 0 0 3.5px var(--text); }
 .popLevels { position: absolute; top: calc(100% + 8px); left: 50%; transform: translateX(-50%); }
 .popLevels[data-up="1"] { top: auto; bottom: calc(100% + 8px); }
 .popLevels[data-align="l"] { left: 0; transform: none; }
@@ -1089,10 +1106,12 @@
 .noticeCell span { display: block; margin-top: 2px; font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
 .noteCell { max-width: 360px; white-space: normal; color: var(--muted); }
 
-.facts { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px; margin: 0; padding: 10px 12px; border-radius: 10px; background: color-mix(in srgb, var(--text) 3.5%, transparent); }
+.facts { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 6px 19px; margin: 0; padding: 10px 12px; border-radius: 10px; background: color-mix(in srgb, var(--text) 3.5%, transparent); }
+/* a hairline between the two columns, so each figure clearly belongs to its own label */
+.facts::before { content: ""; position: absolute; left: 50%; top: 10px; bottom: 10px; width: 1px; background: var(--tl); }
 .facts div { display: flex; justify-content: space-between; align-items: baseline; gap: 6px; min-width: 0; }
-.facts dt { font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--dim); white-space: nowrap; }
-.facts dd { margin: 0; font-family: var(--mono); font-size: 11px; color: var(--text); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.facts dt { font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--dim); white-space: nowrap; }
+.facts dd { margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-family: var(--mono); font-size: 11px; color: var(--text); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .units { margin-left: auto; display: inline-flex; padding: 2px; border-radius: 7px; background: color-mix(in srgb, var(--text) 5%, transparent); }
 .units button { height: 20px; padding: 0 7px; border: 0; border-radius: 5px; background: none; font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); cursor: pointer; }
 .units button[aria-pressed="true"] { background: var(--page); color: var(--text-strong); box-shadow: 0 1px 2px rgba(12, 18, 28, 0.1); }

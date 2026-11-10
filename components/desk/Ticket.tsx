@@ -53,6 +53,15 @@ function dither(): string {
   return ditherUrl;
 }
 
+/** Dollars for the facts box: whole dollars, with six figures and up shortened (K, M) so a big size never crowds its neighbour. The full amount is in the tooltip. */
+function usd(n: number): string {
+  const a = Math.abs(n);
+  const sign = n < 0 ? "−" : "";
+  if (a >= 1e6) return `${sign}$${(a / 1e6).toFixed(a >= 1e7 ? 1 : 2)}M`;
+  if (a >= 1e5) return `${sign}$${(a / 1e3).toFixed(1)}K`;
+  return `${sign}$${fmt(a, 0)}`;
+}
+
 const TYPES: { id: OrderType; label: string }[] = [
   { id: "MKT", label: "Market" },
   { id: "LMT", label: "Limit" },
@@ -437,15 +446,15 @@ export function Ticket() {
       <dl className={s.facts}>
         <div>
           <dt>Value ×{inst.pv}</dt>
-          <dd>${fmt(notional, 0)}</dd>
+          <dd title={`$${fmt(notional, 0)}`}>{usd(notional)}</dd>
         </div>
         <div>
           <dt>Margin</dt>
-          <dd>${fmt(DAY_MARGIN[sym] * qty, 0)}</dd>
+          <dd title={`$${fmt(DAY_MARGIN[sym] * qty, 0)}`}>{usd(DAY_MARGIN[sym] * qty)}</dd>
         </div>
         <div>
           <dt>Available</dt>
-          <dd className={avail < DAY_MARGIN[sym] * qty ? s.neg : undefined}>${fmt(avail, 0)}</dd>
+          <dd title={`$${fmt(avail, 0)}`} className={avail < DAY_MARGIN[sym] * qty ? s.neg : undefined}>{usd(avail)}</dd>
         </div>
         <div>
           <dt>Tick</dt>

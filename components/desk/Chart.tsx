@@ -24,11 +24,12 @@ import {
   setExitPrice,
   ticketEntry,
   ticketExits,
+  ticketFromPosition,
   togglePanel,
   useDesk,
   type Order,
 } from "@/lib/desk/store";
-import { addDrawing, clearDrawings, drawId, removeDrawing, replaceDrawing, selectDrawing, setTool, startDrawings, toggleDraw, toggleHidden, useDraw, type Drawing, type Pt } from "@/lib/desk/drawings";
+import { addDrawing, clearDrawings, drawId, removeDrawing, replaceDrawing, restyle, selectDrawing, setTool, startDrawings, toggleDraw, toggleHidden, useDraw, type Drawing, type Pt } from "@/lib/desk/drawings";
 import { BAYER4 } from "@/lib/noise";
 import { onThemeChange } from "@/lib/theme";
 import { Odometer } from "@/components/trader/parts";
@@ -243,6 +244,12 @@ export function Chart() {
   const selId = useDraw((st) => (st.hidden ? null : st.selected));
   const selKind = useDraw((st) => (st.selected ? st.byUnder[INSTRUMENTS[sym].under].find((d) => d.id === st.selected)?.kind ?? null : null));
   const selHidden = useDraw((st) => (st.selected ? !!st.byUnder[INSTRUMENTS[sym].under].find((d) => d.id === st.selected)?.hidden : false));
+  const selPos = useDraw(
+    useShallow((st) => {
+      const d = st.selected ? st.byUnder[INSTRUMENTS[sym].under].find((x) => x.id === st.selected) : undefined;
+      return d && (d.kind === "long" || d.kind === "short") ? [d.colors?.text, d.colors?.up, d.colors?.down] : null;
+    }),
+  );
   const inst = INSTRUMENTS[sym];
 
   const [auto, setAuto] = useState(true);
@@ -371,6 +378,14 @@ export function Chart() {
       e1: g("--cv-ember-1"),
       e2: g("--cv-ember-2"),
     };
+  };
+
+  /** What drawings need from the desk right now: fib levels, the ticket size, the tape. */
+  const drawCtx = (): K.DrawCtx => {
+    const ds = useDesk.getState();
+    const sy = ds.settings.sym;
+    const ins = INSTRUMENTS[sy];
+    return { fib: useDraw.getState().fib, qty: ds.settings.qty[sy], pv: ins.pv, tick: ins.tick, last: ds.quotes[sy].last };
   };
 
   /* ---------- the frame: bars, scales and geometry ---------- */
@@ -687,12 +702,13 @@ export function Chart() {
     // drawings
     const dr = useDraw.getState();
     const mine = dr.byUnder[ins.under];
+    const dc = drawCtx();
     if (!dr.hidden && fo > 0) {
       for (const d of mine) {
         // a hidden drawing only shows, faintly, while the tools are open or it's selected
         if (d.hidden && !dr.rail && d.id !== dr.selected) continue;
         ctx.globalAlpha = fo * (d.hidden ? 0.26 : 1);
-        K.paintDrawing(ctx, f, d, C, d.id === dr.selected, dr.fib);
+        K.paintDrawing(ctx, f, d, C, d.id === dr.selected, dc);
       }
       ctx.globalAlpha = 1;
     }
@@ -864,7 +880,7 @@ export function Chart() {
     ctx.rect(0, 0, f.plotW, f.plotH);
     ctx.clip();
     const draft = st.draft;
-    if (draft && draft.tool !== "measure" && draft.tool !== "zoom") K.paintDrawing(ctx, f, { id: "draft", kind: draft.tool, a: draft.a, b: draft.b } as Drawing, C, true);
+    if (draft && draft.tool !== "measure" && draft.tool !== "zoom") K.paintDrawing(ctx, f, { id: "draft", kind: draft.tool, a: draft.a, b: draft.b } as Drawing, C, true, drawCtx());
     if (st.drag?.kind === "brush") K.paintDrawing(ctx, f, { id: "draft", kind: "brush", pts: st.drag.pts }, C, true);
     const meas = draft?.tool === "measure" ? draft : st.measure;
     if (meas) {
@@ -920,14 +936,14 @@ export function Chart() {
       const hot = mine.find((d) => d.id === st.hover && d.id !== dr.selected);
       if (hot) {
         ctx.globalAlpha = st.fo * (hot.hidden ? 0.45 : 1);
-        K.paintDrawing(ctx, f, hot, C, true, dr.fib);
+        K.paintDrawing(ctx, f, hot, C, true, drawCtx());
         ctx.globalAlpha = st.fo;
       }
       if (sel && !dr.locked) {
         ctx.globalAlpha = st.fo;
         for (const h of K.handlesOf(f, sel)) {
           ctx.fillStyle = C.bg;
-          ctx.strokeStyle = C.strong;
+          ctx.strokeStyle = K.accentOf(sel, C);
           ctx.lineWidth = 1.5;
           ctx.beginPath();
           ctx.arc(h.x, h.y, 4.5, 0, Math.PI * 2);
@@ -1298,6 +1314,27 @@ export function Chart() {
         finish({ id: drawId(), kind: toolNow, a: p });
         return;
       }
+      if (toolNow === "long" || toolNow === "short") {
+        const f = st.frame!;
+        const ds = useDesk.getState();
+        const sy = ds.settings.sym;
+        const tk = INSTRUMENTS[sy].tick;
+        const dir = toolNow === "long" ? 1 : -1;
+        const i = Math.round(K.idxOfTime(f, p.t));
+        // sized to be workable at this zoom, at the ticket's usual reward-to-risk
+        const sT = ds.settings.stopTicks[sy];
+        const tT = ds.settings.targetTicks[sy];
+        const stopDist = Math.max(sT * tk, (f.hi - f.lo) * 0.08);
+        finish({
+          id: drawId(),
+          kind: toolNow,
+          a: p,
+          t2: K.timeOfIdx(f, i + Math.max(12, Math.round(150 / st.bw))),
+          target: snap(sy, p.p + dir * stopDist * (tT / sT)),
+          stop: snap(sy, p.p - dir * stopDist),
+        });
+        return;
+      }
       if (toolNow === "arrow") {
         const f = st.frame!;
         const i = Math.max(0, Math.min(f.bars.length - 1, Math.round(K.iOfX(f, x))));
@@ -1418,6 +1455,15 @@ export function Chart() {
       if (o.kind === "hline") next = { ...o, a: { ...o.a, p: p.p } };
       else if (o.kind === "vline") next = { ...o, a: { ...o.a, t: p.t } };
       else if (o.kind === "trend" || o.kind === "ray" || o.kind === "rect" || o.kind === "fib") next = d.idx === 0 ? { ...o, a: p } : { ...o, b: p };
+      else if (o.kind === "long" || o.kind === "short") {
+        // entry stays between its stop and target; each exit stays on its own side
+        const dir = o.kind === "long" ? 1 : -1;
+        const tk = INSTRUMENTS[useDesk.getState().settings.sym].tick;
+        if (d.idx === 0) next = (o.target - p.p) * dir > 0 && (p.p - o.stop) * dir > 0 ? { ...o, a: p } : { ...o, a: { ...o.a, t: p.t } };
+        else if (d.idx === 1) next = { ...o, t2: p.t > o.a.t ? p.t : o.t2 };
+        else if (d.idx === 2) next = { ...o, target: (p.p - o.a.p) * dir >= tk ? p.p : o.a.p + dir * tk };
+        else next = { ...o, stop: (o.a.p - p.p) * dir >= tk ? p.p : o.a.p - dir * tk };
+      }
       replaceDrawing(under(), next);
       return;
     }
@@ -1809,8 +1855,17 @@ export function Chart() {
               ref={popRef}
               kind={selKind}
               hidden={selHidden}
+              colors={selPos ? { text: selPos[0], up: selPos[1], down: selPos[2], defUp: v.current.ink?.pos ?? "#4DA3FF", defDown: v.current.ink?.neg ?? "#FF2EC4" } : undefined}
               onHide={() => toggleHidden(inst.under, selId)}
               onDelete={() => removeDrawing(inst.under, selId)}
+              onColor={(which, hex) => restyle(inst.under, selId, { [which]: hex })}
+              onLimit={() => {
+                const d = useDraw.getState().byUnder[inst.under].find((x) => x.id === selId);
+                if (d && (d.kind === "long" || d.kind === "short")) {
+                  ticketFromPosition(d.kind === "long" ? 1 : -1, d.a.p, d.stop, d.target);
+                  selectDrawing(null);
+                }
+              }}
             />
           )}
           <Toaster inline />

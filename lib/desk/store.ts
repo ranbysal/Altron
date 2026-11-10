@@ -759,6 +759,20 @@ export function setExitUnits(which: "stop" | "target", units: [ExitUnit, ExitUni
   setSettings({ exitUnits: { ...get().settings.exitUnits, [which]: units } });
 }
 
+/** A long or short position drawn on the chart becomes the ticket's limit order, exits and all. */
+export function ticketFromPosition(side: Side, entry: number, stop: number, target: number) {
+  const s = get();
+  const sym = s.settings.sym;
+  const u = s.settings.exitUnits;
+  setSettings({
+    stopOn: true,
+    targetOn: true,
+    exitUnits: { stop: u.stop[0] === "price" ? u.stop : ["price", u.stop[0]], target: u.target[0] === "price" ? u.target : ["price", u.target[0]] },
+  });
+  setPick(null);
+  setTicket({ type: "LMT", side, limit: snap(sym, entry), stopPx: snap(sym, stop), targetPx: snap(sym, target), pxSym: sym });
+}
+
 /** Sends what's on the ticket, with a notification to members when asked. */
 export function sendTicket(notify?: { note?: string }) {
   const s = get();

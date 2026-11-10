@@ -200,15 +200,37 @@ function extend(f: Frame, a: { x: number; y: number }, b: { x: number; y: number
   return { x: a.x + dx * tx, y: a.y + dy * tx };
 }
 
-/** The band a fib shades: the levels either side of the midpoint, inside the swing. */
-function fibBand(levels: number[]): [number, number] | null {
-  const lo = levels.filter((r) => r > 0 && r < 0.5);
-  const hi = levels.filter((r) => r > 0.5 && r < 1);
-  if (!lo.length || !hi.length) return null;
-  return [Math.max(...lo), Math.min(...hi)];
+/** What some drawings need from the desk: fib levels, and for a position tool the size and the tape. */
+export type DrawCtx = { fib: number[]; qty?: number; pv?: number; tick?: number; last?: number };
+const NO_CTX: DrawCtx = { fib: FIB_DEFAULT };
+
+/** A fib drawn upward is a buy (blue); drawn downward, a sell (pink). */
+export const fibUp = (d: { a: Pt; b: Pt }) => d.b.p >= d.a.p;
+
+/** The colour a drawing's handles take. */
+export function accentOf(d: Drawing, ink: Ink): string {
+  if (d.kind === "fib") return fibUp(d) ? ink.pos : ink.neg;
+  if (d.kind === "long" || d.kind === "short") return d.kind === "long" ? (d.colors?.up ?? ink.pos) : (d.colors?.down ?? ink.neg);
+  return ink.line;
 }
 
-export function paintDrawing(ctx: CanvasRenderingContext2D, f: Frame, d: Drawing, ink: Ink, hot = false, fib: number[] = FIB_DEFAULT) {
+/** A filled label with the text centred in it. */
+function pill(ctx: CanvasRenderingContext2D, x: number, y: number, lines: string[], bg: string, fg: string, font: string) {
+  ctx.font = font;
+  const w = Math.max(...lines.map((l) => ctx.measureText(l).width)) + 16;
+  const h = lines.length * 14 + 8;
+  roundRect(ctx, Math.round(x - w / 2) + 0.5, Math.round(y - h / 2) + 0.5, Math.round(w), h, 5);
+  ctx.fillStyle = bg;
+  ctx.fill();
+  ctx.fillStyle = fg;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  lines.forEach((l, i) => ctx.fillText(l, x, y - ((lines.length - 1) * 14) / 2 + i * 14 + 0.5));
+  ctx.textAlign = "left";
+}
+
+export function paintDrawing(ctx: CanvasRenderingContext2D, f: Frame, d: Drawing, ink: Ink, hot = false, dc: DrawCtx = NO_CTX) {
+  const fib = dc.fib;
   ctx.save();
   ctx.textAlign = "left"; // whatever the caller last used, labels start at their anchor
   ctx.lineWidth = hot ? 2 : 1.4;
@@ -256,44 +278,106 @@ export function paintDrawing(ctx: CanvasRenderingContext2D, f: Frame, d: Drawing
       break;
     }
     case "fib": {
+      // drawn upward it's a buy, blue; downward a sell, pink. Levels run the width of the chart,
+      // labelled at the right; 1 sits on the first click, 0 on the second.
       const a = pt(f, d.a);
       const b = pt(f, d.b);
-      const x0 = Math.min(a.x, b.x);
-      const x1 = Math.max(a.x, b.x);
+      const color = fibUp(d) ? ink.pos : ink.neg;
       const lv = (r: number) => d.b.p + (d.a.p - d.b.p) * r;
-      const base = ctx.globalAlpha;
-      // the zone between the middle levels, softly filled
-      const band = fibBand(fib);
-      if (band) {
-        const ya = yOf(f, lv(band[0]));
-        const yb = yOf(f, lv(band[1]));
-        ctx.fillStyle = ink.fill;
-        ctx.fillRect(x0, Math.min(ya, yb), x1 - x0, Math.abs(yb - ya));
-      }
+      ctx.strokeStyle = color;
+      ctx.lineWidth = hot ? 1.6 : 1;
       ctx.font = `10px ${ink.mono}`;
       ctx.textBaseline = "bottom";
+      ctx.textAlign = "right";
       // labels only where there's room for them, so a squeezed fib never piles its text up
       let lastLabel = -Infinity;
       const rows = fib.map((r) => ({ r, y: Math.round(yOf(f, lv(r))) + 0.5 })).sort((p, q) => p.y - q.y);
       for (const { r, y } of rows) {
-        ctx.globalAlpha = base * (r === 0 || r === 1 ? 1 : 0.65);
         ctx.beginPath();
-        ctx.moveTo(x0, y);
-        ctx.lineTo(x1, y);
+        ctx.moveTo(0, y);
+        ctx.lineTo(f.plotW, y);
         ctx.stroke();
-        ctx.globalAlpha = base;
-        if (y - lastLabel >= 13 && x1 - x0 > 60) {
-          ctx.fillStyle = ink.dim;
-          ctx.fillText(`${r} (${fmt(lv(r))})`, x0 + 4, y - 2);
+        if (y - lastLabel >= 13) {
+          const label = `${r} (${fmt(lv(r))})`;
+          ctx.lineWidth = 3;
+          ctx.strokeStyle = ink.bg;
+          ctx.strokeText(label, f.plotW - 8, y - 3);
+          ctx.fillStyle = color;
+          ctx.fillText(label, f.plotW - 8, y - 3);
+          ctx.strokeStyle = color;
+          ctx.lineWidth = hot ? 1.6 : 1;
           lastLabel = y;
         }
       }
-      ctx.setLineDash([3, 4]);
-      ctx.globalAlpha = base * 0.5;
+      ctx.textAlign = "left";
+      ctx.setLineDash([4, 4]);
+      ctx.lineWidth = 1.2;
       ctx.beginPath();
       ctx.moveTo(a.x, a.y);
       ctx.lineTo(b.x, b.y);
       ctx.stroke();
+      ctx.setLineDash([]);
+      for (const p of [a, b]) {
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 4.5, 0, Math.PI * 2);
+        ctx.fillStyle = ink.bg;
+        ctx.fill();
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      }
+      break;
+    }
+    case "long":
+    case "short": {
+      // the profit zone over (or under) the entry, the loss zone on the other side, labelled as TradingView does
+      const dir = d.kind === "long" ? 1 : -1;
+      const x0 = Math.round(Math.min(xOfTime(f, d.a.t), xOfTime(f, d.t2)));
+      const x1 = Math.round(Math.max(xOfTime(f, d.a.t), xOfTime(f, d.t2)));
+      const ye = Math.round(yOf(f, d.a.p));
+      const yt = Math.round(yOf(f, d.target));
+      const ys = Math.round(yOf(f, d.stop));
+      const up = d.colors?.up ?? ink.pos;
+      const down = d.colors?.down ?? ink.neg;
+      const text = d.colors?.text ?? "#ffffff";
+      const base = ctx.globalAlpha;
+      ctx.globalAlpha = base * 0.17;
+      ctx.fillStyle = up;
+      ctx.fillRect(x0, Math.min(ye, yt), x1 - x0, Math.abs(yt - ye));
+      ctx.fillStyle = down;
+      ctx.fillRect(x0, Math.min(ye, ys), x1 - x0, Math.abs(ys - ye));
+      ctx.globalAlpha = base * 0.55;
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = up;
+      ctx.strokeRect(x0 + 0.5, Math.min(ye, yt) + 0.5, x1 - x0, Math.abs(yt - ye));
+      ctx.strokeStyle = down;
+      ctx.strokeRect(x0 + 0.5, Math.min(ye, ys) + 0.5, x1 - x0, Math.abs(ys - ye));
+      ctx.globalAlpha = base;
+      ctx.strokeStyle = ink.line;
+      ctx.beginPath();
+      ctx.moveTo(x0, ye + 0.5);
+      ctx.lineTo(x1, ye + 0.5);
+      ctx.stroke();
+      const tick = dc.tick ?? 0.25;
+      const qty = dc.qty ?? 1;
+      const pv = dc.pv ?? 1;
+      const leg = (p: number) => {
+        const dist = Math.abs(p - d.a.p);
+        return `${fmt(dist)} (${((dist / d.a.p) * 100).toFixed(3)}%) · ${Math.round(dist / tick)} ticks`;
+      };
+      const gain = Math.abs(d.target - d.a.p) * qty * pv;
+      const loss = Math.abs(d.stop - d.a.p) * qty * pv;
+      const rr = loss > 0 ? gain / loss : 0;
+      const open = dc.last !== undefined ? (dc.last - d.a.p) * dir * qty * pv : 0;
+      // the figures show while it's hovered or selected; otherwise just the zones, so the chart stays clear
+      if (!hot) break;
+      const cx = (x0 + x1) / 2;
+      const font = `10.5px ${ink.mono}`;
+      const yTop = Math.min(yt, ys);
+      const yBot = Math.max(yt, ys);
+      const topIsTarget = yt < ys;
+      pill(ctx, cx, yTop - 14, [topIsTarget ? `Target ${leg(d.target)} · +$${fmt(gain)}` : `Stop ${leg(d.stop)} · −$${fmt(loss)}`], topIsTarget ? up : down, text, font);
+      pill(ctx, cx, yBot + 14, [topIsTarget ? `Stop ${leg(d.stop)} · −$${fmt(loss)}` : `Target ${leg(d.target)} · +$${fmt(gain)}`], topIsTarget ? down : up, text, font);
+      pill(ctx, cx, ye + (hot ? 0 : 0), [`Open P&L ${open >= 0 ? "+" : "−"}$${fmt(Math.abs(open))} · Qty ${qty}`, `Risk/reward ${rr.toFixed(2)}`], open >= 0 ? up : down, text, font);
       break;
     }
     case "brush": {
@@ -354,6 +438,15 @@ export function handlesOf(f: Frame, d: Drawing): { x: number; y: number }[] {
   if (d.kind === "trend" || d.kind === "ray" || d.kind === "rect" || d.kind === "fib") return [pt(f, d.a), pt(f, d.b)];
   if (d.kind === "hline") return [{ x: f.plotW / 2, y: yOf(f, d.a.p) }];
   if (d.kind === "vline") return [{ x: xOfTime(f, d.a.t), y: f.plotH / 2 }];
+  if (d.kind === "long" || d.kind === "short") {
+    const x0 = xOfTime(f, d.a.t);
+    return [
+      { x: x0, y: yOf(f, d.a.p) },
+      { x: xOfTime(f, d.t2), y: yOf(f, d.a.p) },
+      { x: x0, y: yOf(f, d.target) },
+      { x: x0, y: yOf(f, d.stop) },
+    ];
+  }
   return [];
 }
 
@@ -385,11 +478,15 @@ export function hits(ctx: CanvasRenderingContext2D, f: Frame, d: Drawing, x: num
       const b = pt(f, d.b);
       return x >= Math.min(a.x, b.x) - near && x <= Math.max(a.x, b.x) + near && y >= Math.min(a.y, b.y) - near && y <= Math.max(a.y, b.y) + near;
     }
-    case "fib": {
-      const a = pt(f, d.a);
-      const b = pt(f, d.b);
-      if (x < Math.min(a.x, b.x) - near || x > Math.max(a.x, b.x) + near) return false;
-      return fib.some((r) => Math.abs(y - yOf(f, d.b.p + (d.a.p - d.b.p) * r)) < near);
+    case "fib":
+      return fib.some((r) => Math.abs(y - yOf(f, d.b.p + (d.a.p - d.b.p) * r)) < near) || segDist(x, y, xOfTime(f, d.a.t), yOf(f, d.a.p), xOfTime(f, d.b.t), yOf(f, d.b.p)) < near;
+    case "long":
+    case "short": {
+      const x0 = Math.min(xOfTime(f, d.a.t), xOfTime(f, d.t2));
+      const x1 = Math.max(xOfTime(f, d.a.t), xOfTime(f, d.t2));
+      const y0 = Math.min(yOf(f, d.target), yOf(f, d.stop));
+      const y1 = Math.max(yOf(f, d.target), yOf(f, d.stop));
+      return x >= x0 - near && x <= x1 + near && y >= y0 - near && y <= y1 + near;
     }
     case "brush":
       for (let i = 1; i < d.pts.length; i++) {
@@ -450,6 +547,13 @@ export function boxOf(ctx: CanvasRenderingContext2D, f: Frame, d: Drawing, sans:
       const p = pt(f, d.a);
       return d.up ? { x0: p.x - 7, x1: p.x + 7, y0: p.y, y1: p.y + 17 } : { x0: p.x - 7, x1: p.x + 7, y0: p.y - 17, y1: p.y };
     }
+    case "long":
+    case "short": {
+      const ya = yOf(f, d.target);
+      const yb = yOf(f, d.stop);
+      // room above for its own label
+      return { x0: xOfTime(f, d.a.t), x1: xOfTime(f, d.t2), y0: Math.min(ya, yb) - 26, y1: Math.max(ya, yb) + 26 };
+    }
   }
 }
 
@@ -471,6 +575,9 @@ export function shifted(f: Frame, d: Drawing, di: number, dp: number): Drawing {
     case "text":
     case "arrow":
       return { ...d, a: mv(d.a) };
+    case "long":
+    case "short":
+      return { ...d, a: mv(d.a), t2: timeOfIdx(f, Math.round(idxOfTime(f, d.t2)) + di), target: d.target + dp, stop: d.stop + dp };
   }
 }
 
