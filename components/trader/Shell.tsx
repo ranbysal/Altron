@@ -14,13 +14,14 @@ import s from "./trader.module.css";
 const TABS = [
   { href: "/trader", label: "Dashboard" },
   { href: "/trader/desk", label: "Desk" },
+  { href: "/community", label: "Community" },
 ];
 
 /** Same shape as the public nav. Lives in the layout so the tab pill can slide between views. */
 function Nav() {
   const path = usePathname() ?? "/trader";
   const clock = useMarketClock();
-  const active = path.startsWith("/trader/desk") ? 1 : 0;
+  const active = path.startsWith("/community") ? 2 : path.startsWith("/trader/desk") ? 1 : 0;
   const refs = useRef<(HTMLAnchorElement | null)[]>([]);
   const [pill, setPill] = useState<{ x: number; w: number } | null>(null);
 

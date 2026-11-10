@@ -1482,3 +1482,12 @@
 @media (prefers-reduced-motion: reduce) {
   .desk, .desk *, .float, .toast { animation: none !important; transition: none !important; }
 }
+
+/* ---------- the chart as members see it (Community page) ---------- */
+.bar[data-viewer] :is(.barMk, .barPnl, .barKeys), .bar[data-viewer] .barRight > .barSep { display: none; }
+.bar[data-viewer] .seg { margin-right: 4px; }
+.chart[data-viewer] :is(.railToggle, .ranges, .toastsInline, .lineNotify) { display: none; }
+.chart[data-viewer] .lineTag button { display: none; }
+.chart[data-viewer] .lineTag { padding-right: 10px; cursor: default; pointer-events: none; }
+.chart[data-viewer] .line { pointer-events: none; }
+.chart[data-viewer] .legend { left: 14px; }

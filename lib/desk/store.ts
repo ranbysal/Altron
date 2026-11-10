@@ -53,6 +53,9 @@ export type Trade = {
   risk?: number;
   /** opened with a notification: its exits are announced too */
   notify?: boolean;
+  /** where the stop and target last sat, kept for the record once the trade is over */
+  stop?: number;
+  target?: number;
 };
 export type Phase = "before" | "during" | "after";
 export type Note = { id: string; tradeId: string | null; sym: Sym; phase: Phase; text: string; at: number; edits: { text: string; at: number }[] };
@@ -240,6 +243,15 @@ function pushToast(d: Draft, t: Omit<Toast, "id" | "at">) {
   d.toasts = [...d.toasts.slice(-3), { ...t, id: uid("t"), at: Date.now() }];
 }
 
+/** Keeps a trade's record of where its stop and target sit. */
+function syncExits(d: Draft, sym: Sym) {
+  const pos = d.positions[sym];
+  if (!pos) return;
+  const stop = d.orders.find((o) => o.sym === sym && o.role === "stop")?.stop;
+  const target = d.orders.find((o) => o.sym === sym && o.role === "target")?.limit;
+  d.trades = d.trades.map((t) => (t.id === pos.tradeId && ((stop !== undefined && t.stop !== stop) || (target !== undefined && t.target !== target)) ? { ...t, stop: stop ?? t.stop, target: target ?? t.target } : t));
+}
+
 /** Sends a notice to members (kept here until the backend relays it) and says so on the desk. */
 function publish(d: Draft, n: Omit<Notice, "id">) {
   const full: Notice = { ...n, id: uid("N") };
@@ -353,6 +365,8 @@ function applyFill(d: Draft, o: Order, qty: number, price: number, at: number) {
     const size = Math.abs(pos.qty);
     d.orders = d.orders.map((x) => (x.sym === sym && x.reduceOnly && (x.role === "stop" || x.role === "target") ? { ...x, qty: size } : x));
   }
+
+  syncExits(d, sym);
 
   // members hear about an exit from a trade they were told about
   if (closedQty && wasTrade && d.trades.find((t) => t.id === wasTrade)?.notify) {
@@ -567,7 +581,10 @@ export function moveOrder(id: string, price: number) {
     return o;
   });
   const o = d.orders.find((x) => x.id === id);
-  if (o) work(d, o.sym, get().quotes[o.sym], Date.now());
+  if (o) {
+    syncExits(d, o.sym);
+    work(d, o.sym, get().quotes[o.sym], Date.now());
+  }
   commit(d);
 }
 
@@ -617,6 +634,7 @@ export function addBracket(sym: Sym, role: "stop" | "target", price?: number) {
   d.orders = [...d.orders.map((x) => (x === sibling ? { ...x, oco } : x)), o];
   // a stop added later still defines the trade's risk
   if (role === "stop") updateTrade(d, pos.tradeId, (t) => (t.risk ? t : { ...t, risk: Math.abs(pos.avg - p) * inst.pv * Math.abs(pos.qty) }));
+  syncExits(d, sym);
   commit(d);
 }
 
