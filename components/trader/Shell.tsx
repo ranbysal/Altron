@@ -11,17 +11,42 @@ import { startDesk } from "@/lib/desk/store";
 import { useMarketClock } from "./clock";
 import s from "./trader.module.css";
 
-const TABS = [
+const TRADER_TABS = [
   { href: "/trader", label: "Dashboard" },
   { href: "/trader/desk", label: "Desk" },
   { href: "/community", label: "Community" },
 ];
+const OWNER_TABS = [
+  { href: "/owner", label: "Dashboard" },
+  { href: "/owner/follow", label: "Follow" },
+  { href: "/community", label: "Community" },
+];
+const SIDE_KEY = "altron-side";
+
+/** Whose pages these are. Community is shared, so it keeps the side the visitor came from. */
+function useSide(path: string): "trader" | "owner" {
+  const [side, setSide] = useState<"trader" | "owner">(path.startsWith("/owner") ? "owner" : "trader");
+  useEffect(() => {
+    let next: "trader" | "owner" = "trader";
+    try {
+      if (path.startsWith("/owner")) next = "owner";
+      else if (path.startsWith("/community")) next = sessionStorage.getItem(SIDE_KEY) === "owner" ? "owner" : "trader";
+      sessionStorage.setItem(SIDE_KEY, next);
+    } catch {
+      next = path.startsWith("/owner") ? "owner" : "trader";
+    }
+    setSide(next);
+  }, [path]);
+  return side;
+}
 
 /** Same shape as the public nav. Lives in the layout so the tab pill can slide between views. */
 function Nav() {
   const path = usePathname() ?? "/trader";
   const clock = useMarketClock();
-  const active = path.startsWith("/community") ? 2 : path.startsWith("/trader/desk") ? 1 : 0;
+  const side = useSide(path);
+  const TABS = side === "owner" ? OWNER_TABS : TRADER_TABS;
+  const active = path.startsWith("/community") ? 2 : path.startsWith("/trader/desk") || path.startsWith("/owner/follow") ? 1 : 0;
   const refs = useRef<(HTMLAnchorElement | null)[]>([]);
   const [pill, setPill] = useState<{ x: number; w: number } | null>(null);
 
@@ -34,10 +59,10 @@ function Nav() {
     window.addEventListener("resize", measure);
     document.fonts?.ready.then(measure);
     return () => window.removeEventListener("resize", measure);
-  }, [active]);
+  }, [active, side]);
 
   return (
-    <nav className={s.nav} aria-label="Trader">
+    <nav className={s.nav} aria-label={side === "owner" ? "Owner" : "Trader"}>
       <Link href="/" className={s.brand} aria-label="Altron home">
         <Mark size={26} />
         <span className={s.brandName}>Altron</span>
@@ -62,11 +87,17 @@ function Nav() {
       <div className={s.navRight}>
         <span className={s.clock}>NY {clock?.time ?? "--:--"}</span>
         <ThemeSwitch />
-        <span className={s.me} aria-label="Yazan, online">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/yazan.webp" alt="" width={38} height={38} />
-          <i />
-        </span>
+        {side === "owner" ? (
+          <span className={`${s.me} ${s.meOwner}`} aria-label="Owner">
+            <Mark size={15} />
+          </span>
+        ) : (
+          <span className={s.me} aria-label="Yazan, online">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/yazan.webp" alt="" width={38} height={38} />
+            <i />
+          </span>
+        )}
       </div>
     </nav>
   );

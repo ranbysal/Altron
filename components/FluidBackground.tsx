@@ -126,7 +126,7 @@ function hexToRgb(hex: string): [number, number, number] {
  */
 export function FluidBackground() {
   const path = usePathname() ?? "/";
-  if (path.startsWith("/trader") || path.startsWith("/community")) return null;
+  if (path.startsWith("/trader") || path.startsWith("/community") || path.startsWith("/owner")) return null;
   return <Fluid />;
 }
 

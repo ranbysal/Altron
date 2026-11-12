@@ -5,8 +5,8 @@ import { money, signed } from "@/lib/format";
 import { CALENDAR_START, CALENDAR_WEEKS, TRADING_DAYS, dailyPnl, dayLabel, periodStartIndex, type Period } from "@/lib/journal";
 import s from "./trader.module.css";
 
-const DAILY = dailyPnl();
-const MAX_ABS = Math.max(...Array.from(DAILY.values()).map((d) => Math.abs(d.pnl)));
+const DAILY_YAZAN = dailyPnl();
+type Daily = Map<string, { pnl: number; trades: number; r: number }>;
 const SESSION_INDEX = new Map(TRADING_DAYS.map((d, i) => [d, i]));
 
 type Day = { day: string; w: number; d: number };
@@ -24,12 +24,14 @@ function weeks(): Day[] {
 }
 const DAYS = weeks();
 
-function level(pnl: number): number {
-  return 1 + Math.floor(Math.min(0.999, Math.sqrt(Math.abs(pnl) / MAX_ABS)) * 4);
+function level(pnl: number, max: number): number {
+  return 1 + Math.floor(Math.min(0.999, Math.sqrt(Math.abs(pnl) / max)) * 4);
 }
 
 /** Daily P&L as a grid of squares, one column per week. Click a day to see its trades. */
-export function Calendar({ period, selected, onSelect }: { period: Period; selected: string | null; onSelect: (d: string | null) => void }) {
+export function Calendar({ period, selected, onSelect, daily }: { period: Period; selected: string | null; onSelect: (d: string | null) => void; daily?: Daily }) {
+  const DAILY = daily ?? DAILY_YAZAN;
+  const MAX_ABS = Math.max(1, ...Array.from(DAILY.values()).map((d) => Math.abs(d.pnl)));
   const [hover, setHover] = useState<Day | null>(null);
   const start = periodStartIndex(period);
   const months = useMemo(() => {
@@ -68,7 +70,7 @@ export function Calendar({ period, selected, onSelect }: { period: Period; selec
             const idx = SESSION_INDEX.get(c.day);
             const closed = idx === undefined;
             const out = !closed && idx < start;
-            const tone = data ? (data.pnl >= 0 ? "p" : "l") + level(data.pnl) : closed ? "closed" : "none";
+            const tone = data ? (data.pnl >= 0 ? "p" : "l") + level(data.pnl, MAX_ABS) : closed ? "closed" : "none";
             return (
               <button
                 key={c.day}
