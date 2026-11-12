@@ -344,7 +344,7 @@ as $$
 begin
   if not public.is_owner() then raise exception 'owner only'; end if;
   return query
-    select p.id, u.email::text, p.role, p.display_name, coalesce(u.raw_app_meta_data ->> 'provider', 'email'), u.created_at, u.last_sign_in_at, p.revoked_at
+    select p.id, u.email::text, p.role, p.display_name, array_to_string(array(select jsonb_array_elements_text(coalesce(u.raw_app_meta_data -> 'providers', jsonb_build_array(coalesce(u.raw_app_meta_data ->> 'provider', 'email'))))), ','), u.created_at, u.last_sign_in_at, p.revoked_at
     from public.profiles p join auth.users u on u.id = p.id
     order by u.created_at;
 end;

@@ -16,6 +16,13 @@ const ROLES: { id: Role; label: string; blurb: string }[] = [
   { id: "owner", label: "Owner", blurb: "Everything, including this page" },
 ];
 
+/** "google,email" → "Google and password" */
+const signsIn = (list: string) => {
+  const ways = [...new Set(list.split(",").map((x) => (x.trim() === "google" ? "Google" : "password")))].sort();
+  const text = ways.join(" and ");
+  return text.charAt(0).toUpperCase() + text.slice(1);
+};
+
 const DAY = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" });
 const when = (iso: string | null) => (iso ? DAY.format(new Date(iso)) : "Never");
 
@@ -182,7 +189,7 @@ export function Admin() {
                           ))}
                         </select>
                       </td>
-                      <td className={s.dimCell}>{p.provider === "google" ? "Google" : "Password"}</td>
+                      <td className={s.dimCell}>{signsIn(p.provider)}</td>
                       <td className={s.dimCell}>{when(p.created_at)}</td>
                       <td className={s.dimCell}>{when(p.last_sign_in_at)}</td>
                       <td>
