@@ -7,6 +7,9 @@ import { roleOf, serverClient } from "@/lib/supabase/server";
 export async function GET(req: NextRequest) {
   const url = req.nextUrl;
   const fail = (why: string) => NextResponse.redirect(new URL(`/login?why=${why}`, url.origin));
+  // Google sends errors back on the link (an uninvited Google account lands here too)
+  const err = `${url.searchParams.get("error") ?? ""} ${url.searchParams.get("error_description") ?? ""}`;
+  if (err.trim()) return fail(/not_invited|saving new user/i.test(err) ? "invite" : "google");
   if (!supabaseReady()) return fail("setup");
 
   const supabase = await serverClient();
@@ -20,8 +23,14 @@ export async function GET(req: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return fail("link");
-  const role = (await roleOf(supabase, user.id)) ?? "member";
+  const role = await roleOf(supabase, user.id);
+  if (!role) {
+    await supabase.auth.signOut();
+    return fail("invite");
+  }
   const next = safeNext(url.searchParams.get("next"));
+  // a password reset link finishes on the form for the new password
+  if (next?.startsWith("/login")) return NextResponse.redirect(new URL(next, url.origin));
   // the owner's pages only for the owner, whatever the link asked for
   const dest = next && (!next.startsWith("/owner") || role === "owner") ? next : HOME[role];
   return NextResponse.redirect(new URL(dest, url.origin));

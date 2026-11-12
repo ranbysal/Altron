@@ -13,7 +13,36 @@ create table if not exists public.profiles (
   created_at timestamptz not null default now()
 );
 
--- every new sign-up starts as a member; promote the trader by hand (see README)
+-- invite only: an account can be created (with Google or a password) only for an email on
+-- this list, and it starts with the role the invite gives it
+create table if not exists public.invites (
+  email text primary key check (email = lower(email)),
+  role text not null default 'member' check (role in ('member', 'trader', 'owner')),
+  note text,
+  created_at timestamptz not null default now()
+);
+alter table public.invites enable row level security;
+-- no policies: only the SQL editor (and the owner's tools, later) can read or change invites
+
+create or replace function public.check_invite()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if not exists (select 1 from public.invites where email = lower(new.email)) then
+    raise exception 'not_invited' using hint = 'Altron is invite only';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists before_auth_user_created on auth.users;
+create trigger before_auth_user_created
+  before insert on auth.users
+  for each row execute function public.check_invite();
+
 create or replace function public.handle_new_user()
 returns trigger
 language plpgsql
@@ -21,8 +50,12 @@ security definer
 set search_path = public
 as $$
 begin
-  insert into public.profiles (id, display_name)
-  values (new.id, coalesce(new.raw_user_meta_data ->> 'name', split_part(new.email, '@', 1)))
+  insert into public.profiles (id, role, display_name)
+  values (
+    new.id,
+    coalesce((select role from public.invites where email = lower(new.email)), 'member'),
+    coalesce(new.raw_user_meta_data ->> 'full_name', new.raw_user_meta_data ->> 'name', split_part(new.email, '@', 1))
+  )
   on conflict (id) do nothing;
   return new;
 end;
