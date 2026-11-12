@@ -6,15 +6,28 @@ The desk runs on a simulated market and keeps its paper book in the browser unti
 
 1. Create a project at supabase.com. Any region near New York is fine.
 2. Open **SQL Editor**, paste all of `schema.sql`, and run it. It is safe to run again later.
-3. In **Authentication → Providers**, keep Email on (magic links work well for members).
-4. Sign in to the site once as Yazan, then make that account the trader. In the SQL Editor:
+3. In **Authentication → Providers**: keep **Email** on with "Confirm email" on, and turn on **Google** with a client ID and secret from Google Cloud (OAuth client of type Web application; authorized redirect URI `https://<project>.supabase.co/auth/v1/callback`).
+4. In **Authentication → URL Configuration**, set the Site URL to `https://altron.capital` and add these redirect URLs: `https://altron.capital/**`, `https://www.altron.capital/**` and `https://*-luvfromsal.vercel.app/**` (previews).
+5. Altron is invite only. An account can only be created, with Google or a password, for an email in `public.invites`, and it starts with the invite's role. Invite people from the SQL Editor:
+
+   ```sql
+   insert into public.invites (email, role) values
+     ('owner@example.com', 'owner'),
+     ('yazan@example.com', 'trader'),
+     ('member@example.com', 'member')
+   on conflict (email) do update set role = excluded.role;
+   ```
+
+   Then they sign in with Google, or choose "Create one" on the sign-in page to set a password (one confirmation email). For an account that already exists, change its role directly:
 
    ```sql
    update public.profiles set role = 'trader'
-   where id = (select id from auth.users where email = 'YAZAN_EMAIL_HERE');
+   where id = (select id from auth.users where email = 'yazan@example.com');
    ```
 
-5. Add two environment variables in Vercel (**Settings → Environment Variables**, all environments), from Supabase **Project Settings → API**:
+   The owner's pages (`/owner`) open only for the owner. Yazan's pages and Community stay open until his account exists.
+
+6. Add two environment variables in Vercel (**Settings → Environment Variables**, all environments), from Supabase **Project Settings → API**:
 
    - `NEXT_PUBLIC_SUPABASE_URL`
    - `NEXT_PUBLIC_SUPABASE_ANON_KEY`

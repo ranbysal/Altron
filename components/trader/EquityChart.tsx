@@ -26,7 +26,22 @@ function hex(c: string): string {
  * Equity by trade, drawn in the band's dither texture: profit as a bright edge
  * with a glow falling beneath it, drawdown hanging below the baseline in ember.
  */
-export function EquityChart({ curve, trades, compact = false, className }: { curve: Point[]; trades: Trade[]; compact?: boolean; className?: string }) {
+export function EquityChart({
+  curve,
+  trades,
+  compact = false,
+  className,
+  ghost,
+  ghostLabel = "Yazan",
+}: {
+  curve: Point[];
+  trades: Trade[];
+  compact?: boolean;
+  className?: string;
+  /** another curve on the same scale, drawn faintly behind (the owner's view shows Yazan's) */
+  ghost?: number[];
+  ghostLabel?: string;
+}) {
   const { EQ_TOP, EQ_BASE, UW_TOP, UW_DEPTH, HEIGHT, GLOW, UW_GLOW } = GEO[compact ? "compact" : "full"];
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -45,10 +60,13 @@ export function EquityChart({ curve, trades, compact = false, className }: { cur
     zeroY: 0,
     raf: 0,
     started: 0,
-    pal: { b: ["", "", "", ""], e: ["", "", "", ""], dot: "" },
+    pal: { b: ["", "", "", ""], e: ["", "", "", ""], dot: "", ghost: "" },
+    ghost: null as null | [number, number][],
   });
   const curveRef = useRef(curve);
   curveRef.current = curve;
+  const ghostRef = useRef(ghost);
+  ghostRef.current = ghost;
 
   useEffect(() => {
     const st = state.current;
@@ -63,6 +81,7 @@ export function EquityChart({ curve, trades, compact = false, className }: { cur
         b: [0, 1, 2, 3].map((k) => hex(cssVar(`--cv-dither-${k}`))),
         e: [0, 1, 2, 3].map((k) => hex(cssVar(`--cv-ember-${k}`))),
         dot: cssVar("--dim"),
+        ghost: cssVar("--muted") || cssVar("--dim"),
       };
     };
 
@@ -80,9 +99,15 @@ export function EquityChart({ curve, trades, compact = false, className }: { cur
         hi = Math.max(hi, p.eq);
         ddMin = Math.min(ddMin, p.dd);
       }
+      for (const g of ghostRef.current ?? []) {
+        lo = Math.min(lo, g);
+        hi = Math.max(hi, g);
+      }
       const span = (hi - lo) * 1.08 || 1;
       const yOf = (v: number) => EQ_BASE - ((v - lo) / span) * (EQ_BASE - EQ_TOP);
       st.zeroY = yOf(0);
+      const gh = ghostRef.current;
+      st.ghost = gh && gh.length > 1 ? gh.map((v, k) => [(k / (gh.length - 1)) * P, yOf(v)] as [number, number]) : null;
       for (let i = 0; i < cols; i++) {
         const u = Math.min(1, ((i + 0.5) * cell) / P) * (n - 1);
         const a = Math.max(0, Math.min(n - 1, Math.floor(u)));
@@ -158,6 +183,21 @@ export function EquityChart({ curve, trades, compact = false, className }: { cur
         ctx.fill(blue[k]);
         ctx.fillStyle = st.pal.e[k];
         ctx.fill(ember[k]);
+      }
+      // the other curve, a thin dashed line behind
+      if (st.ghost) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(0, 0, Math.min(P, revealX), HEIGHT);
+        ctx.clip();
+        ctx.beginPath();
+        st.ghost.forEach(([x, y], k) => (k ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+        ctx.setLineDash([3, 3]);
+        ctx.strokeStyle = st.pal.ghost;
+        ctx.globalAlpha = 0.75;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.restore();
       }
       // the period's starting balance, as a dotted rule
       ctx.fillStyle = st.pal.dot;
@@ -245,7 +285,7 @@ export function EquityChart({ curve, trades, compact = false, className }: { cur
   useEffect(() => {
     const w = wrapRef.current as (HTMLDivElement & { __retarget?: () => void }) | null;
     w?.__retarget?.();
-  }, [curve]);
+  }, [curve, ghost]);
 
   const onMove = (e: React.PointerEvent<HTMLDivElement>) => {
     const st = state.current;
@@ -266,6 +306,11 @@ export function EquityChart({ curve, trades, compact = false, className }: { cur
     lo = Math.min(lo, c.eq);
     hi = Math.max(hi, c.eq);
   }
+  for (const g of ghost ?? []) {
+    lo = Math.min(lo, g);
+    hi = Math.max(hi, g);
+  }
+  const ghostEnd = ghost && ghost.length > 1 ? EQ_BASE - ((ghost[ghost.length - 1] - lo) / ((hi - lo) * 1.08 || 1)) * (EQ_BASE - EQ_TOP) : null;
   const endY = EQ_BASE - ((curve[curve.length - 1].eq - lo) / ((hi - lo) * 1.08 || 1)) * (EQ_BASE - EQ_TOP);
   const t = hover && hover.i > 0 ? trades[hover.i - 1] : null;
   const p = hover ? curve[hover.i] : null;
@@ -290,6 +335,11 @@ export function EquityChart({ curve, trades, compact = false, className }: { cur
           <b />
           <span>{money(curve[curve.length - 1].eq)}</span>
         </span>
+        {ghost && ghostEnd !== null && Math.abs(ghostEnd - endY) > 22 && (
+          <span className={s.ghostMark} style={{ top: ghostEnd }}>
+            {ghostLabel} {money(ghost[ghost.length - 1])}
+          </span>
+        )}
         <span className={s.uwLabel} style={{ top: UW_TOP - 24 }}>
           DRAWDOWN
         </span>
@@ -322,6 +372,12 @@ export function EquityChart({ curve, trades, compact = false, className }: { cur
                 <span>Equity</span>
                 <b>{money(p.eq)}</b>
               </span>
+              {ghost && ghost[hover.i] !== undefined && (
+                <span className={s.tipRow}>
+                  <span>{ghostLabel}</span>
+                  <b>{money(ghost[hover.i])}</b>
+                </span>
+              )}
               {p.dd < 0 && (
                 <span className={s.tipRow}>
                   <span>From peak</span>

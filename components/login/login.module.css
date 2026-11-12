@@ -43,7 +43,7 @@
   grid-area: panel;
   align-self: center;
   position: relative;
-  width: min(380px, 100%);
+  width: min(380px, calc(100vw - 40px));
   margin-right: clamp(0px, calc(24vw - 120px), 420px);
   padding: 34px 32px 30px;
   background: color-mix(in srgb, var(--bg) 58%, transparent);
@@ -286,3 +286,18 @@
 @media (prefers-reduced-motion: reduce) {
   .progress { animation: none; }
 }
+
+/* after the link is sent */
+.sentHead { margin: 0; font-family: var(--serif); font-size: 26px; line-height: 1.15; color: var(--text-strong, var(--text)); }
+.sentBody { margin: 0; font-size: 14px; line-height: 1.55; color: var(--muted, var(--dim)); }
+.sentBody b { font-weight: 500; color: var(--text); }
+.form > button.forgot { align-self: flex-start; padding: 0; border: 0; background: none; cursor: pointer; }
+.hint { margin: -6px 0 0; font-size: 12.5px; line-height: 1.5; color: var(--dim); }
+
+/* Google, then a hairline, then email and password */
+.google { display: flex; align-items: center; justify-content: center; gap: 10px; height: 48px; border: 1px solid var(--line-2); border-radius: 0; background: color-mix(in srgb, var(--bg) 40%, transparent); font: inherit; font-size: 14px; color: var(--text); cursor: pointer; transition: border-color 0.2s, background 0.2s; }
+.google:hover { border-color: var(--dim); background: color-mix(in srgb, var(--text) 5%, transparent); }
+.google:disabled { opacity: 0.5; cursor: default; }
+.or { height: 1px; margin: 2px 0; background: var(--line-2); }
+.textBtn { padding: 0; border: 0; background: none; font: inherit; color: var(--text); text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px; cursor: pointer; }
+.fieldTop .forgot { padding: 0; border: 0; background: none; cursor: pointer; }

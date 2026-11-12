@@ -126,6 +126,10 @@
 }
 .me img { display: block; width: 100%; height: 100%; border-radius: 50%; object-fit: cover; filter: grayscale(1) contrast(1.05); }
 .me i { position: absolute; right: -1px; bottom: -1px; width: 9px; height: 9px; border-radius: 50%; background: var(--live-green); box-shadow: 0 0 0 2px var(--bg); }
+.meOwner { display: grid; place-items: center; padding: 0; border: 0; background: var(--text-strong); color: var(--page); cursor: pointer; }
+.meForm { display: contents; }
+.meOwner::after { content: attr(data-tip); position: absolute; top: calc(100% + 8px); right: 0; padding: 4px 8px; border-radius: 6px; background: var(--text-strong); color: var(--page); font-family: var(--mono); font-size: 10px; white-space: nowrap; opacity: 0; transform: translateY(-3px); transition: opacity 0.15s, transform 0.15s; pointer-events: none; }
+.meOwner:hover::after, .meOwner:focus-visible::after { opacity: 1; transform: none; }
 
 /* ---------- page ---------- */
 .page { min-height: 100vh; padding: 6px 6px 28px; }
@@ -322,6 +326,7 @@
 /* after the first count-in, live updates roll quickly so ticks never pile up */
 .odoLive .odoStrip { transition-duration: 0.45s; }
 .endMark { position: absolute; width: 0; height: 0; pointer-events: none; transition: top 0.9s cubic-bezier(0.2, 0.8, 0.2, 1); animation: fade-in-late 0.5s both 2.2s; }
+.ghostMark { position: absolute; right: 0; max-width: calc(100% - 4px); transform: translateY(-50%); padding: 2px 6px; border-radius: 5px; box-shadow: inset 0 0 0 1px var(--line-2); background: var(--page); font-family: var(--mono); font-size: 10.5px; color: var(--muted); white-space: nowrap; pointer-events: none; transition: top 0.9s cubic-bezier(0.2, 0.8, 0.2, 1); animation: fade-in-late 0.5s both 2.2s; }
 @keyframes fade-in-late {
   from { opacity: 0; }
 }
