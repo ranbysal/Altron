@@ -1,0 +1,64 @@
+/* The owner's desk: the chart with Yazan's levels and ours, and the pair beside it. */
+
+.desk {
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  position: relative;
+  height: calc(100vh - 98px);
+  min-height: 640px;
+  margin-top: 2px;
+  margin-bottom: -22px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 372px;
+}
+.aChart { position: relative; min-width: 0; min-height: 0; }
+.flush { padding: 0 !important; gap: 0 !important; min-height: 0; height: 100%; overflow: hidden; }
+.side_ { display: flex; flex-direction: column; min-height: 0; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--tl) transparent; }
+.side_ > section { flex: none; }
+.side_ > section:last-child { flex: 1; }
+.body { padding: 18px 22px 22px !important; gap: 14px !important; }
+
+/* who's who on the chart */
+.key { position: absolute; left: 16px; bottom: 44px; z-index: 4; display: inline-flex; gap: 14px; padding: 6px 10px; border-radius: 8px; background: color-mix(in srgb, var(--page) 82%, transparent); box-shadow: inset 0 0 0 1px var(--tl); font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); pointer-events: none; }
+.key span { display: inline-flex; align-items: center; gap: 7px; }
+.key i { width: 16px; height: 0; border-top: 1.5px dashed var(--his); }
+.key i[data-k="you"] { border-top: 1.5px solid var(--text); }
+
+.quiet { margin: 0; font-size: 13px; line-height: 1.5; color: var(--dim); }
+.pos { color: var(--pos); }
+.neg { color: var(--neg); }
+.live { display: inline-flex; align-items: center; gap: 7px; color: var(--live-green); }
+.live::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--live-green); }
+.side { display: inline-block; padding: 3px 7px; border-radius: 5px; font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; }
+.sideL { background: var(--blue-wash); color: var(--blue-soft); }
+.sideS { background: var(--ember-wash); color: var(--ember-soft); }
+
+.openBtn { display: flex; align-items: center; justify-content: space-between; height: 40px; margin-top: 2px; padding: 0 16px 0 18px; border: 1px solid var(--line-2); border-radius: 999px; background: none; font: inherit; font-size: 13px; color: var(--text); cursor: pointer; transition: background 0.3s var(--ease), color 0.3s var(--ease), border-color 0.3s var(--ease); }
+.openBtn:hover, .openBtn:focus-visible { background: var(--text-strong); border-color: var(--text-strong); color: var(--page); outline: none; }
+
+.you { display: flex; flex-direction: column; gap: 14px; }
+.youHead { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--text); }
+.youHead em { margin-left: auto; font-style: normal; font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--dim); }
+.pnl { font-size: 38px; font-weight: 300; letter-spacing: -0.035em; line-height: 0.95; color: var(--text-strong); font-variant-numeric: tabular-nums; }
+.facts { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; margin: 0; padding-top: 14px; border-top: 1px solid var(--tl); }
+.facts div { display: flex; flex-direction: column; gap: 4px; }
+.facts dt { font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--dim); }
+.facts dd { margin: 0; font-size: 13.5px; color: var(--text); font-variant-numeric: tabular-nums; }
+
+.steps { margin: 0; padding: 0 0 0 16px; list-style: none; display: flex; flex-direction: column; gap: 13px; }
+.steps li { position: relative; display: grid; grid-template-columns: 74px minmax(0, 1fr); gap: 2px 8px; opacity: 0.45; animation: d-rise 0.4s var(--ease) backwards; animation-delay: calc(var(--k) * 50ms); }
+.steps li[data-done] { opacity: 1; }
+.steps li::before { content: ""; position: absolute; left: -13px; top: 9px; bottom: -13px; width: 1px; background: var(--tl); }
+.steps li:last-child::before { display: none; }
+.steps i { position: absolute; left: -16px; top: 4px; width: 7px; height: 7px; background: var(--page); box-shadow: inset 0 0 0 1px var(--dim); }
+.steps li[data-done] i { background: var(--text-strong); box-shadow: none; }
+.steps time { padding-top: 2px; font-family: var(--mono); font-size: 10px; color: var(--dim); }
+.steps b { font-weight: 400; font-size: 12.5px; color: var(--text-strong); }
+.steps p { grid-column: 2; margin: 0; font-size: 11.5px; line-height: 1.45; color: var(--muted); }
+@keyframes d-rise {
+  from { opacity: 0; transform: translateY(4px); }
+}
+
+@media (max-width: 1020px) {
+  .desk { height: auto; grid-template-columns: minmax(0, 1fr); }
+  .aChart { height: 70vh; }
+}

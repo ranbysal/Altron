@@ -31,6 +31,16 @@
 
 /* accounts, one per cell */
 .accts { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.accts[data-n="1"] { grid-template-columns: minmax(0, 1fr); }
+.accts[data-n="2"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.accts[data-n="3"] { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.accts[data-n="4"] { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+/* one account: a single wide strip, balance, room and facts side by side */
+.accts[data-n="1"] .acct > div { display: grid; grid-template-columns: minmax(200px, 0.8fr) minmax(0, 1.3fr) minmax(0, 1.7fr); align-items: center; gap: 16px 40px; }
+.accts[data-n="1"] .acct > div > header { grid-column: 1 / -1; }
+.accts[data-n="1"] .acctBal { font-size: 34px; }
+.accts[data-n="1"] .acctFacts { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.accts[data-n="1"] .acctStatus { grid-column: 1 / -1; margin-top: 0; padding-top: 14px; border-top: 1px solid var(--tl); }
 .acct > div { gap: 14px; }
 .acctBal { font-size: 26px; font-weight: 300; letter-spacing: -0.03em; line-height: 1; font-variant-numeric: tabular-nums; color: var(--text-strong); }
 /* the floor on the left, the room above it filling toward the right */
@@ -82,9 +92,13 @@
 .rule { font-size: 12px; }
 
 @media (max-width: 1180px) {
-  .accts { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .accts:not([data-n="1"]) { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .accts[data-n="1"] .acct > div { grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); }
+  .accts[data-n="1"] .acctFacts { grid-column: 1 / -1; }
 }
 @media (max-width: 760px) {
-  .accts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .accts:not([data-n="1"]) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .accts[data-n="1"] .acct > div { grid-template-columns: minmax(0, 1fr); }
+  .accts[data-n="1"] .acctFacts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .costFacts { grid-template-columns: 1fr 1fr; }
 }

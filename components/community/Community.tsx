@@ -30,7 +30,7 @@ const initials = (name: string) =>
 /* one trade's numbers, read the same way everywhere                   */
 /* ------------------------------------------------------------------ */
 
-function useTradeView(trade: Trade) {
+export function useTradeView(trade: Trade) {
   const orders = useDesk((st) => st.orders);
   const quote = useDesk((st) => st.quotes[trade.sym]);
   const pos = useDesk((st) => st.positions[trade.sym]);
@@ -86,7 +86,7 @@ function Ruler({ left, right, entry, mark, tone, label, closed }: { left: number
   );
 }
 
-function TradeRuler({ v }: { v: ReturnType<typeof useTradeView> }) {
+export function TradeRuler({ v }: { v: ReturnType<typeof useTradeView> }) {
   const { stop, target, entry, mark, pnl, live, last } = v;
   const left = stop ?? (target !== undefined ? entry - (target - entry) / 2 : undefined);
   const right = target ?? (stop !== undefined ? entry + (entry - stop) * 2 : undefined);
@@ -94,7 +94,7 @@ function TradeRuler({ v }: { v: ReturnType<typeof useTradeView> }) {
   return <Ruler left={left} right={right} entry={entry} mark={mark} tone={pnl >= 0 ? "pos" : "neg"} label={live ? fmt(last) : `Exit ${fmt(mark)}`} closed={!live} />;
 }
 
-function Levels({ v, trade }: { v: ReturnType<typeof useTradeView>; trade: Trade }) {
+export function Levels({ v, trade }: { v: ReturnType<typeof useTradeView>; trade: Trade }) {
   return (
     <dl className={c.tLevels}>
       <div>
@@ -116,7 +116,7 @@ function Levels({ v, trade }: { v: ReturnType<typeof useTradeView>; trade: Trade
   );
 }
 
-const Status = ({ live }: { live: boolean }) =>
+export const Status = ({ live }: { live: boolean }) =>
   live ? (
     <span className={c.liveTag}>
       <i />
@@ -315,7 +315,7 @@ function TradeTrace({ trade, v }: { trade: Trade; v: ReturnType<typeof useTradeV
   );
 }
 
-function Preview({ trade, now, onOpen }: { trade: Trade; now: number; onOpen: () => void }) {
+export function Preview({ trade, now, onOpen }: { trade: Trade; now: number; onOpen: () => void }) {
   const v = useTradeView(trade);
   const nMsgs = useRoom((s) => s.msgs.reduce((a, m) => a + (m.tradeId === trade.id ? 1 : 0), 0)) + placeholders(trade, now).length;
   const tone = v.pnl >= 0 ? c.pos : c.neg;
@@ -600,7 +600,7 @@ function useTradeMarket(sym: Trade["sym"]) {
   }, [sym]);
 }
 
-function Sheet({ trade, kind, now, onClose }: { trade: Trade; kind: "live" | "history"; now: number; onClose: () => void }) {
+export function Sheet({ trade, kind, now, onClose }: { trade: Trade; kind: "live" | "history"; now: number; onClose: () => void }) {
   useTradeMarket(trade.sym);
   const v = useTradeView(trade);
   const notices = useDesk((st) => st.notices);

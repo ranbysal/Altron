@@ -143,7 +143,7 @@ function ChartBar({ viewer = false, frozen = false }: { viewer?: boolean; frozen
 type Line = {
   id: string;
   price: number;
-  kind: "entry" | "stop" | "target" | "order" | "alert" | "exit" | "dbuy" | "dsell" | "dstop" | "dtarget";
+  kind: "entry" | "stop" | "target" | "order" | "alert" | "exit" | "dbuy" | "dsell" | "dstop" | "dtarget" | "his";
   title: string;
   value?: string;
   tone?: "pos" | "neg";
@@ -229,13 +229,18 @@ const VIEW_CFG = { volume: false, fills: true, zone: false, grid: false, log: fa
  */
 /** A finished trade, drawn as plain tags on the viewer's chart. */
 export type TradeMarks = { side: 1 | -1; qty: number; entry: number; exit?: number; stop?: number; target?: number };
+/** The owner's own levels, drawn beside Yazan's (which take their own colour). */
+export type FollowLine = { id: string; price: number; kind: "entry" | "stop" | "target" | "order"; title: string; value?: string; tone?: "pos" | "neg" };
 
 export function Chart({
   viewer = false,
   focus,
   until,
   marks,
+  follow,
 }: {
+  /** the owner's desk: Yazan's live levels in his colour, the owner's levels as the chart's own */
+  follow?: FollowLine[];
   viewer?: boolean;
   /** bring this stretch of time into view (a past trade) */
   focus?: { from: number; to: number };
@@ -337,6 +342,17 @@ export function Chart({
   /* ---------- lines on the chart, from the book ---------- */
   const lines = useMemo<Line[]>(() => {
     const out: Line[] = [];
+    if (follow) {
+      if (pos) {
+        out.push({ id: "h-entry", price: pos.avg, kind: "his", title: `Yazan ${pos.qty > 0 ? "long" : "short"} ${Math.abs(pos.qty)}`, drag: false });
+        for (const o of orders) {
+          if (o.role !== "stop" && o.role !== "target") continue;
+          out.push({ id: `h-${o.id}`, price: o.role === "stop" ? o.stop! : o.limit!, kind: "his", title: o.role === "stop" ? "His stop" : "His target", drag: false });
+        }
+      }
+      for (const l of follow) out.push({ ...l, drag: false });
+      return out;
+    }
     if (viewer && marks) {
       const pnl = (p: number) => money((p - marks.entry) * marks.side * marks.qty * inst.pv);
       out.push({ id: "m-entry", price: marks.entry, kind: "entry", title: `${marks.side > 0 ? "Long" : "Short"} ${marks.qty}`, drag: false });
@@ -388,7 +404,7 @@ export function Chart({
       if (dStop !== null) out.push({ id: "d-stop", price: dStop, kind: "dstop", title: "SL", value: money(legPnl(dStop)), tone: "neg", draft: "stop", follows: dFollowStop, drag: true });
     }
     return out;
-  }, [viewer, marks, pos, orders, alerts, inst.pv, ticket, tQty, dStop, dTarget, dFollowStop, dFollowTarget]);
+  }, [viewer, marks, follow, pos, orders, alerts, inst.pv, ticket, tQty, dStop, dTarget, dFollowStop, dFollowTarget]);
   const linesRef = useRef(lines);
   linesRef.current = lines;
 

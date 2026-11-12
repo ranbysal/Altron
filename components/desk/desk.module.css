@@ -658,6 +658,11 @@
 .line_order { --lc: var(--muted); }
 .line_alert { --lc: var(--text-strong); }
 .line_exit { --lc: var(--text-strong); }
+/* Yazan's levels on the owner's desk: his own colour, a broken rule, his name on the tag */
+.line_his { --lc: var(--his); }
+.line_his .lineRule { border-top-style: dashed; opacity: 0.9; }
+.line_his .lineTag { border-style: dashed; }
+.line_his .lineTag b { color: var(--his); }
 .line_alert .lineTag { gap: 7px; }
 .line_alert .lineTag svg { color: var(--lc); }
 .liveVal[data-tone="pos"] { color: var(--pos); }

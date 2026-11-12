@@ -18,6 +18,7 @@ const TRADER_TABS = [
 ];
 const OWNER_TABS = [
   { href: "/owner", label: "Dashboard" },
+  { href: "/owner/desk", label: "Desk" },
   { href: "/owner/follow", label: "Follow" },
   { href: "/community", label: "Community" },
   { href: "/owner/admin", label: "Admin" },
@@ -47,7 +48,22 @@ function Nav() {
   const clock = useMarketClock();
   const side = useSide(path);
   const TABS = side === "owner" ? OWNER_TABS : TRADER_TABS;
-  const active = path.startsWith("/owner/admin") ? 3 : path.startsWith("/community") ? 2 : path.startsWith("/trader/desk") || path.startsWith("/owner/follow") ? 1 : 0;
+  const active =
+    side === "owner"
+      ? path.startsWith("/owner/admin")
+        ? 4
+        : path.startsWith("/community")
+          ? 3
+          : path.startsWith("/owner/follow")
+            ? 2
+            : path.startsWith("/owner/desk")
+              ? 1
+              : 0
+      : path.startsWith("/community")
+        ? 2
+        : path.startsWith("/trader/desk")
+          ? 1
+          : 0;
   const refs = useRef<(HTMLAnchorElement | null)[]>([]);
   const [pill, setPill] = useState<{ x: number; w: number } | null>(null);
 
