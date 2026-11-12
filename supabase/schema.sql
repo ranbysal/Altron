@@ -12,6 +12,8 @@ create table if not exists public.profiles (
   avatar_url text,
   created_at timestamptz not null default now()
 );
+-- set when the owner removes someone: the account stays (and anything it wrote), access ends
+alter table public.profiles add column if not exists revoked_at timestamptz;
 
 -- invite only: an account can be created (with Google or a password) only for an email on
 -- this list, and it starts with the role the invite gives it
@@ -73,7 +75,7 @@ stable
 security definer
 set search_path = public
 as $$
-  select exists (select 1 from public.profiles where id = auth.uid() and role in ('trader', 'owner'));
+  select exists (select 1 from public.profiles where id = auth.uid() and role in ('trader', 'owner') and revoked_at is null);
 $$;
 
 create or replace function public.is_member()
@@ -83,7 +85,17 @@ stable
 security definer
 set search_path = public
 as $$
-  select exists (select 1 from public.profiles where id = auth.uid());
+  select exists (select 1 from public.profiles where id = auth.uid() and revoked_at is null);
+$$;
+
+create or replace function public.is_owner()
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (select 1 from public.profiles where id = auth.uid() and role = 'owner' and revoked_at is null);
 $$;
 
 -- ---------------------------------------------------------------------------
@@ -261,8 +273,8 @@ returns trigger
 language plpgsql
 as $$
 begin
-  if new.role is distinct from old.role and auth.uid() is not null then
-    raise exception 'Roles are changed by the owner from the SQL editor';
+  if (new.role is distinct from old.role or new.revoked_at is distinct from old.revoked_at) and auth.uid() is not null and not public.is_owner() then
+    raise exception 'Only the owner changes roles and access';
   end if;
   return new;
 end;
@@ -314,6 +326,99 @@ create policy "notices: trader sends" on public.notices for insert with check (p
 
 drop policy if exists "settings: trader only" on public.desk_settings;
 create policy "settings: trader only" on public.desk_settings for all using (public.is_trader()) with check (public.is_trader());
+
+-- ---------------------------------------------------------------------------
+-- the owner's admin page: who's invited, who has an account, and their roles
+-- ---------------------------------------------------------------------------
+
+drop policy if exists "invites: owner reads" on public.invites;
+create policy "invites: owner reads" on public.invites for select using (public.is_owner());
+
+create or replace function public.admin_people()
+returns table (id uuid, email text, role text, display_name text, provider text, created_at timestamptz, last_sign_in_at timestamptz, revoked_at timestamptz)
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+begin
+  if not public.is_owner() then raise exception 'owner only'; end if;
+  return query
+    select p.id, u.email::text, p.role, p.display_name, coalesce(u.raw_app_meta_data ->> 'provider', 'email'), u.created_at, u.last_sign_in_at, p.revoked_at
+    from public.profiles p join auth.users u on u.id = p.id
+    order by u.created_at;
+end;
+$$;
+
+-- invite someone, or change an invite; an existing account takes the role (and access back) at once
+create or replace function public.admin_invite(p_email text, p_role text, p_note text default null)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  e text := lower(trim(p_email));
+  uid uuid;
+begin
+  if not public.is_owner() then raise exception 'owner only'; end if;
+  if e !~ '^[^@[:space:]]+@[^@[:space:]]+[.][^@[:space:]]+$' then raise exception 'bad_email'; end if;
+  if p_role not in ('member', 'trader', 'owner') then raise exception 'bad_role'; end if;
+  insert into public.invites (email, role, note) values (e, p_role, nullif(trim(p_note), ''))
+  on conflict (email) do update set role = excluded.role, note = coalesce(excluded.note, public.invites.note);
+  select u.id into uid from auth.users u where lower(u.email) = e;
+  if uid = auth.uid() and p_role <> 'owner' then raise exception 'not_yourself'; end if;
+  if uid is not null then
+    insert into public.profiles (id, role, display_name) values (uid, p_role, split_part(e, '@', 1))
+    on conflict (id) do update set role = excluded.role, revoked_at = null;
+  end if;
+end;
+$$;
+
+create or replace function public.admin_set_role(p_id uuid, p_role text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if not public.is_owner() then raise exception 'owner only'; end if;
+  if p_role not in ('member', 'trader', 'owner') then raise exception 'bad_role'; end if;
+  if p_id = auth.uid() and p_role <> 'owner' then raise exception 'not_yourself'; end if;
+  update public.profiles set role = p_role where id = p_id;
+  update public.invites set role = p_role where email = (select lower(u.email) from auth.users u where u.id = p_id);
+end;
+$$;
+
+-- remove someone's access, or give it back; nothing they wrote is deleted
+create or replace function public.admin_set_access(p_id uuid, p_on boolean)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if not public.is_owner() then raise exception 'owner only'; end if;
+  if p_id = auth.uid() then raise exception 'not_yourself'; end if;
+  update public.profiles set revoked_at = case when p_on then null else now() end where id = p_id;
+end;
+$$;
+
+-- withdraw an invite nobody has used yet
+create or replace function public.admin_uninvite(p_email text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if not public.is_owner() then raise exception 'owner only'; end if;
+  delete from public.invites i where i.email = lower(trim(p_email)) and not exists (select 1 from auth.users u where lower(u.email) = i.email);
+end;
+$$;
+
+revoke all on function public.admin_people(), public.admin_invite(text, text, text), public.admin_set_role(uuid, text), public.admin_set_access(uuid, boolean), public.admin_uninvite(text) from public, anon;
+grant execute on function public.admin_people(), public.admin_invite(text, text, text), public.admin_set_role(uuid, text), public.admin_set_access(uuid, boolean), public.admin_uninvite(text) to authenticated;
 
 -- ---------------------------------------------------------------------------
 -- live: members' screens update as trades, fills and notes land

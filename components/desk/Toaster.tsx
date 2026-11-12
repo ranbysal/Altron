@@ -10,7 +10,10 @@ import s from "./desk.module.css";
  */
 export function Toaster({ inline = false }: { inline?: boolean }) {
   const toasts = useDesk((st) => st.toasts);
-  const onDesk = usePathname()?.startsWith("/trader/desk") ?? false;
+  const path = usePathname() ?? "";
+  const onDesk = path.startsWith("/trader/desk");
+  // the desk's fills are Yazan's business: not on the owner's pages
+  if (path.startsWith("/owner")) return null;
   if (onDesk !== inline) return null;
   return (
     <div className={inline ? s.toastsInline : s.toasts} aria-live="polite">
