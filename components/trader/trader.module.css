@@ -126,7 +126,10 @@
 }
 .me img { display: block; width: 100%; height: 100%; border-radius: 50%; object-fit: cover; filter: grayscale(1) contrast(1.05); }
 .me i { position: absolute; right: -1px; bottom: -1px; width: 9px; height: 9px; border-radius: 50%; background: var(--live-green); box-shadow: 0 0 0 2px var(--bg); }
-.meOwner { display: grid; place-items: center; background: var(--text-strong); color: var(--page); }
+.meOwner { display: grid; place-items: center; padding: 0; border: 0; background: var(--text-strong); color: var(--page); cursor: pointer; }
+.meForm { display: contents; }
+.meOwner::after { content: attr(data-tip); position: absolute; top: calc(100% + 8px); right: 0; padding: 4px 8px; border-radius: 6px; background: var(--text-strong); color: var(--page); font-family: var(--mono); font-size: 10px; white-space: nowrap; opacity: 0; transform: translateY(-3px); transition: opacity 0.15s, transform 0.15s; pointer-events: none; }
+.meOwner:hover::after, .meOwner:focus-visible::after { opacity: 1; transform: none; }
 
 /* ---------- page ---------- */
 .page { min-height: 100vh; padding: 6px 6px 28px; }

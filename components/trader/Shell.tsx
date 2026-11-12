@@ -88,9 +88,11 @@ function Nav() {
         <span className={s.clock}>NY {clock?.time ?? "--:--"}</span>
         <ThemeSwitch />
         {side === "owner" ? (
-          <span className={`${s.me} ${s.meOwner}`} aria-label="Owner">
-            <Mark size={15} />
-          </span>
+          <form action="/auth/signout" method="post" className={s.meForm}>
+            <button type="submit" className={`${s.me} ${s.meOwner}`} aria-label="Sign out" data-tip="Sign out">
+              <Mark size={15} />
+            </button>
+          </form>
         ) : (
           <span className={s.me} aria-label="Yazan, online">
             {/* eslint-disable-next-line @next/next/no-img-element */}

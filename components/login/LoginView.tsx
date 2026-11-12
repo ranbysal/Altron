@@ -1,14 +1,20 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { Mark } from "@/components/Mark";
 import { ThemeSwitch } from "@/components/ThemeSwitch";
+import { browserClient } from "@/lib/supabase/client";
+import { safeNext, supabaseReady } from "@/lib/supabase/env";
 import { AsciiStar } from "./AsciiStar";
 import s from "./login.module.css";
 
-type Role = "member" | "desk";
+const WHY: Record<string, string> = {
+  setup: "Sign-in isn't connected on this site yet.",
+  owner: "This account can't open those pages.",
+  link: "That link has expired or was already used. Ask for a new one.",
+  out: "You're signed out.",
+};
 
 function Corners() {
   return (
@@ -22,12 +28,11 @@ function Corners() {
 }
 
 export function LoginView() {
-  const [role, setRole] = useState<Role>("member");
-  const [show, setShow] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState(false);
+  const [sent, setSent] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [focusX, setFocusX] = useState(0.36);
-  const timer = useRef<number | undefined>(undefined);
+  const next = useRef<string | null>(null);
   const panelRef = useRef<HTMLElement>(null);
 
   // Center the star in the open space to the left of the panel.
@@ -39,17 +44,29 @@ export function LoginView() {
     };
     fit();
     window.addEventListener("resize", fit);
-    return () => {
-      window.removeEventListener("resize", fit);
-      window.clearTimeout(timer.current);
-    };
+    const q = new URLSearchParams(window.location.search);
+    next.current = safeNext(q.get("next"));
+    const why = q.get("why");
+    if (why && WHY[why]) setNotice(WHY[why]);
+    return () => window.removeEventListener("resize", fit);
   }, []);
 
-  const desk = role === "desk";
-  const router = useRouter();
-  const pick = (r: Role) => {
-    setRole(r);
-    setNotice(false);
+  const send = async (email: string) => {
+    setNotice(null);
+    if (!supabaseReady()) {
+      setNotice(WHY.setup);
+      return;
+    }
+    setBusy(true);
+    const back = new URL("/auth/callback", window.location.origin);
+    if (next.current) back.searchParams.set("next", next.current);
+    // invite only: the email has to belong to an account already
+    const { error } = await browserClient().auth.signInWithOtp({ email, options: { shouldCreateUser: false, emailRedirectTo: back.toString() } });
+    setBusy(false);
+    if (!error) setSent(email);
+    else if (/signup|not allowed|not found/i.test(error.message)) setNotice("No Altron account uses this email. Altron is invite only.");
+    else if (/rate|seconds/i.test(error.message)) setNotice("A link was just sent. Wait a minute before asking for another.");
+    else setNotice("The link couldn't be sent. Try again in a moment.");
   };
 
   return (
@@ -62,91 +79,55 @@ export function LoginView() {
 
         <main ref={panelRef} className={`${s.panel} rise`} aria-labelledby="signin-label">
           <span className={s.chip} id="signin-label">
-            SIGN IN <span className={s.chipSep}>·</span> {desk ? "DESK" : "MEMBER"}
+            SIGN IN
           </span>
           <Corners />
 
-          <div role="group" aria-label="Account type" className={s.roles}>
-            <button type="button" className={s.role} aria-pressed={!desk} onClick={() => pick("member")}>
-              Member
-            </button>
-            <button type="button" className={s.role} aria-pressed={desk} onClick={() => pick("desk")}>
-              Desk
-            </button>
-          </div>
-
-          <form
-            className={s.form}
-            onSubmit={(e) => {
-              e.preventDefault();
-              // TODO: wire to auth once it's set up.
-              setBusy(true);
-              setNotice(false);
-              window.clearTimeout(timer.current);
-              timer.current = window.setTimeout(() => {
-                // no auth yet: the desk side goes straight to Yazan's dashboard
-                if (desk) {
-                  router.push("/trader");
-                  return;
-                }
-                setBusy(false);
-                setNotice(true);
-              }, 1400);
-            }}
-          >
-            <div className={s.field}>
-              <label htmlFor="si-email">Email</label>
-              <div className={s.line}>
-                <input id="si-email" name="email" type="email" autoComplete="email" required />
-              </div>
+          {sent ? (
+            <div className={s.form}>
+              <p className={s.sentHead}>Check your inbox.</p>
+              <p className={s.sentBody}>
+                We sent a sign-in link to <b>{sent}</b>. Open it on this device and you&apos;re in. It works once and expires within the hour.
+              </p>
+              <button type="button" className={s.forgot} onClick={() => setSent(null)}>
+                Use a different email
+              </button>
             </div>
-
-            <div className={s.field}>
-              <div className={s.fieldTop}>
-                <label htmlFor="si-pass">Password</label>
-                <a href="#forgot" className={s.forgot}>
-                  Forgot
-                </a>
-              </div>
-              <div className={s.line}>
-                <input id="si-pass" name="password" type={show ? "text" : "password"} autoComplete="current-password" required />
-                <button type="button" className={s.reveal} aria-label={show ? "Hide password" : "Show password"} onClick={() => setShow((v) => !v)}>
-                  {show ? "Hide" : "Show"}
-                </button>
-              </div>
-            </div>
-
-            {desk && (
-              <div className={`${s.field} ${s.fieldIn}`}>
-                <label htmlFor="si-code">Authenticator code</label>
+          ) : (
+            <form
+              className={s.form}
+              onSubmit={(e) => {
+                e.preventDefault();
+                const email = new FormData(e.currentTarget).get("email");
+                if (typeof email === "string" && email.trim()) void send(email.trim());
+              }}
+            >
+              <div className={s.field}>
+                <label htmlFor="si-email">Email</label>
                 <div className={s.line}>
-                  <input id="si-code" name="code" type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={6} className={s.code} />
+                  <input id="si-email" name="email" type="email" autoComplete="email" required autoFocus />
                 </div>
               </div>
-            )}
 
-            <label className={s.check}>
-              <input type="checkbox" name="remember" />
-              <span className={s.box} aria-hidden="true" />
-              Keep me signed in on this device
-            </label>
+              <button type="submit" className={s.submit} disabled={busy} aria-busy={busy}>
+                <span>{busy ? "Sending" : "Email me a sign-in link"}</span>
+                <span className={s.submitIcon} aria-hidden="true">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M5 12h14M13 6l6 6-6 6" />
+                  </svg>
+                </span>
+                {busy && <span className={s.progress} aria-hidden="true" />}
+              </button>
 
-            <button type="submit" className={s.submit} disabled={busy} aria-busy={busy}>
-              <span>{busy ? "Signing in" : desk ? "Open the desk" : "Continue"}</span>
-              <span className={s.submitIcon} aria-hidden="true">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M5 12h14M13 6l6 6-6 6" />
-                </svg>
-              </span>
-              {busy && <span className={s.progress} aria-hidden="true" />}
-            </button>
+              <p className={s.hint}>No password. Altron is invite only, so the email has to be one we&apos;ve added.</p>
+            </form>
+          )}
 
-            {notice && (
-              <p role="status" className={s.notice}>
-                Design preview. Sign-in connects once authentication is set up.
-              </p>
-            )}
-          </form>
+          {notice && (
+            <p role="status" className={s.notice}>
+              {notice}
+            </p>
+          )}
         </main>
 
         <Link href="/" className={s.home} aria-label="Altron home">

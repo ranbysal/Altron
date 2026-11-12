@@ -43,7 +43,7 @@
   grid-area: panel;
   align-self: center;
   position: relative;
-  width: min(380px, 100%);
+  width: min(380px, calc(100vw - 40px));
   margin-right: clamp(0px, calc(24vw - 120px), 420px);
   padding: 34px 32px 30px;
   background: color-mix(in srgb, var(--bg) 58%, transparent);
@@ -286,3 +286,10 @@
 @media (prefers-reduced-motion: reduce) {
   .progress { animation: none; }
 }
+
+/* after the link is sent */
+.sentHead { margin: 0; font-family: var(--serif); font-size: 26px; line-height: 1.15; color: var(--text-strong, var(--text)); }
+.sentBody { margin: 0; font-size: 14px; line-height: 1.55; color: var(--muted, var(--dim)); }
+.sentBody b { font-weight: 500; color: var(--text); }
+.form > button.forgot { align-self: flex-start; padding: 0; border: 0; background: none; cursor: pointer; }
+.hint { margin: -6px 0 0; font-size: 12.5px; line-height: 1.5; color: var(--dim); }
