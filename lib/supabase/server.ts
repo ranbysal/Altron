@@ -20,6 +20,7 @@ export async function serverClient() {
 }
 
 export async function roleOf(supabase: Awaited<ReturnType<typeof serverClient>>, id: string): Promise<Role | null> {
-  const { data } = await supabase.from("profiles").select("role").eq("id", id).maybeSingle();
-  return (data?.role as Role | undefined) ?? null;
+  const { data } = await supabase.from("profiles").select("role, revoked_at").eq("id", id).maybeSingle();
+  if (!data || data.revoked_at) return null;
+  return (data.role as Role | undefined) ?? null;
 }

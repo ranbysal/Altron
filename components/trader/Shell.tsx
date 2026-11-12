@@ -20,6 +20,7 @@ const OWNER_TABS = [
   { href: "/owner", label: "Dashboard" },
   { href: "/owner/follow", label: "Follow" },
   { href: "/community", label: "Community" },
+  { href: "/owner/admin", label: "Admin" },
 ];
 const SIDE_KEY = "altron-side";
 
@@ -46,7 +47,7 @@ function Nav() {
   const clock = useMarketClock();
   const side = useSide(path);
   const TABS = side === "owner" ? OWNER_TABS : TRADER_TABS;
-  const active = path.startsWith("/community") ? 2 : path.startsWith("/trader/desk") || path.startsWith("/owner/follow") ? 1 : 0;
+  const active = path.startsWith("/owner/admin") ? 3 : path.startsWith("/community") ? 2 : path.startsWith("/trader/desk") || path.startsWith("/owner/follow") ? 1 : 0;
   const refs = useRef<(HTMLAnchorElement | null)[]>([]);
   const [pill, setPill] = useState<{ x: number; w: number } | null>(null);
 

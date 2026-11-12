@@ -2,9 +2,9 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
 /*
- * The owner's pages open only for a signed-in owner. Everyone else is sent to sign in,
- * or told the account can't open them. Yazan's pages and Community stay open until
- * his sign-in exists.
+ * Who can open what. The owner's pages (and Admin) only for the owner; Yazan's dashboard
+ * and desk for the trader (and the owner); Community for anyone with access. Everyone
+ * else is sent to sign in, or told this account can't open the page.
  */
 
 const URL_ = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
@@ -41,11 +41,15 @@ export async function proxy(req: NextRequest) {
   } = await supabase.auth.getUser();
   if (!user) return toLogin(req);
 
-  const { data } = await supabase.from("profiles").select("role").eq("id", user.id).maybeSingle();
-  if (data?.role !== "owner") return toLogin(req, "owner");
+  const { data } = await supabase.from("profiles").select("role, revoked_at").eq("id", user.id).maybeSingle();
+  if (!data || data.revoked_at) return toLogin(req, "invite");
+  const path = req.nextUrl.pathname;
+  const role = data.role as string;
+  const ok = path.startsWith("/owner") ? role === "owner" : path.startsWith("/trader") ? role === "trader" || role === "owner" : true;
+  if (!ok) return toLogin(req, "owner");
   return res;
 }
 
 export const config = {
-  matcher: ["/owner", "/owner/:path*"],
+  matcher: ["/owner", "/owner/:path*", "/trader", "/trader/:path*", "/community", "/community/:path*"],
 };

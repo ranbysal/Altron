@@ -14,7 +14,7 @@ const WHY: Record<string, string> = {
   owner: "This account can't open those pages.",
   link: "That link has expired or was already used. Try again.",
   out: "You're signed out.",
-  invite: "This email hasn't been invited. Altron is invite only.",
+  invite: "This email hasn't been invited, or its access was removed. Altron is invite only.",
   google: "Google sign-in didn't finish. Try again.",
 };
 
