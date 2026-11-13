@@ -5,7 +5,6 @@ import { useShallow } from "zustand/react/shallow";
 import { fmt, money } from "@/lib/format";
 import { DAY_MARGIN, INSTRUMENTS, snap, tickValue } from "@/lib/desk/instruments";
 import {
-  ACCOUNT,
   EXIT_UNITS,
   openPnl,
   sendTicket,
@@ -347,6 +346,8 @@ export function Ticket() {
   const side = ticket.side;
   const [tex, setTex] = useState<string | null>(null);
   const [notify, setNotify] = useState(false);
+  const start = useDesk((st) => st.start);
+  const owner = useDesk((st) => st.seat === "owner");
   useEffect(() => setTex(dither()), []);
   useEffect(() => setNotify(false), [sym]);
 
@@ -373,7 +374,7 @@ export function Ticket() {
   const ti = TYPES.findIndex((x) => x.id === t);
   const notional = entry * inst.pv * qty;
   const used = Object.values(positions).reduce((a, p) => a + (p ? Math.abs(p.qty) * DAY_MARGIN[p.sym] : 0), 0);
-  const equity = ACCOUNT.start + trades.reduce((a, x) => a + x.pnl, 0) + openPnl({ positions, quotes });
+  const equity = start + trades.reduce((a, x) => a + x.pnl, 0) + openPnl({ positions, quotes });
   const avail = equity - used;
   const rr = stopPx !== null && targetPx !== null && Math.abs(entry - stopPx) > 0 ? Math.abs(targetPx - entry) / Math.abs(entry - stopPx) : null;
 
@@ -476,10 +477,12 @@ export function Ticket() {
           <b>{side > 0 ? "Buy" : "Sell"}</b>
           <span>{problem ?? what}</span>
         </button>
-        <button type="button" className={s.notifyBtn} aria-pressed={notify} aria-label="Send with a notification to members" title="Notify members" onClick={() => setNotify((n) => !n)}>
-          <Bell />
-        </button>
-        {notify && <NotifyPop onClose={() => setNotify(false)} />}
+        {!owner && (
+          <button type="button" className={s.notifyBtn} aria-pressed={notify} aria-label="Send with a notification to members" title="Notify members" onClick={() => setNotify((n) => !n)}>
+            <Bell />
+          </button>
+        )}
+        {notify && !owner && <NotifyPop onClose={() => setNotify(false)} />}
       </div>
     </div>
   );

@@ -1,142 +1,67 @@
 "use client";
 
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
-import { fmt, money } from "@/lib/format";
+import { useEffect, useState } from "react";
+import { INSTRUMENTS } from "@/lib/desk/instruments";
 import { selectSym, useDesk } from "@/lib/desk/store";
-import { clockS } from "@/lib/community/trades";
-import { startRoom } from "@/lib/community/room";
 import { MODE_LABEL } from "@/lib/owner/replay";
-import { useFollowPlan, type Plan } from "@/lib/owner/live";
-import { useOwner } from "@/lib/owner/store";
-import { Chart, type FollowLine } from "@/components/desk/Chart";
-import { Preview, Sheet } from "@/components/community/Community";
-import { Cell } from "@/components/trader/parts";
-import t from "@/components/trader/trader.module.css";
-import { useOwnerReplay } from "./OwnerDashboard";
+import { MICRO_OF } from "@/lib/owner/live";
+import { setOwner, useOwner } from "@/lib/owner/store";
+import { Desk } from "@/components/desk/Desk";
+import { Preview } from "@/components/community/Community";
+import { AgentSteps, TradeSheets, useLive, Waiting, type Open } from "./Trades";
 import d from "./ownerDesk.module.css";
 
-/** Our levels on the chart: the position once something fills, the orders still working, and his stop and target as ours. */
-function linesOf(plan: Plan | null): FollowLine[] {
-  if (!plan || !plan.live) return [];
-  const out: FollowLine[] = [];
-  const { dir, per, filled, avg, qty, pnl, stop, target, tranches } = plan;
-  if (avg !== null) out.push({ id: "o-pos", price: avg, kind: "entry", title: `You ${dir > 0 ? "long" : "short"} ${qty}`, value: money(pnl), tone: pnl >= 0 ? "pos" : "neg" });
-  tranches.forEach((x, k) => {
-    if (!x.filledAt) out.push({ id: `o-add${k}`, price: x.price, kind: "order", title: `${dir > 0 ? "Buy" : "Sell"} lmt ${per}`, value: k ? `Add ${k}` : "Entry" });
-  });
-  out.push({ id: "o-stop", price: stop, kind: "stop", title: "Your stop", value: money(-plan.worst), tone: "neg" });
-  if (target !== undefined && avg !== null) {
-    const pv = plan.code.includes("NQ") ? 2 : 5;
-    const gain = filled.reduce((a, x) => a + per * Math.abs(target - x.price) * pv, 0);
-    out.push({ id: "o-target", price: target, kind: "target", title: "Your target", value: money(gain), tone: "pos" });
-  }
-  return out;
-}
-
-function You({ plan }: { plan: Plan | null }) {
-  if (!plan) return <p className={d.quiet}>Our position shows here once Yazan trades.</p>;
-  const { filled, tranches, avg, pnl, live, dir, per } = plan;
-  return (
-    <div className={d.you}>
-      <div className={d.youHead}>
-        <span className={`${d.side} ${dir > 0 ? d.sideL : d.sideS}`}>{dir > 0 ? "Long" : "Short"}</span>
-        <span>
-          {plan.qty || per} {plan.code.replace(/Z\d$/, "")} micros
-        </span>
-        <em>{!filled.length ? (live ? "Working" : "Not filled") : live ? "In" : "Closed"}</em>
-      </div>
-      <span className={`${d.pnl} ${filled.length ? (pnl >= 0 ? d.pos : d.neg) : ""}`}>{money(filled.length ? pnl : 0)}</span>
-      <dl className={d.facts}>
-        <div>
-          <dt>Way in</dt>
-          <dd>{MODE_LABEL[plan.mode]}</dd>
-        </div>
-        <div>
-          <dt>Filled</dt>
-          <dd>
-            {filled.length} of {tranches.length}
-          </dd>
-        </div>
-        <div>
-          <dt>Average</dt>
-          <dd>{avg !== null ? fmt(avg) : "–"}</dd>
-        </div>
-        <div>
-          <dt>Worst case</dt>
-          <dd className={d.neg}>{money(-plan.worst)}</dd>
-        </div>
-      </dl>
-    </div>
-  );
-}
+/*
+ * The owner's desk is Yazan's desk on the owner's own book: the same chart, ticket, position
+ * and blotter. Yazan's live levels sit on the chart in his own colour, and the right column
+ * has a second view with his trade, ours, and what the agent did.
+ */
 
 export function OwnerDesk() {
-  const ready = useDesk((x) => x.ready);
-  const { result, settings } = useOwnerReplay();
-  const { trade, plan, now } = useFollowPlan(result, settings);
+  const { trade, plan, now, ready } = useLive();
+  const view = useOwner((x) => x.deskView);
   const following = useOwner((x) => x.following);
-  const [open, setOpen] = useState(false);
-  useEffect(() => startRoom(), []);
-  // the chart follows his market
+  const [open, setOpen] = useState<Open>(null);
+  const mineSym = trade ? MICRO_OF[INSTRUMENTS[trade.sym].under] : null;
+  const hisId = trade?.id;
+  const hisLive = !!trade && !trade.closedAt;
+
+  // when he opens a trade, the chart goes to that market's micro, where our orders are
   useEffect(() => {
-    if (trade && useDesk.getState().settings.sym !== trade.sym) selectSym(trade.sym);
-  }, [trade]);
-  const lines = useMemo(() => linesOf(plan), [plan]);
+    if (!ready || !hisLive || !mineSym) return;
+    if (INSTRUMENTS[useDesk.getState().settings.sym].under !== INSTRUMENTS[mineSym].under) selectSym(mineSym);
+  }, [ready, hisLive, hisId, mineSym]);
+
+  const panel = (
+    <div className={d.panel}>
+      <section className={d.block} style={{ "--k": 0 } as React.CSSProperties}>
+        <header className={d.blockHead}>
+          <span data-who="his">Yazan</span>
+          <em data-live={hisLive ? "" : undefined}>{hisLive ? "Live" : "Last trade"}</em>
+        </header>
+        {trade ? <Preview compact trade={trade} now={now} onOpen={() => setOpen("his")} /> : <p className={d.quiet}>No trades from Yazan yet.</p>}
+      </section>
+      <section className={d.block} style={{ "--k": 1 } as React.CSSProperties}>
+        <header className={d.blockHead}>
+          <span data-who="you">You</span>
+          <em data-live={plan?.ownLive ? "" : undefined}>{plan ? (plan.byHand ? "Closed by hand" : plan.state) : following ? "Following" : "Paused"}</em>
+        </header>
+        {plan?.own ? <Preview compact who="mine" trade={plan.own} now={now} onOpen={() => setOpen("mine")} /> : plan ? <Waiting plan={plan} /> : <p className={d.quiet}>Our side shows here once Yazan trades.</p>}
+      </section>
+      <section className={d.block} style={{ "--k": 2 } as React.CSSProperties}>
+        <header className={d.blockHead}>
+          <span>The agent</span>
+          <em>{plan ? MODE_LABEL[plan.mode] : ""}</em>
+        </header>
+        {plan ? <AgentSteps plan={plan} /> : <p className={d.quiet}>Waiting for his first trade.</p>}
+      </section>
+    </div>
+  );
 
   return (
-    <div className={d.desk}>
-      <i className={t.sheetR} aria-hidden="true" />
-      <i className={t.sheetB} aria-hidden="true" />
-      <Cell i={0} noTop className={d.aChart} bodyClass={d.flush}>
-        {ready && <Chart viewer follow={lines} />}
-        <span className={d.key} aria-hidden="true">
-          <span>
-            <i data-k="his" />
-            Yazan
-          </span>
-          <span>
-            <i data-k="you" />
-            You
-          </span>
-        </span>
-      </Cell>
-      <div className={d.side_}>
-        <Cell i={1} noTop label={plan?.live ? "Yazan" : "Yazan's last trade"} aside={plan?.live ? <span className={d.live}>Live</span> : "Closed"} bodyClass={d.body}>
-          {ready && trade ? (
-            <>
-              <Preview trade={trade} now={now} onOpen={() => setOpen(true)} />
-              <button type="button" className={d.openBtn} onClick={() => setOpen(true)}>
-                <span>Chart and room</span>
-                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <path d="M3.5 2.5h6v6M9.5 2.5l-7 7" />
-                </svg>
-              </button>
-            </>
-          ) : (
-            <p className={d.quiet}>No trades from Yazan yet.</p>
-          )}
-        </Cell>
-        <Cell i={2} label="You" aside={following ? "Following" : "Paused"} bodyClass={d.body}>
-          <You plan={plan} />
-        </Cell>
-        <Cell i={3} label="Agent" aside={plan ? MODE_LABEL[plan.mode] : ""} bodyClass={d.body}>
-          {plan ? (
-            <ol className={d.steps}>
-              {plan.steps.map((x, k) => (
-                <li key={x.at + x.short} data-done={x.done ? "" : undefined} style={{ "--k": k } as CSSProperties}>
-                  <i />
-                  <time>{clockS(x.at)}</time>
-                  <b>{x.text}</b>
-                  {x.sub && <p>{x.sub}</p>}
-                </li>
-              ))}
-            </ol>
-          ) : (
-            <p className={d.quiet}>Waiting for his first trade.</p>
-          )}
-        </Cell>
-      </div>
-      {open && trade && <Sheet trade={trade} kind="live" now={now} onClose={() => setOpen(false)} />}
-    </div>
+    <>
+      <Desk owner={{ view, onView: (v) => setOwner({ deskView: v }), live: hisLive, panel, aside: following ? "Following" : "Paused" }} />
+      <TradeSheets open={open} trade={trade} plan={plan} now={now} onClose={() => setOpen(null)} />
+    </>
   );
 }

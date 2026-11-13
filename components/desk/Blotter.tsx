@@ -4,7 +4,7 @@ import { memo, useState, type CSSProperties } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { fmt, money } from "@/lib/format";
 import { DAY_MARGIN, INSTRUMENTS, SYMS, type Sym } from "@/lib/desk/instruments";
-import { ACCOUNT, cancelAll, cancelOrder, closePercent, dayStart, describe, flatten, noticeText, openPnl, realizedSince, selectSym, toggleBlotter, useDesk, type Trade } from "@/lib/desk/store";
+import { ACCOUNT, OWNER_ACCOUNT, cancelAll, cancelOrder, closePercent, dayStart, describe, flatten, noticeText, openPnl, realizedSince, selectSym, toggleBlotter, useDesk, type Trade } from "@/lib/desk/store";
 import s from "./desk.module.css";
 
 /*
@@ -23,14 +23,16 @@ const AccountLine = memo(function AccountLine() {
   const positions = useDesk((st) => st.positions);
   const quotes = useDesk((st) => st.quotes);
   const trades = useDesk((st) => st.trades);
+  const start = useDesk((st) => st.start);
+  const owner = useDesk((st) => st.seat === "owner");
   const unreal = openPnl({ positions, quotes });
   const realized = realizedSince(trades, dayStart());
-  const equity = ACCOUNT.start + trades.reduce((a, t) => a + t.pnl, 0) + unreal;
+  const equity = start + trades.reduce((a, t) => a + t.pnl, 0) + unreal;
   const margin = SYMS.reduce((a, x) => a + Math.abs(positions[x]?.qty ?? 0) * DAY_MARGIN[x], 0);
   return (
     <dl className={s.acctLine}>
       <div className={s.acctName}>
-        <dt>{ACCOUNT.name}</dt>
+        <dt>{owner ? OWNER_ACCOUNT.name : ACCOUNT.name}</dt>
         <dd>
           <i className={s.okDot} aria-label="Connected" />
         </dd>
@@ -234,6 +236,7 @@ function TradeNumbers({ t }: { t: Trade }) {
 
 function TradesTab() {
   const trades = useDesk((st) => st.trades);
+  const owner = useDesk((st) => st.seat === "owner");
   return (
     <table className={s.tbl}>
       <thead>
@@ -244,7 +247,7 @@ function TradesTab() {
           <th>Size</th>
           <th>Entry</th>
           <th>Exit</th>
-          <th>Members</th>
+          <th>{owner ? "Placed by" : "Members"}</th>
           <th>R</th>
           <th className={s.r}>P&amp;L</th>
         </tr>
@@ -261,7 +264,7 @@ function TradesTab() {
               <td>{t.qty}</td>
               <td>{fmt(t.entryValue / t.entryQty)}</td>
               <td>{t.closedAt ? fmt(t.exitValue / Math.max(1, t.exitQty)) : <span className={s.liveTag}>Open</span>}</td>
-              <td className={s.dimCell}>{t.notify ? "Notified" : "–"}</td>
+              <td className={s.dimCell}>{owner ? (t.follows ? "Agent" : "You") : t.notify ? "Notified" : "–"}</td>
               <TradeNumbers t={t} />
             </tr>
           );
@@ -327,13 +330,16 @@ export function Blotter() {
   const [nPos, nOrd, nFill, nTrade, nSent, cancellable] = useDesk(
     useShallow((st) => [SYMS.filter((x) => st.positions[x]).length, st.orders.length, st.fills.length, st.trades.length, st.notices.length, st.orders.some((o) => !o.reduceOnly)] as const),
   );
-  const [tab, setTab] = useState<Tab>("positions");
+  const owner = useDesk((st) => st.seat === "owner");
+  const [picked, setTab] = useState<Tab>("positions");
+  // what members were sent is Yazan's to read, not the owner's
+  const tab: Tab = owner && picked === "notified" ? "positions" : picked;
   const tabs: { id: Tab; label: string; n: number }[] = [
     { id: "positions", label: "Positions", n: nPos },
     { id: "orders", label: "Orders", n: nOrd },
     { id: "fills", label: "Fills", n: nFill },
     { id: "trades", label: "Trades", n: nTrade },
-    { id: "notified", label: "Notified", n: nSent },
+    ...(owner ? [] : [{ id: "notified" as Tab, label: "Notified", n: nSent }]),
   ];
 
   return (

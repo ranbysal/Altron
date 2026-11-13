@@ -58,6 +58,9 @@
 
 /* ---------- nav (first row of the sheet, shaped like the public nav) ---------- */
 .nav {
+  /* above the page, so what hangs from it (tips under the buttons) is never cut off */
+  position: relative;
+  z-index: 20;
   height: 84px;
   padding: 0 32px;
   display: grid;
@@ -115,6 +118,40 @@
 .brandName { font-size: 20px; font-weight: 500; letter-spacing: 0.42em; margin-right: -0.42em; }
 .navRight { display: flex; align-items: center; gap: 28px; font-family: var(--mono); font-size: 13px; }
 .navSep { width: 1px; height: 18px; background: var(--line-2); }
+.navTools { display: inline-flex; align-items: center; gap: 14px; }
+/* the open trade, one click away from any page */
+.bolt {
+  position: relative;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--ember) 12%, transparent);
+  color: var(--ember);
+  cursor: pointer;
+  animation: bolt-in 0.5s var(--ease) both;
+  transition: background 0.2s, transform 0.2s var(--ease);
+}
+.bolt::before { content: ""; position: absolute; inset: 0; border-radius: 50%; box-shadow: 0 0 0 1px color-mix(in srgb, var(--ember) 55%, transparent); animation: bolt-ring 2.4s ease-out infinite; pointer-events: none; }
+.bolt:hover { background: var(--ember); color: #fff; transform: scale(1.06); }
+.bolt:active { transform: scale(0.96); }
+.bolt[aria-pressed="true"] { background: var(--ember); color: #fff; }
+.bolt[aria-pressed="true"]::before { animation: none; opacity: 0; }
+.bolt::after { content: attr(data-tip); position: absolute; top: calc(100% + 8px); right: 50%; transform: translate(50%, -3px); padding: 4px 8px; border-radius: 6px; background: var(--text-strong); color: var(--page); font-family: var(--mono); font-size: 10px; white-space: nowrap; opacity: 0; transition: opacity 0.15s, transform 0.15s; pointer-events: none; z-index: 5; }
+.bolt:hover::after, .bolt:focus-visible::after { opacity: 1; transform: translate(50%, 0); }
+@keyframes bolt-in {
+  from { opacity: 0; transform: scale(0.6); }
+}
+@keyframes bolt-ring {
+  0% { transform: scale(1); opacity: 0.9; }
+  70%, 100% { transform: scale(1.7); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bolt, .bolt::before { animation: none; }
+}
 .clock { font-family: var(--mono); font-size: 13px; letter-spacing: 0.02em; color: var(--muted); font-variant-numeric: tabular-nums; }
 .me {
   position: relative;

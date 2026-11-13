@@ -7,7 +7,10 @@ import { Mark } from "@/components/Mark";
 import { ThemeSwitch } from "@/components/ThemeSwitch";
 import { FloatLayer } from "@/components/desk/Floating";
 import { Toaster } from "@/components/desk/Toaster";
-import { startDesk } from "@/lib/desk/store";
+import { SYMS } from "@/lib/desk/instruments";
+import { arm, openPnl, selectSym, sit, startDesk, togglePanel, useDesk } from "@/lib/desk/store";
+import { startAgent } from "@/lib/owner/agent";
+import { startOwner } from "@/lib/owner/store";
 import { useMarketClock } from "./clock";
 import s from "./trader.module.css";
 
@@ -42,11 +45,41 @@ function useSide(path: string): "trader" | "owner" {
   return side;
 }
 
+/**
+ * The way to the open trade from any page: the live P&L panel, already armed, so Close is
+ * one more click. Only there while a trade is open.
+ */
+function Bolt() {
+  const sym = useDesk((st) => SYMS.find((x) => st.positions[x]));
+  const up = useDesk((st) => openPnl(st) >= 0);
+  const shown = useDesk((st) => st.settings.panels.pnl);
+  if (!sym) return null;
+  return (
+    <button
+      type="button"
+      className={s.bolt}
+      data-up={up ? "" : undefined}
+      aria-pressed={shown}
+      aria-label="Open trade: show live P&L, armed to close"
+      data-tip="Live P&L, armed"
+      onClick={() => {
+        const st = useDesk.getState();
+        if (st.settings.sym !== sym) selectSym(sym);
+        togglePanel("pnl", true);
+        arm();
+      }}
+    >
+      <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
+        <path d="M9.4 1 3 9.2h4.2L6.4 15 13 6.6H8.7L9.4 1Z" fill="currentColor" />
+      </svg>
+    </button>
+  );
+}
+
 /** Same shape as the public nav. Lives in the layout so the tab pill can slide between views. */
-function Nav() {
+function Nav({ side }: { side: "trader" | "owner" }) {
   const path = usePathname() ?? "/trader";
   const clock = useMarketClock();
-  const side = useSide(path);
   const TABS = side === "owner" ? OWNER_TABS : TRADER_TABS;
   const active =
     side === "owner"
@@ -103,7 +136,10 @@ function Nav() {
       </div>
       <div className={s.navRight}>
         <span className={s.clock}>NY {clock?.time ?? "--:--"}</span>
-        <ThemeSwitch />
+        <span className={s.navTools}>
+          {(side === "owner" || path.startsWith("/trader")) && <Bolt />}
+          <ThemeSwitch />
+        </span>
         {side === "owner" ? (
           <form action="/auth/signout" method="post" className={s.meForm}>
             <button type="submit" className={`${s.me} ${s.meOwner}`} aria-label="Sign out" data-tip="Sign out">
@@ -123,13 +159,21 @@ function Nav() {
 }
 
 export function TraderShell({ children }: { children: ReactNode }) {
+  const path = usePathname() ?? "/trader";
+  const side = useSide(path);
+  // each side sits at its own book; Yazan's keeps working behind the owner's
   useEffect(() => {
     startDesk();
-  }, []);
+    sit(side);
+    if (side === "owner") {
+      startOwner();
+      startAgent();
+    }
+  }, [side]);
   return (
     <div className={s.root} data-trader-root="">
       <div className={s.page}>
-        <Nav />
+        <Nav side={side} />
         {children}
       </div>
       <FloatLayer />

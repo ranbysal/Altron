@@ -1,13 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Cell } from "@/components/trader/parts";
 import t from "@/components/trader/trader.module.css";
 import { EquityChart } from "@/components/trader/EquityChart";
 import { Chart, type TradeMarks } from "@/components/desk/Chart";
 import { INSTRUMENTS } from "@/lib/desk/instruments";
-import { getMarket, selectSym, setSettings, sizeWords, useDesk, type Trade } from "@/lib/desk/store";
+import { bookOf, getMarket, selectSym, setSettings, sizeWords, useDesk, type Book, type Trade } from "@/lib/desk/store";
 import { BAYER4 } from "@/lib/noise";
 import { onThemeChange } from "@/lib/theme";
 import { fmt, money } from "@/lib/format";
@@ -30,10 +30,20 @@ const initials = (name: string) =>
 /* one trade's numbers, read the same way everywhere                   */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Whose trade a card or sheet is showing. Yazan's by default; the owner's pages show the
+ * owner's own trade with the very same parts.
+ */
+const Who = createContext<"his" | "mine">("his");
+function useBook<T>(pick: (b: Book) => T): T {
+  const who = useContext(Who);
+  return useDesk((st) => pick(bookOf(st, who)));
+}
+
 export function useTradeView(trade: Trade) {
-  const orders = useDesk((st) => st.orders);
+  const orders = useBook((b) => b.orders);
   const quote = useDesk((st) => st.quotes[trade.sym]);
-  const pos = useDesk((st) => st.positions[trade.sym]);
+  const pos = useBook((b) => b.positions[trade.sym]);
   const inst = INSTRUMENTS[trade.sym];
   const live = !trade.closedAt && !!pos;
   const dir = dirOf(trade);
@@ -315,16 +325,26 @@ function TradeTrace({ trade, v }: { trade: Trade; v: ReturnType<typeof useTradeV
   );
 }
 
-export function Preview({ trade, now, onOpen }: { trade: Trade; now: number; onOpen: () => void }) {
+export function Preview({ who = "his", ...rest }: { trade: Trade; now: number; onOpen: () => void; who?: "his" | "mine"; /** without the small chart, where a bigger one is already on screen */ compact?: boolean }) {
+  return (
+    <Who.Provider value={who}>
+      <PreviewCard {...rest} />
+    </Who.Provider>
+  );
+}
+
+function PreviewCard({ trade, now, onOpen, compact = false }: { trade: Trade; now: number; onOpen: () => void; compact?: boolean }) {
+  const mine = useContext(Who) === "mine";
   const v = useTradeView(trade);
   const nMsgs = useRoom((s) => s.msgs.reduce((a, m) => a + (m.tradeId === trade.id ? 1 : 0), 0)) + placeholders(trade, now).length;
   const tone = v.pnl >= 0 ? c.pos : c.neg;
   return (
     <div
       className={c.preview}
+      data-compact={compact ? "" : undefined}
       role="button"
       tabIndex={0}
-      aria-label={`Open the ${v.live ? "live" : "last"} trade with its chart and room`}
+      aria-label={mine ? `Open your ${v.live ? "live" : "last"} trade with its chart` : `Open the ${v.live ? "live" : "last"} trade with its chart and room`}
       onClick={onOpen}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
@@ -347,18 +367,16 @@ export function Preview({ trade, now, onOpen }: { trade: Trade; now: number; onO
       </div>
       <TradeRuler v={v} />
       <Levels v={v} trade={trade} />
-      <TradeTrace trade={trade} v={v} />
+      {!compact && <TradeTrace trade={trade} v={v} />}
       {/* the way in, on hover or focus */}
       <span className={c.pvOpen} aria-hidden="true">
         <span>
-          {v.live ? "Open live trade" : "Open trade"}
+          {mine ? (v.live ? "Open your live trade" : "Open your trade") : v.live ? "Open live trade" : "Open trade"}
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
             <path d="M3.5 2.5h6v6M9.5 2.5l-7 7" />
           </svg>
         </span>
-        <em>
-          Chart and room · {nMsgs} {nMsgs === 1 ? "message" : "messages"}
-        </em>
+        <em>{mine ? "Chart, fills and the agent" : `Chart and room · ${nMsgs} ${nMsgs === 1 ? "message" : "messages"}`}</em>
       </span>
     </div>
   );
@@ -437,10 +455,10 @@ function RoomLine({ l, onReply }: { l: Line; onReply?: (l: Line & { kind: "msg" 
 }
 
 function Room({ trade, now }: { trade: Trade; now: number }) {
-  const trades = useDesk((st) => st.trades);
-  const fills = useDesk((st) => st.fills);
+  const trades = useBook((b) => b.trades);
+  const fills = useBook((b) => b.fills);
   const notices = useDesk((st) => st.notices);
-  const notes = useDesk((st) => st.notes);
+  const notes = useBook((b) => b.notes);
   const msgs = useRoom((s) => s.msgs);
   const room = roomOf(trade, trades, now);
   const lines = useMemo(() => streamOf(trade, fills, notices, notes, msgs, now), [trade, fills, notices, notes, msgs, now]);
@@ -600,13 +618,36 @@ function useTradeMarket(sym: Trade["sym"]) {
   }, [sym]);
 }
 
-export function Sheet({ trade, kind, now, onClose }: { trade: Trade; kind: "live" | "history"; now: number; onClose: () => void }) {
+type SheetProps = {
+  trade: Trade;
+  kind: "live" | "history";
+  now: number;
+  onClose: () => void;
+  /** whose trade: Yazan's (with the room) or the owner's own */
+  who?: "his" | "mine";
+  /** the owner's sheet: what sits under the levels in place of the room */
+  side?: ReactNode;
+};
+
+export function Sheet({ who = "his", ...rest }: SheetProps) {
+  return (
+    <Who.Provider value={who}>
+      <SheetIn {...rest} />
+    </Who.Provider>
+  );
+}
+
+function SheetIn({ trade, kind, now, onClose, side }: Omit<SheetProps, "who">) {
+  const who = useContext(Who);
   useTradeMarket(trade.sym);
   const v = useTradeView(trade);
   const notices = useDesk((st) => st.notices);
-  const notes = useDesk((st) => st.notes);
+  const notes = useBook((b) => b.notes);
   const panel = useRef<HTMLDivElement>(null);
   const [leaving, setLeaving] = useState(false);
+  const [full, setFull] = useState(false);
+  const fullRef = useRef(full);
+  fullRef.current = full;
   const close = useCallback(() => {
     setLeaving(true);
     window.setTimeout(onClose, 180);
@@ -622,7 +663,12 @@ export function Sheet({ trade, kind, now, onClose }: { trade: Trade; kind: "live
     root.style.overflow = "hidden";
     panel.current?.focus();
     const key = (e: KeyboardEvent) => {
-      if (e.key === "Escape") close();
+      const typing = (e.target as HTMLElement | null)?.closest?.("input, textarea, [contenteditable='true']");
+      // Esc steps back one thing at a time: out of full screen, then out of the sheet
+      if (e.key === "Escape") {
+        if (fullRef.current) setFull(false);
+        else close();
+      } else if (e.key === "F" && e.shiftKey && !typing) setFull((x) => !x);
     };
     window.addEventListener("keydown", key);
     return () => {
@@ -655,10 +701,11 @@ export function Sheet({ trade, kind, now, onClose }: { trade: Trade; kind: "live
 
   return createPortal(
     <div className={c.overlay} data-sheet-root="" data-leaving={leaving ? "" : undefined} onPointerDown={(e) => e.target === e.currentTarget && close()}>
-      <div ref={panel} className={c.sheetPanel} role="dialog" aria-modal="true" aria-label={`${v.dir > 0 ? "Long" : "Short"} ${sizeWords(trade.sym, v.qty)}`} tabIndex={-1}>
+      <div ref={panel} className={c.sheetPanel} data-full={full ? "" : undefined} role="dialog" aria-modal="true" aria-label={`${v.dir > 0 ? "Long" : "Short"} ${sizeWords(trade.sym, v.qty)}`} tabIndex={-1}>
         <header className={c.sheetHead}>
           <div className={c.shWho}>
             <Status live={v.live} />
+            {who === "mine" && <span className={c.shYou}>You</span>}
             <span className={`${c.side} ${v.dir > 0 ? c.sideL : c.sideS}`}>{v.dir > 0 ? "Long" : "Short"}</span>
             <span className={c.tSize}>{sizeWords(trade.sym, v.qty)}</span>
             <span className={c.tCode}>
@@ -670,6 +717,11 @@ export function Sheet({ trade, kind, now, onClose }: { trade: Trade; kind: "live
             {v.r !== null && <b className={tone}>{`${v.r >= 0 ? "+" : "−"}${Math.abs(v.r).toFixed(2)}R`}</b>}
             <em>{v.live ? `Held ${held(now - trade.openedAt)}` : `Held ${held(span)}`}</em>
           </div>
+          <button type="button" className={c.shClose} onClick={() => setFull((x) => !x)} aria-pressed={full} aria-label={full ? "Leave full screen" : "Full screen chart"} data-tip={full ? "Leave full screen" : "Full screen"}>
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              {full ? <path d="M6 2.5V6H2.5M10 2.5V6h3.5M6 13.5V10H2.5M10 13.5V10h3.5" /> : <path d="M2.5 6V2.5H6M13.5 6V2.5H10M2.5 10v3.5H6M13.5 10v3.5H10" />}
+            </svg>
+          </button>
           <button type="button" className={c.shClose} onClick={close} aria-label="Close">
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true">
               <path d="M4 4l8 8M12 4l-8 8" />
@@ -678,14 +730,16 @@ export function Sheet({ trade, kind, now, onClose }: { trade: Trade; kind: "live
         </header>
         <div className={c.sheetBody}>
           <div className={c.sheetChart}>
-            <Chart viewer focus={focus} until={until} marks={marks} />
+            <Chart viewer who={who} focus={focus} until={until} marks={marks} />
           </div>
-          <aside className={c.sheetSide}>
+          <aside className={c.sheetSide} inert={full}>
             <div className={c.sideTrade}>
               <TradeRuler v={v} />
               <Levels v={v} trade={trade} />
             </div>
-            {kind === "live" ? (
+            {side ? (
+              <div className={c.sideOwn}>{side}</div>
+            ) : kind === "live" ? (
               <Room trade={trade} now={now} />
             ) : (
               <div className={c.recap}>
@@ -828,7 +882,7 @@ const TODAY = new Intl.DateTimeFormat("en-US", {
 
 export function Community() {
   const ready = useDesk((st) => st.ready);
-  const trades = useDesk((st) => st.trades);
+  const trades = useDesk((st) => bookOf(st, "his").trades);
   const now = useNow(15_000);
   const [open, setOpen] = useState<null | {
     id: string;
