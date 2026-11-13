@@ -125,16 +125,38 @@
 .desk { --fx: 0.38s; --fx-ease: cubic-bezier(0.32, 0.72, 0, 1); }
 .desk[data-fx] { transition: grid-template-columns var(--fx) var(--fx-ease), height var(--fx) var(--fx-ease); }
 .desk[data-fx] .aBlotter { transition: height var(--fx) var(--fx-ease), opacity 0.24s ease; }
-.aTicket, .aPos, .aMarkets { transition: opacity 0.28s ease 0.06s; }
+.aTicket, .aPos, .aMarkets, .aFollow { transition: opacity 0.28s ease 0.06s; }
+/* the owner's desk: the right column's second view, Yazan's trade beside the owner's own */
+.aFollow { grid-column: 3; grid-row: 1 / -1; min-height: 0; overflow: hidden; }
+.followIn { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; margin: 0 -16px -16px; padding: 0 16px 16px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--tl) transparent; }
+/* switching views: the new one slides in at once, without the page's opening choreography */
+.desk[data-moved] :is(.aTicket, .aPos, .aFollow) > i { animation: none; }
+.desk[data-moved] :is(.aTicket, .aPos, .aFollow) > div { animation: none; }
+.desk[data-moved] :is(.aTicket, .aPos, .aFollow) > div > :not(header) { animation: view-in 0.42s var(--ease) both; }
+.desk[data-moved] .aPos > div > :not(header) { animation-delay: 0.05s; }
+.desk[data-moved] .aPos > div > header { animation: view-in 0.42s var(--ease) both; }
+@keyframes view-in {
+  from { opacity: 0; transform: translateY(8px); }
+}
+.viewSeg { position: relative; display: inline-grid; grid-template-columns: 1fr 1fr; margin: -7px 0 -7px -9px; padding: 3px; border-radius: 999px; box-shadow: inset 0 0 0 1px var(--tl); }
+.viewSeg::before { content: ""; position: absolute; left: 3px; top: 3px; bottom: 3px; width: calc(50% - 3px); border-radius: 999px; background: var(--text-strong); transition: transform 0.45s var(--ease); }
+.viewSeg[data-view="follow"]::before { transform: translateX(100%); }
+.viewSeg button { position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 22px; padding: 0 12px; border: 0; border-radius: 999px; background: none; font: inherit; letter-spacing: inherit; text-transform: inherit; color: var(--muted); cursor: pointer; transition: color 0.3s var(--ease); }
+.viewSeg button:hover { color: var(--text-strong); }
+.viewSeg button[aria-selected="true"] { color: var(--page); }
+.viewSeg i { width: 5px; height: 5px; border-radius: 50%; background: var(--his); box-shadow: 0 0 0 0 color-mix(in srgb, var(--his) 50%, transparent); animation: seg-live 2s ease-out infinite; }
+@keyframes seg-live {
+  70%, 100% { box-shadow: 0 0 0 6px transparent; }
+}
 .desk[data-full="on"] {
   grid-template-columns: 0px minmax(0, 1fr) 0px;
   height: calc(100vh - 14px);
 }
-.desk[data-full="on"] :is(.aTicket, .aPos, .aMarkets) { opacity: 0; transition: opacity 0.16s ease; }
+.desk[data-full="on"] :is(.aTicket, .aPos, .aMarkets, .aFollow) { opacity: 0; transition: opacity 0.16s ease; }
 .desk[data-full="on"] .aBlotter { height: 0; opacity: 0; transition: height var(--fx) var(--fx-ease), opacity 0.16s ease; }
 /* the content keeps its width while its column closes, so it slides away instead of squeezing */
-.desk:is([data-full="on"], [data-fx]) :is(.aTicket, .aPos) { overflow: hidden; }
-.desk:is([data-full="on"], [data-fx]) :is(.aTicket, .aPos) > div { min-width: var(--rw); }
+.desk:is([data-full="on"], [data-fx]) :is(.aTicket, .aPos, .aFollow) { overflow: hidden; }
+.desk:is([data-full="on"], [data-fx]) :is(.aTicket, .aPos, .aFollow) > div { min-width: var(--rw); }
 .desk[data-full="on"] :is(.blotGrip, .colGrip, .blotOpen) { opacity: 0; pointer-events: none; }
 .barFull g { transform-origin: 8px 8px; transition: opacity 0.22s ease, transform 0.38s var(--ease); }
 .barFull[aria-pressed="true"] .fullOut { opacity: 0; transform: scale(0.6); }
@@ -658,6 +680,11 @@
 .line_order { --lc: var(--muted); }
 .line_alert { --lc: var(--text-strong); }
 .line_exit { --lc: var(--text-strong); }
+/* Yazan's levels on the owner's desk: his own colour, a broken rule, his name on the tag */
+.line_his { --lc: var(--his); }
+.line_his .lineRule { border-top-style: dashed; opacity: 0.9; }
+.line_his .lineTag { border-style: dashed; }
+.line_his .lineTag b { color: var(--his); }
 .line_alert .lineTag { gap: 7px; }
 .line_alert .lineTag svg { color: var(--lc); }
 .liveVal[data-tone="pos"] { color: var(--pos); }
@@ -1457,6 +1484,8 @@
     grid-template-rows: auto 520px auto auto auto !important;
     grid-template-areas: "mk" "chart" "ticket" "pos" "blot";
   }
+  .aFollow { grid-column: 1; grid-row: 3 / 5; }
+  .followIn { overflow: visible; }
   .desk[data-mk="off"] .aMarkets { display: none; }
   .aMarkets > div { width: auto; }
   .watch { container-type: normal; }

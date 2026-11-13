@@ -32,13 +32,8 @@ export const LEVELS: Record<Mode, number[]> = { mirror: [0], staged: [0, 1 / 3, 
 
 export type Account = { id: string; name: string; size: number; dd: number; fee: number; lead?: boolean };
 
-export const ACCOUNTS: Account[] = [
-  { id: "a1", name: "Account 1", size: 150_000, dd: 4_500, fee: 360, lead: true },
-  { id: "a2", name: "Account 2", size: 150_000, dd: 4_500, fee: 360 },
-  { id: "a3", name: "Account 3", size: 100_000, dd: 3_000, fee: 280 },
-  { id: "a4", name: "Account 4", size: 100_000, dd: 3_000, fee: 280 },
-  { id: "a5", name: "Account 5", size: 50_000, dd: 2_000, fee: 170 },
-];
+/** The owner's accounts. One for now; the pages fill in as more are added. */
+export const ACCOUNTS: Account[] = [{ id: "a1", name: "Account 1", size: 150_000, dd: 4_500, fee: 360, lead: true }];
 
 /** Yazan's room in the sample: a 150K with a cushion built up. */
 export const HIS_ROOM = 20_000;
@@ -156,7 +151,8 @@ export type Result = {
   rows: Row[];
   accounts: Record<string, AcctState>;
   /** per account, after each of his trades: balance and floor */
-  track: Record<string, { balance: number; floor: number }[]>;
+  /** after each of his trades: the account's balance, its floor, and what it had paid out so far */
+  track: Record<string, { balance: number; floor: number; paid: number }[]>;
   payouts: Payout[];
 };
 
@@ -259,10 +255,10 @@ export function decide(i: number, leadRoom: number, s: Settings, stopped: boolea
 
 export function replay(method: Method, s: Settings = DEFAULT_SETTINGS, accounts: Account[] = ACCOUNTS): Result {
   const st: Record<string, AcctState> = {};
-  const track: Record<string, { balance: number; floor: number }[]> = {};
+  const track: Record<string, { balance: number; floor: number; paid: number }[]> = {};
   for (const a of accounts) {
     st[a.id] = { balance: a.size, floor: a.size - a.dd, high: a.size, peak: a.size, maxDD: 0, breachedAt: null, payouts: 0, trades: 0, wins: 0 };
-    track[a.id] = [{ balance: a.size, floor: a.size - a.dd }];
+    track[a.id] = [{ balance: a.size, floor: a.size - a.dd, paid: 0 }];
   }
   const lead = accounts.find((a) => a.lead) ?? accounts[0];
   const rows: Row[] = [];
@@ -347,7 +343,7 @@ export function replay(method: Method, s: Settings = DEFAULT_SETTINGS, accounts:
       x.maxDD = Math.min(x.maxDD, x.balance - x.peak);
       legs.push(leg);
     }
-    for (const a of accounts) track[a.id].push({ balance: st[a.id].balance + st[a.id].payouts, floor: st[a.id].floor });
+    for (const a of accounts) track[a.id].push({ balance: st[a.id].balance, floor: st[a.id].floor, paid: st[a.id].payouts });
     rows.push({ i, t, decision, legs, pnl: legs.reduce((acc, l) => acc + l.pnl, 0), rules });
   });
   close();

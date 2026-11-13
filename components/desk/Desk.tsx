@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, type CSSProperties } from "react";
+import { useEffect, useLayoutEffect, useRef, type CSSProperties, type ReactNode } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { Cell } from "@/components/trader/parts";
 import t from "@/components/trader/trader.module.css";
 import { INSTRUMENTS, SYMS, TIMEFRAMES } from "@/lib/desk/instruments";
-import { ACCOUNT, cancelAll, flatten, placeOrder, resetPaper, selectSym, setPick, setSettings, showShortcuts, toggleBlotter, toggleFull, togglePanel, useDesk } from "@/lib/desk/store";
+import { ACCOUNT, OWNER_ACCOUNT, cancelAll, flatten, placeOrder, resetPaper, selectSym, setPick, setSettings, showShortcuts, toggleBlotter, toggleFull, togglePanel, useDesk } from "@/lib/desk/store";
 import { Blotter } from "./Blotter";
 import { Chart } from "./Chart";
 import { Position } from "./Position";
@@ -30,6 +30,7 @@ const KEYS: [string, string][] = [
 
 function Shortcuts() {
   const on = useDesk((st) => st.settings.hotkeys);
+  const owner = useDesk((st) => st.seat === "owner");
   return (
     <div className={s.keysBack} onClick={() => showShortcuts(false)}>
       <div className={s.keys} role="dialog" aria-label="Keyboard shortcuts" onClick={(e) => e.stopPropagation()}>
@@ -55,7 +56,7 @@ function Shortcuts() {
           </span>
         </label>
         <div className={s.keysFoot}>
-          <span>{ACCOUNT.name} · paper</span>
+          <span>{owner ? OWNER_ACCOUNT.name : ACCOUNT.name} · paper</span>
           <button
             type="button"
             onClick={() => {
@@ -75,7 +76,32 @@ function Shortcuts() {
 
 const COL = { min: 280, def: 300, max: 360 }; // the right column moves only a little
 
-export function Desk() {
+/** The owner's desk is this same desk, with a second view for its right column. */
+export type OwnerSide = {
+  view: "order" | "follow";
+  onView: (v: "order" | "follow") => void;
+  /** Yazan has a trade on */
+  live: boolean;
+  /** what the Follow view shows: Yazan's trade, the owner's, and the agent */
+  panel: ReactNode;
+  aside?: ReactNode;
+};
+
+function ViewSeg({ owner }: { owner: OwnerSide }) {
+  return (
+    <span className={s.viewSeg} data-view={owner.view} role="tablist" aria-label="Right panel">
+      <button type="button" role="tab" aria-selected={owner.view === "order"} onClick={() => owner.onView("order")}>
+        Order
+      </button>
+      <button type="button" role="tab" aria-selected={owner.view === "follow"} onClick={() => owner.onView("follow")}>
+        Follow
+        {owner.live && <i aria-label="Yazan is in a trade" />}
+      </button>
+    </span>
+  );
+}
+
+export function Desk({ owner }: { owner?: OwnerSide } = {}) {
   const ready = useDesk((st) => st.ready);
   const sym = useDesk((st) => st.settings.sym);
   const markets = useDesk((st) => st.settings.panels.markets);
@@ -86,6 +112,11 @@ export function Desk() {
   const full = useDesk((st) => st.full);
   const deskRef = useRef<HTMLDivElement>(null);
   const centerRef = useRef<HTMLDivElement>(null);
+  // once the owner has switched views, a new view arrives quickly rather than with the page's opening
+  const firstView = useRef(owner?.view);
+  const moved = !!owner && firstView.current !== owner.view;
+  const everMoved = useRef(false);
+  if (moved) everMoved.current = true;
   const grab = useRef<null | { kind: "blot" | "col"; start: number; from: number; now: number }>(null);
 
   useEffect(() => {
@@ -214,7 +245,7 @@ export function Desk() {
   } as CSSProperties;
 
   return (
-    <div ref={deskRef} className={s.desk} data-mk={markets ? "on" : "off"} data-blot={blotter ? "open" : "shut"} data-full={full ? "on" : "off"} style={style}>
+    <div ref={deskRef} className={s.desk} data-mk={markets ? "on" : "off"} data-blot={blotter ? "open" : "shut"} data-full={full ? "on" : "off"} data-moved={everMoved.current ? "" : undefined} style={style}>
       <i className={t.sheetR} aria-hidden="true" />
       <i className={t.sheetB} aria-hidden="true" />
       <Cell i={0} noTop className={s.aMarkets} label="Markets" aside="CME Globex" bodyClass={s.body}>
@@ -224,7 +255,7 @@ export function Desk() {
       </Cell>
       <div ref={centerRef} className={s.center}>
         <Cell i={1} noTop className={s.aChart} bodyClass={s.bodyFlush}>
-          {ready && <Chart />}
+          {ready && <Chart shadow={!!owner} />}
         </Cell>
         <div
           className={s.blotGrip}
@@ -251,16 +282,26 @@ export function Desk() {
           </button>
         )}
       </div>
-      <Cell i={2} noTop className={s.aTicket} label="Order" aside={INSTRUMENTS[sym].code} bodyClass={s.body}>
-        <div className={s.sideIn} inert={full}>
-          {ready && <Ticket />}
-        </div>
-      </Cell>
-      <Cell i={3} className={s.aPos} label="Position" aside={INSTRUMENTS[sym].code} bodyClass={s.body}>
-        <div className={s.sideIn} inert={full}>
-          {ready && <Position />}
-        </div>
-      </Cell>
+      {owner?.view === "follow" ? (
+        <Cell i={2} noTop className={s.aFollow} label={<ViewSeg owner={owner} />} aside={owner.aside} bodyClass={s.body}>
+          <div className={s.followIn} inert={full}>
+            {ready && owner.panel}
+          </div>
+        </Cell>
+      ) : (
+        <>
+          <Cell i={2} noTop className={s.aTicket} label={owner ? <ViewSeg owner={owner} /> : "Order"} aside={INSTRUMENTS[sym].code} bodyClass={s.body}>
+            <div className={s.sideIn} inert={full}>
+              {ready && <Ticket />}
+            </div>
+          </Cell>
+          <Cell i={3} className={s.aPos} label="Position" aside={INSTRUMENTS[sym].code} bodyClass={s.body}>
+            <div className={s.sideIn} inert={full}>
+              {ready && <Position />}
+            </div>
+          </Cell>
+        </>
+      )}
       <div
         className={s.colGrip}
         role="separator"

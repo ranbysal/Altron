@@ -410,6 +410,7 @@
 .tSize { white-space: nowrap; }
 .preview .tPnl { font-size: 40px; }
 .preview { flex: 1; }
+.preview[data-compact] { flex: none; }
 .trace { flex: 1 1 0; min-height: 132px; display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
 .traceCv { position: relative; flex: 1 1 0; min-height: 0; }
 .traceCv canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
@@ -488,7 +489,19 @@
 .shNums em { font-style: normal; font-size: 10.5px; color: var(--dim); }
 .shClose { flex: none; width: 36px; height: 36px; display: grid; place-items: center; border: 0; border-radius: 10px; background: none; color: var(--muted); cursor: pointer; transition: background 0.2s, color 0.2s; }
 .shClose:hover { background: var(--hover); color: var(--text-strong); }
-.sheetBody { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 392px; }
+.shClose + .shClose { margin-left: -20px; }
+.shYou { padding: 3px 7px; border-radius: 5px; background: var(--text-strong); color: var(--page); font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.12em; text-transform: uppercase; }
+.sheetBody { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 392px; transition: grid-template-columns 0.5s cubic-bezier(0.2, 0.9, 0.25, 1); }
+/* full screen: the sheet becomes the window and the chart takes all of it */
+.overlay:has(.sheetPanel[data-full]) { padding: 0; }
+.sheetPanel { transition: width 0.5s cubic-bezier(0.2, 0.9, 0.25, 1), height 0.5s cubic-bezier(0.2, 0.9, 0.25, 1), border-radius 0.5s cubic-bezier(0.2, 0.9, 0.25, 1); }
+.sheetPanel[data-full] { width: 100vw; height: 100vh; height: 100dvh; border-radius: 0; border-color: transparent; }
+.sheetPanel[data-full] .sheetBody { grid-template-columns: minmax(0, 1fr) 0px; }
+.sheetPanel[data-full] .sheetSide { opacity: 0; }
+.sheetPanel[data-full] .sheetChart { border-right-color: transparent; }
+.sheetSide { overflow: hidden; transition: opacity 0.25s ease; }
+.sheetSide > * { min-width: 392px; }
+.sideOwn { flex: 1; min-height: 0; overflow-y: auto; border-top: 1px solid var(--tl); }
 .sheetChart { min-width: 0; min-height: 0; border-right: 1px solid var(--tl); }
 .sheetSide { min-height: 0; display: flex; flex-direction: column; }
 .sideTrade { flex: none; display: flex; flex-direction: column; gap: 12px; padding: 14px 20px 18px; }
@@ -546,6 +559,7 @@
   .moves { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.1fr); }
   .moves .moveLog { grid-column: auto; max-height: 300px; margin: 0 -20px 0 0; }
   .sheetBody { grid-template-columns: minmax(0, 1fr) 360px; }
+  .sheetSide > * { min-width: 360px; }
 }
 @media (max-width: 1180px) {
   .log :is(th, td):nth-child(7) { display: table-cell; }
@@ -572,5 +586,8 @@
   .sheetBody { display: flex; flex-direction: column; overflow-y: auto; }
   .sheetChart { flex: none; height: 56vh; border-right: 0; }
   .sheetSide { flex: none; min-height: 70vh; }
+  .sheetSide > * { min-width: 0; }
+  .sheetPanel[data-full] .sheetChart { height: calc(100dvh - 64px); }
+  .sheetPanel[data-full] .sheetSide { display: none; }
   .shNums em { display: none; }
 }

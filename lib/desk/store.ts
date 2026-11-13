@@ -33,6 +33,11 @@ export type Order = {
   /** a stop or target: the price members were last told, and a price he chose not to announce */
   told?: number;
   quiet?: number;
+  /** placed by the follow agent for this trade of Yazan's, and what for */
+  follows?: string;
+  tag?: string;
+  /** an exit the agent sizes itself (half at a first target): never resized to the position */
+  fixed?: boolean;
   at: number;
 };
 
@@ -56,6 +61,8 @@ export type Trade = {
   /** where the stop and target last sat, kept for the record once the trade is over */
   stop?: number;
   target?: number;
+  /** the owner's book: the trade of Yazan's this one follows */
+  follows?: string;
 };
 export type Phase = "before" | "during" | "after";
 export type Note = { id: string; tradeId: string | null; sym: Sym; phase: Phase; text: string; at: number; edits: { text: string; at: number }[] };
@@ -126,8 +133,16 @@ export type Ticket = {
   pxSym: Sym | null;
 };
 
+/** Whose book is on the desk: Yazan's (members read it too), or the owner's own. */
+export type Seat = "trader" | "owner";
+/** Everything that belongs to one account. */
+export type Book = Pick<DeskState, "positions" | "orders" | "fills" | "trades" | "notes" | "alerts" | "settings" | "ticket" | "start">;
+
 export type DeskState = {
   ready: boolean;
+  seat: Seat;
+  /** the book that isn't seated: Yazan's while the owner's is up, so both keep working */
+  other: Book | null;
   quotes: Record<Sym, Quote>;
   positions: Partial<Record<Sym, Position>>;
   orders: Order[];
@@ -153,7 +168,9 @@ export type DeskState = {
 };
 
 export const ACCOUNT = { name: "Paper-01", start: 100_000 };
+export const OWNER_ACCOUNT = { name: "Account 1", start: 150_000 };
 const KEY = "altron-desk-v1";
+const OWNER_KEY = "altron-desk-owner-v1";
 const ARM_MS = 60_000;
 
 const DEFAULT_SETTINGS: Settings = {
@@ -177,6 +194,8 @@ const blankQuote = (): Quote => ({ last: 0, bid: 0, ask: 0, prev: 0, hi: 0, lo: 
 
 export const useDesk = create<DeskState>(() => ({
   ready: false,
+  seat: "trader",
+  other: null,
   quotes: { NQ: blankQuote(), ES: blankQuote(), MNQ: blankQuote(), MES: blankQuote() },
   positions: {},
   orders: [],
@@ -225,11 +244,25 @@ export function mid(sym: Sym): number {
 /* fills, positions and trades                                         */
 /* ------------------------------------------------------------------ */
 
-type Draft = Pick<DeskState, "positions" | "orders" | "fills" | "trades" | "notes" | "toasts" | "notices">;
+type Draft = Pick<DeskState, "positions" | "orders" | "fills" | "trades" | "notes" | "toasts" | "notices"> & {
+  /** whose book this is: only Yazan's tells members anything */
+  who?: Seat;
+  /** the book that isn't on screen fills without pop-ups */
+  mute?: boolean;
+};
 
 function draft(): Draft {
   const s = get();
-  return { positions: { ...s.positions }, orders: s.orders.slice(), fills: s.fills.slice(), trades: s.trades.slice(), notes: s.notes.slice(), toasts: s.toasts.slice(), notices: s.notices.slice() };
+  return { positions: { ...s.positions }, orders: s.orders.slice(), fills: s.fills.slice(), trades: s.trades.slice(), notes: s.notes.slice(), toasts: s.toasts.slice(), notices: s.notices.slice(), who: s.seat };
+}
+
+/** Yazan's book, wherever it sits: on the desk for him and for members, set aside while the owner's is up. */
+export function hisBook(s: DeskState): Book {
+  return s.seat === "owner" && s.other ? s.other : s;
+}
+/** "his" is Yazan's book; "mine" is whichever book is seated. */
+export function bookOf(s: DeskState, who: "his" | "mine"): Book {
+  return who === "his" ? hisBook(s) : s;
 }
 
 function fmtPx(p: number): string {
@@ -240,6 +273,7 @@ function fmtUsd(n: number): string {
 }
 
 function pushToast(d: Draft, t: Omit<Toast, "id" | "at">) {
+  if (d.mute) return;
   d.toasts = [...d.toasts.slice(-3), { ...t, id: uid("t"), at: Date.now() }];
 }
 
@@ -254,6 +288,7 @@ function syncExits(d: Draft, sym: Sym) {
 
 /** Sends a notice to members (kept here until the backend relays it) and says so on the desk. */
 function publish(d: Draft, n: Omit<Notice, "id">) {
+  if (d.who === "owner") return;
   const full: Notice = { ...n, id: uid("N") };
   d.notices = [...d.notices.slice(-299), full];
   const { head } = noticeText(full);
@@ -298,6 +333,7 @@ function applyFill(d: Draft, o: Order, qty: number, price: number, at: number) {
   if (!pos || pos.qty === 0) {
     const riskTicks = o.attach?.stopPx !== undefined ? Math.abs(price - o.attach.stopPx) / inst.tick : o.attach?.stopTicks;
     const t = openTrade(d, sym, side, qty, price, at, riskTicks);
+    if (o.follows) updateTrade(d, t.id, (x) => ({ ...x, follows: o.follows }));
     tradeId = t.id;
     pos = { sym, qty: side * qty, avg: price, openedAt: at, tradeId };
   } else if (Math.sign(pos.qty) === side) {
@@ -363,7 +399,7 @@ function applyFill(d: Draft, o: Order, qty: number, price: number, at: number) {
   // keep protective orders the same size as the position
   if (pos) {
     const size = Math.abs(pos.qty);
-    d.orders = d.orders.map((x) => (x.sym === sym && x.reduceOnly && (x.role === "stop" || x.role === "target") ? { ...x, qty: size } : x));
+    d.orders = d.orders.map((x) => (x.sym === sym && x.reduceOnly && !x.fixed && (x.role === "stop" || x.role === "target") ? { ...x, qty: size } : x));
   }
 
   syncExits(d, sym);
@@ -486,6 +522,9 @@ export type OrderInput = {
   /** the ticket's exits, exact prices or tick distances; otherwise the settings' distances */
   exits?: Order["attach"];
   notify?: { note?: string };
+  /** the follow agent's order, the trade of Yazan's it follows, and what it's for */
+  follows?: string;
+  tag?: string;
 };
 
 export function placeOrder(input: OrderInput): void {
@@ -509,7 +548,9 @@ export function placeOrder(input: OrderInput): void {
     stop: input.stop !== undefined ? snap(input.sym, input.stop) : undefined,
     trail: input.trail,
     attach: attach && (attach.stopTicks || attach.targetTicks || attach.stopPx !== undefined || attach.targetPx !== undefined) ? attach : undefined,
-    notify: input.notify ? { note: input.notify.note?.trim() || undefined } : undefined,
+    notify: input.notify && s.seat === "trader" ? { note: input.notify.note?.trim() || undefined } : undefined,
+    follows: input.follows,
+    tag: input.tag,
     at,
   };
   const d = draft();
@@ -528,6 +569,54 @@ export function placeOrder(input: OrderInput): void {
     if (d.orders.includes(o)) pushToast(d, { tone: "plain", title: `Working ${o.side > 0 ? "buy" : "sell"} ${o.qty} ${INSTRUMENTS[o.sym].code}`, body: describe(o) });
   }
   commit(d);
+}
+
+/**
+ * A fill at a known price and time: what the follow agent's orders did while this browser
+ * wasn't looking. Goes on the seated book without a pop-up.
+ */
+export function fillAt(input: { sym: Sym; side: Side; qty: number; price: number; at: number; role?: Role; follows?: string; exits?: Order["attach"] }): void {
+  if (!get().ready || input.qty <= 0) return;
+  const o: Order = { id: uid("o"), sym: input.sym, side: input.side, qty: Math.round(input.qty), type: "LMT", role: input.role ?? "entry", limit: input.price, attach: input.exits, follows: input.follows, at: input.at };
+  const d = draft();
+  d.mute = true;
+  applyFill(d, o, o.qty, snap(input.sym, input.price), input.at);
+  commit(d);
+}
+
+/** An exit the follow agent sizes and places itself: a stop or a target for part or all of the position. */
+export function placeExit(input: { sym: Sym; side: Side; qty: number; role: "stop" | "target"; price: number; follows?: string; tag?: string }): void {
+  const s = get();
+  const pos = s.positions[input.sym];
+  if (!s.ready || !pos || input.qty <= 0 || Math.sign(pos.qty) === input.side) return;
+  const p = snap(input.sym, input.price);
+  const o: Order = {
+    id: uid("o"),
+    sym: input.sym,
+    side: input.side,
+    qty: Math.min(Math.round(input.qty), Math.abs(pos.qty)),
+    type: input.role === "stop" ? "STP" : "LMT",
+    role: input.role,
+    stop: input.role === "stop" ? p : undefined,
+    limit: input.role === "target" ? p : undefined,
+    reduceOnly: true,
+    fixed: true,
+    follows: input.follows,
+    tag: input.tag,
+    at: Date.now(),
+  };
+  const d = draft();
+  d.orders = [...d.orders, o];
+  syncExits(d, input.sym);
+  work(d, input.sym, s.quotes[input.sym], o.at);
+  commit(d);
+}
+
+/** A fresh paper book for the owner: the follow engine starts its account from the firm's size. */
+export function resetOwnerBook(start: number) {
+  const s = get();
+  if (s.seat !== "owner") return;
+  set({ positions: {}, orders: [], fills: [], trades: [], notes: [], alerts: [], start, thread: null });
 }
 
 export function describe(o: Order): string {
@@ -922,7 +1011,58 @@ export function showShortcuts(v: boolean) {
 }
 
 export function resetPaper() {
-  set({ positions: {}, orders: [], fills: [], trades: [], notes: [], notices: [], thread: null });
+  // the owner's book resets on its own; members' notices are Yazan's
+  if (get().seat === "owner") set({ positions: {}, orders: [], fills: [], trades: [], notes: [], thread: null });
+  else set({ positions: {}, orders: [], fills: [], trades: [], notes: [], notices: [], thread: null });
+}
+
+/* ------------------------------------------------------------------ */
+/* two books, one desk                                                 */
+/* ------------------------------------------------------------------ */
+
+const pickBook = (s: DeskState): Book => ({ positions: s.positions, orders: s.orders, fills: s.fills, trades: s.trades, notes: s.notes, alerts: s.alerts, settings: s.settings, ticket: s.ticket, start: s.start });
+
+const BLANK_TICKET: Ticket = { type: "MKT", side: 1, limit: null, stop: null, trail: 20, stopPx: null, targetPx: null, pxSym: null };
+
+function ownerBook(): Book {
+  let saved: Partial<Book> | null = null;
+  try {
+    const raw = JSON.parse(localStorage.getItem(OWNER_KEY) ?? "null") as (Partial<Book> & { v?: number }) | null;
+    if (raw?.v === 1) saved = raw;
+  } catch {
+    /* nothing saved */
+  }
+  const base: Settings = { ...DEFAULT_SETTINGS, sym: "MNQ", qty: { NQ: 1, ES: 1, MNQ: 4, MES: 4 }, layout: { ...DEFAULT_SETTINGS.layout, right: 340 } };
+  return {
+    positions: saved?.positions ?? {},
+    orders: saved?.orders ?? [],
+    fills: saved?.fills ?? [],
+    trades: saved?.trades ?? [],
+    notes: saved?.notes ?? [],
+    alerts: saved?.alerts ?? [],
+    start: saved?.start ?? OWNER_ACCOUNT.start,
+    ticket: BLANK_TICKET,
+    settings: saved?.settings
+      ? {
+          ...base,
+          ...saved.settings,
+          tf: TIMEFRAMES.some((x) => x.id === saved!.settings!.tf) ? saved.settings.tf : base.tf,
+          panels: { pnl: false, markets: !!saved.settings.panels?.markets },
+          layout: { ...base.layout, ...saved.settings.layout },
+          chart: { ...base.chart, ...saved.settings.chart },
+          exitUnits: { ...base.exitUnits, ...saved.settings.exitUnits },
+        }
+      : base,
+  };
+}
+
+/** Put one account's book on the desk. The other keeps working behind it. */
+export function sit(seat: Seat) {
+  const s = get();
+  if (!s.ready || s.seat === seat) return;
+  const next = s.other ?? (seat === "owner" ? ownerBook() : null);
+  if (!next) return;
+  set({ ...next, other: pickBook(s), seat, armedUntil: 0, pick: null, preview: 0, thread: null, full: false, toasts: [] });
 }
 
 /* ------------------------------------------------------------------ */
@@ -972,21 +1112,24 @@ function load(): Saved | null {
 function save() {
   const s = get();
   if (!s.ready || !market) return;
+  const his = hisBook(s);
   const data: Saved = {
     v: 1,
-    positions: s.positions,
-    orders: s.orders,
-    fills: s.fills.slice(-400),
-    trades: s.trades.slice(-300),
-    notes: s.notes,
-    alerts: s.alerts,
+    positions: his.positions,
+    orders: his.orders,
+    fills: his.fills.slice(-400),
+    trades: his.trades.slice(-300),
+    notes: his.notes,
+    alerts: his.alerts,
     notices: s.notices.slice(-300),
-    settings: s.settings,
+    settings: his.settings,
     prices: { NQ: market.quote("NQ").last, ES: market.quote("ES").last },
     archive: archived,
   };
+  const mine = s.seat === "owner" ? pickBook(s) : s.other;
   try {
     localStorage.setItem(KEY, JSON.stringify(data));
+    if (mine) localStorage.setItem(OWNER_KEY, JSON.stringify({ v: 1, positions: mine.positions, orders: mine.orders, fills: mine.fills.slice(-400), trades: mine.trades.slice(-300), notes: mine.notes, alerts: mine.alerts, settings: mine.settings, start: mine.start }));
   } catch {
     /* storage full or blocked */
   }
@@ -1363,6 +1506,17 @@ export function startDesk() {
         for (const sym of SYMS) if (d.orders.some((o) => o.sym === sym)) work(d, sym, quotes[sym], now);
         Object.assign(patch, changes(d, s));
       }
+      // the book behind the desk fills too, quietly
+      const o = s.other;
+      if (o?.orders.length) {
+        const was: Draft = { positions: o.positions, orders: o.orders, fills: o.fills, trades: o.trades, notes: o.notes, toasts: [], notices: patch.notices ?? s.notices };
+        const d: Draft = { positions: { ...o.positions }, orders: o.orders.slice(), fills: o.fills.slice(), trades: o.trades.slice(), notes: o.notes.slice(), toasts: [], notices: was.notices.slice(), who: s.seat === "owner" ? "trader" : "owner", mute: true };
+        for (const sym of SYMS) if (d.orders.some((x) => x.sym === sym)) work(d, sym, quotes[sym], now);
+        const { notices, toasts: _t, ...book } = changes(d, was);
+        void _t;
+        if (Object.keys(book).length) patch.other = { ...o, ...book };
+        if (notices) patch.notices = notices;
+      }
     }
     if (moved && s.alerts.length) {
       const quotes = patch.quotes ?? s.quotes;
@@ -1384,7 +1538,8 @@ export function startDesk() {
   // persist the book soon after it changes (never starved by a busy tape), and prices now and then
   let timer = 0;
   useDesk.subscribe((s, prev) => {
-    if (s.positions === prev.positions && s.orders === prev.orders && s.trades === prev.trades && s.notes === prev.notes && s.settings === prev.settings && s.alerts === prev.alerts && s.notices === prev.notices) return;
+    if (s.positions === prev.positions && s.orders === prev.orders && s.trades === prev.trades && s.notes === prev.notes && s.settings === prev.settings && s.alerts === prev.alerts && s.notices === prev.notices && s.other === prev.other && s.start === prev.start)
+      return;
     if (timer) return;
     timer = window.setTimeout(() => {
       timer = 0;

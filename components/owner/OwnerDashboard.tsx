@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { money, hhmm } from "@/lib/format";
 import { PERIODS, TRADING_DAYS, dayLabel, periodStartIndex, type Period } from "@/lib/journal";
-import { ACCOUNTS, FEES_TOTAL, METHODS, MODE_LABEL, dailyOf, replay, summarize, type Result, type Row, type Summary } from "@/lib/owner/replay";
+import { ACCOUNTS, FEES_TOTAL, HIS_ROOM, METHODS, MODE_LABEL, dailyOf, replay, summarize, type Result, type Row, type Summary } from "@/lib/owner/replay";
 import { setOwner, startOwner, useOwner } from "@/lib/owner/store";
 import { Calendar } from "@/components/trader/Calendar";
 import { EquityChart } from "@/components/trader/EquityChart";
@@ -54,7 +54,7 @@ function AccountCell({ i, id, result, from }: { i: number; id: string; result: R
   // where the balance sits between the floor and the floor plus the firm's drawdown
   const fill = Math.max(0, Math.min(1, room / Math.max(a.dd, room)));
   const start = result.rows.findIndex((r) => r.t.dayIndex >= from);
-  const series = track.slice(Math.max(0, start)).map((x) => x.balance - a.size);
+  const series = track.slice(Math.max(0, start)).map((x) => x.balance + x.paid - a.size);
   const net = series[series.length - 1] - series[0];
   const last = TRADING_DAYS[TRADING_DAYS.length - 1];
   const today = result.rows.filter((r) => r.t.day === last).reduce((acc, r) => acc + (r.legs.find((l) => l.acct === id)?.pnl ?? 0), 0);
@@ -196,7 +196,7 @@ function ByAccount({ result, from }: { result: Result; from: number }) {
         {ACCOUNTS.map((a, i) => {
           const legs = result.rows.slice(start).flatMap((r) => r.legs.filter((l) => l.acct === a.id && l.filled.length));
           const wins = legs.filter((l) => l.pnl > 0).length;
-          const series = result.track[a.id].slice(start).map((x) => x.balance);
+          const series = result.track[a.id].slice(start).map((x) => x.balance + x.paid);
           let peak = -Infinity;
           let dd = 0;
           for (const v of series) {
@@ -353,6 +353,9 @@ export function OwnerDashboard() {
   // what we kept per dollar he made, as it built up
   const capSeries = useMemo(() => sum.curve.map((c, i) => (sum.ghost[i] > 500 ? c.eq / sum.ghost[i] : NaN)).filter((v) => Number.isFinite(v)), [sum]);
   const captured = sum.his ? sum.net / sum.his : 0;
+  // his curve scaled from his room to ours, so the two can be read on one axis
+  const scale = ACCOUNTS.reduce((x, a) => x + a.dd, 0) / HIS_ROOM;
+  const ghost = useMemo(() => sum.ghost.map((v) => v * scale), [sum, scale]);
   const rooms = ACCOUNTS.map((a) => ({ a, room: result.accounts[a.id].balance - result.accounts[a.id].floor }));
   const totalRoom = rooms.reduce((x, r) => x + r.room, 0);
   const thin = rooms.reduce((x, r) => (r.room < x.room ? r : x));
@@ -364,7 +367,7 @@ export function OwnerDashboard() {
         <div className={s.heroTop}>
           <div className={s.heroNum}>
             <span className={s.label}>
-              Net P&amp;L<span className={s.dim}> · {meta.long} · {ACCOUNTS.length} accounts</span>
+              Net P&amp;L<span className={s.dim}> · {meta.long} · {ACCOUNTS.length === 1 ? ACCOUNTS[0].name : `${ACCOUNTS.length} accounts`}</span>
             </span>
             <Money value={money(sum.net)} className={`${s.big} ${sum.net >= 0 ? s.bigPos : s.bigNeg}`} />
           </div>
@@ -421,7 +424,7 @@ export function OwnerDashboard() {
             ))}
           </div>
         </div>
-        <EquityChart curve={sum.curve} trades={trades} ghost={sum.ghost} ghostLabel="Yazan" />
+        <EquityChart curve={sum.curve} trades={trades} ghost={ghost} ghostLabel="Yazan at our size" />
       </section>
 
       <div className={s.sheet}>
@@ -440,14 +443,14 @@ export function OwnerDashboard() {
             <Odometer value={money(sum.maxDD)} className={`${s.statVal} ${s.neg}`} />
             <Spark key={`dd${period}`} values={ddSeries} baseline={0} tone="neg" delay={600} />
             <p className={s.statSub}>
-              All accounts together · worst single {k(sum.worstAcctDD)}
+              {ACCOUNTS.length === 1 ? (sum.breached ? "Breached" : "Never breached") : `All accounts together · worst single ${k(sum.worstAcctDD)}`}
             </p>
           </Cell>
-          <Cell i={4} label="Room to the floors" className={s.stat}>
+          <Cell i={4} label={ACCOUNTS.length === 1 ? "Room to the floor" : "Room to the floors"} className={s.stat}>
             <Odometer value={plain(totalRoom)} className={s.statVal} />
             <LineMeter share={Math.min(1, totalRoom / ACCOUNTS.reduce((x, a) => x + a.dd * 2, 0))} count={48} />
             <p className={s.statSub}>
-              Thinnest: {thin.a.name}, {plain(thin.room)}
+              {ACCOUNTS.length === 1 ? `Floor ${plain(result.accounts[thin.a.id].floor)}` : `Thinnest: ${thin.a.name}, ${plain(thin.room)}`}
             </p>
           </Cell>
           <Cell i={5} label="Captured" className={s.stat}>
@@ -464,14 +467,14 @@ export function OwnerDashboard() {
           </Cell>
         </div>
 
-        <div className={o.accts}>
+        <div className={o.accts} data-n={ACCOUNTS.length}>
           {ACCOUNTS.map((a, i) => (
             <AccountCell key={a.id} i={7 + i} id={a.id} result={result} from={from} />
           ))}
         </div>
 
         <div className={s.row2}>
-          <Cell i={12} label="Daily P&L" aside={day ? "Day below" : "All accounts"}>
+          <Cell i={12} label="Daily P&L" aside={day ? "Day below" : ACCOUNTS.length === 1 ? ACCOUNTS[0].name : "All accounts"}>
             <Calendar period={period} selected={day} onSelect={setDay} daily={daily} />
           </Cell>
           <Cell i={13} label="How we joined" aside={meta.long}>
@@ -482,11 +485,13 @@ export function OwnerDashboard() {
           </Cell>
         </div>
 
-        <div className={s.row1}>
-          <Cell i={15} label="By account" aside={meta.long}>
-            <ByAccount result={result} from={from} />
-          </Cell>
-        </div>
+        {ACCOUNTS.length > 1 && (
+          <div className={s.row1}>
+            <Cell i={15} label="By account" aside={meta.long}>
+              <ByAccount result={result} from={from} />
+            </Cell>
+          </div>
+        )}
 
         <div className={s.row1}>
           <Cell i={16} label="Decisions" aside={day ? dayLabel(day, { weekday: "long", month: "long", day: "numeric" }) : `${sum.rows.length} of his trades · ${meta.long}`}>

@@ -26,6 +26,8 @@ import {
   ticketExits,
   ticketFromPosition,
   togglePanel,
+  bookOf,
+  hisBook,
   useDesk,
   type Order,
 } from "@/lib/desk/store";
@@ -143,7 +145,7 @@ function ChartBar({ viewer = false, frozen = false }: { viewer?: boolean; frozen
 type Line = {
   id: string;
   price: number;
-  kind: "entry" | "stop" | "target" | "order" | "alert" | "exit" | "dbuy" | "dsell" | "dstop" | "dtarget";
+  kind: "entry" | "stop" | "target" | "order" | "alert" | "exit" | "dbuy" | "dsell" | "dstop" | "dtarget" | "his";
   title: string;
   value?: string;
   tone?: "pos" | "neg";
@@ -235,7 +237,13 @@ export function Chart({
   focus,
   until,
   marks,
+  shadow = false,
+  who,
 }: {
+  /** the owner's desk: Yazan's live levels in his own colour, behind the owner's book */
+  shadow?: boolean;
+  /** whose book to draw: Yazan's (the viewer's default) or the seated one */
+  who?: "his" | "mine";
   viewer?: boolean;
   /** bring this stretch of time into view (a past trade) */
   focus?: { from: number; to: number };
@@ -247,8 +255,15 @@ export function Chart({
   const sym = useDesk((st) => st.settings.sym);
   const tf = useDesk((st) => st.settings.tf);
   const pick = useDesk((st) => st.pick);
-  const pos = useDesk((st) => st.positions[sym]);
-  const orders = useDesk(useShallow((st) => st.orders.filter((o) => o.sym === sym)));
+  const whose = who ?? (viewer ? "his" : "mine");
+  const whoseRef = useRef(whose);
+  whoseRef.current = whose;
+  const seat = useDesk((st) => st.seat);
+  const pos = useDesk((st) => bookOf(st, whose).positions[sym]);
+  const orders = useDesk(useShallow((st) => bookOf(st, whose).orders.filter((o) => o.sym === sym)));
+  // Yazan's open trade in this market (he trades the mini, the owner its micro)
+  const hisPos = useDesk((st) => (shadow && st.seat === "owner" ? Object.values(hisBook(st).positions).find((p) => p && INSTRUMENTS[p.sym].under === INSTRUMENTS[sym].under) : undefined));
+  const hisOrders = useDesk(useShallow((st) => (shadow && st.seat === "owner" ? hisBook(st).orders.filter((o) => INSTRUMENTS[o.sym].under === INSTRUMENTS[sym].under && (o.role === "stop" || o.role === "target")) : [])));
   const alerts = useDesk(useShallow((st) => st.alerts.filter((a) => a.sym === sym)));
   const ticket = useDesk((st) => st.ticket);
   const tQty = useDesk((st) => st.settings.qty[sym]);
@@ -337,6 +352,10 @@ export function Chart({
   /* ---------- lines on the chart, from the book ---------- */
   const lines = useMemo<Line[]>(() => {
     const out: Line[] = [];
+    if (hisPos) {
+      out.push({ id: "h-entry", price: hisPos.avg, kind: "his", title: `Yazan ${hisPos.qty > 0 ? "long" : "short"} ${Math.abs(hisPos.qty)}`, drag: false });
+      for (const o of hisOrders) out.push({ id: `h-${o.id}`, price: o.role === "stop" ? o.stop! : o.limit!, kind: "his", title: o.role === "stop" ? "His stop" : "His target", drag: false });
+    }
     if (viewer && marks) {
       const pnl = (p: number) => money((p - marks.entry) * marks.side * marks.qty * inst.pv);
       out.push({ id: "m-entry", price: marks.entry, kind: "entry", title: `${marks.side > 0 ? "Long" : "Short"} ${marks.qty}`, drag: false });
@@ -367,7 +386,7 @@ export function Chart({
         if (o.role !== "stop" && o.role !== "target") continue;
         const p = o.role === "stop" ? o.stop! : o.limit!;
         const pnl = (p - pos.avg) * pos.qty * inst.pv;
-        const moved = p !== o.told && p !== o.quiet;
+        const moved = seat === "trader" && p !== o.told && p !== o.quiet;
         out.push({ id: o.id, price: p, kind: o.role, title: o.role === "stop" ? (o.type === "TRAIL" ? "Trail" : "Stop") : "Target", value: money(pnl), tone: pnl >= 0 ? "pos" : "neg", order: o, moved, drag: true });
       }
     }
@@ -388,7 +407,7 @@ export function Chart({
       if (dStop !== null) out.push({ id: "d-stop", price: dStop, kind: "dstop", title: "SL", value: money(legPnl(dStop)), tone: "neg", draft: "stop", follows: dFollowStop, drag: true });
     }
     return out;
-  }, [viewer, marks, pos, orders, alerts, inst.pv, ticket, tQty, dStop, dTarget, dFollowStop, dFollowTarget]);
+  }, [viewer, marks, hisPos, hisOrders, seat, pos, orders, alerts, inst.pv, ticket, tQty, dStop, dTarget, dFollowStop, dFollowTarget]);
   const linesRef = useRef(lines);
   linesRef.current = lines;
 
@@ -645,7 +664,7 @@ export function Chart({
     ctx.clip();
 
     // the open position, as a dithered zone between entry and the tape
-    const posNow = ds.positions[symNow];
+    const posNow = bookOf(ds, whoseRef.current).positions[symNow];
     if (cfg.zone && posNow) {
       let ei = last;
       while (ei > 0 && bars[ei].t > posNow.openedAt) ei--;
@@ -741,7 +760,7 @@ export function Chart({
 
     // executions: an arrow under the bar for a buy, over it for a sell
     if (cfg.fills && f.bw >= 3) {
-      const fills = ds.fills;
+      const fills = bookOf(ds, whoseRef.current).fills;
       const t0 = bars[first]?.t ?? 0;
       const halo = new Path2D();
       const buys = new Path2D();

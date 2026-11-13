@@ -1,483 +1,949 @@
 "use client";
 
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
-import { fmt, money } from "@/lib/format";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as RKE, type PointerEvent as RPE, type ReactNode } from "react";
+import { fmt } from "@/lib/format";
+import { clock, clockS } from "@/lib/community/trades";
 import { INSTRUMENTS } from "@/lib/desk/instruments";
-import { getMarket, sizeWords, useDesk, type Trade } from "@/lib/desk/store";
-import { clock, clockS, currentTrade, dirOf, entryOf, held, stopOf, targetOf } from "@/lib/community/trades";
-import { ACCOUNTS, HIS_ROOM, LEVELS, METHODS, MICRO_VALUE, MODE_LABEL, dipCurve, microsFor, planLive, replay, summarize, type Method, type Result, type Settings } from "@/lib/owner/replay";
-import { setOwner, setSetting, useOwner } from "@/lib/owner/store";
+import { getMarket, useDesk, type Fill, type Trade } from "@/lib/desk/store";
+import { BAYER4 } from "@/lib/noise";
+import { onThemeChange } from "@/lib/theme";
+import { MICRO, PHASE_LABEL, type Follow as FollowT, type His, type Limits, type LogItem, type Phase } from "@/lib/follow/engine";
+import { restartFollow, setLimits, setRules, startOver, testAlert, useFollow } from "@/lib/follow/runner";
+import { setOwner, useOwner } from "@/lib/owner/store";
+import { Preview } from "@/components/community/Community";
 import { Cell } from "@/components/trader/parts";
 import s from "@/components/trader/trader.module.css";
-import { Decisions, k, useOwnerReplay } from "./OwnerDashboard";
-import o from "./owner.module.css";
+import { headline, latestThought, mmss, money, Pending, Reasoning, signed, TradeSheets, useFollowView, type Open, type View } from "./Trades";
 import f from "./follow.module.css";
 
-const plain = (n: number) => `$${Math.round(Math.abs(n)).toLocaleString("en-US")}`;
 const pct = (x: number) => `${Math.round(x * 100)}%`;
 
 /* ------------------------------------------------------------------ */
-/* the live trade: his, and what the agent made of it                  */
+/* the drawing: his trade and ours                                      */
 /* ------------------------------------------------------------------ */
 
-type Tranche = { level: number; price: number; filledAt: number | null };
+type Tag = { id: string; y: number; label: string; px: string; kind: "stop" | "target" | "his" | "you" | "order" | "ours" };
+type Tick = { x: number; label: string; show: boolean; title: string };
+type Geo = { tags: Tag[]; ticks: Tick[]; base: number };
+type Tip = { x: number; y: number; t: number; p: number; his: number | null; mine: number | null; flip: boolean };
 
-function useNow(ms: number) {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const id = window.setInterval(() => setNow(Date.now()), ms);
-    return () => window.clearInterval(id);
-  }, [ms]);
-  return now;
+/** Short names for the steps along the time axis. */
+function notch(l: LogItem): string | null {
+  if (l.kind === "see") return "His entry";
+  if (l.kind === "think") return l.text.startsWith("Passed") ? "Passed" : l.text.startsWith("Pulled") ? "Pulled" : l.text.startsWith("Holding") || l.text.startsWith("Waiting") ? null : "Decided";
+  if (l.kind === "fill") return l.text.startsWith("First target") ? "Target 1" : "In";
+  if (l.kind === "act") return l.text.startsWith("He closed") ? "His exit" : l.text.startsWith("Halfway") ? "Stop up" : null;
+  if (l.kind === "out") return "Out";
+  if (l.kind === "guard") return "Guard";
+  return null;
 }
 
-/** The plan for his open trade, and which of its orders the tape has reached. */
-function useLivePlan(trade: Trade | undefined, result: Result, settings: Settings, now: number) {
-  const orders = useDesk((x) => x.orders);
-  return useMemo(() => {
-    if (!trade) return null;
-    const inst = INSTRUMENTS[trade.sym];
-    const dir = dirOf(trade);
-    const entry = entryOf(trade);
-    const stop = stopOf(trade, orders) ?? entry - dir * 20 * inst.tick * 4;
-    const target = targetOf(trade, orders);
-    const D = Math.abs(entry - stop) || inst.tick * 40;
-    const lead = ACCOUNTS.find((a) => a.lead)!;
-    const leadRoom = result.accounts[lead.id].balance - result.accounts[lead.id].floor;
-    const plan = planLive(inst.under === "NQ", trade.side, leadRoom, settings);
-    const share = (trade.risk ?? D * inst.pv * trade.qty) / HIS_ROOM;
-    const pv = MICRO_VALUE[inst.under];
-    const placed = trade.openedAt + 7_000;
-    // how far the tape has gone against him since the orders went in, and when it got there
-    const bars = getMarket()?.bars(inst.under, 1) ?? [];
-    let worst = 0;
-    const firstAt = new Map<number, number>();
-    let from = bars.length;
-    while (from > 0 && bars[from - 1].t >= placed - 1000) from--;
-    for (let i = from; i < bars.length; i++) {
-      const b = bars[i];
-      const against = dir > 0 ? (entry - b.l) / D : (b.h - entry) / D;
-      if (against > worst) worst = against;
-      for (const d of LEVELS[plan.mode]) if (!firstAt.has(d) && against + 1e-9 >= d) firstAt.set(d, b.t);
+/** Our P&L at a moment, from our fills up to then. */
+function oursAt(fills: Fill[], t: number, p: number, pv: number): number | null {
+  let qty = 0;
+  let avg = 0;
+  let real = 0;
+  let any = false;
+  for (const x of fills) {
+    if (x.at > t) break;
+    any = true;
+    if (!qty || Math.sign(qty) === x.side) {
+      avg = (avg * Math.abs(qty) + x.price * x.qty) / (Math.abs(qty) + x.qty);
+      qty += x.side * x.qty;
+    } else {
+      const c = Math.min(Math.abs(qty), x.qty);
+      real += (x.price - avg) * Math.sign(qty) * c * pv;
+      qty += x.side * c;
     }
-    const tranches: Tranche[] = LEVELS[plan.mode].map((d) => ({ level: d, price: Math.round((entry - dir * d * D) / inst.tick) * inst.tick, filledAt: d === 0 ? placed : (firstAt.get(d) ?? null) }));
-    const accounts = ACCOUNTS.map((a) => {
-      const x = result.accounts[a.id];
-      const room = x.balance - x.floor;
-      const budget = Math.min(share * settings.follow, settings.maxRisk) * room;
-      return { a, room, micros: microsFor(budget, D, pv, plan.mode), budget };
-    });
-    return { inst, dir, entry, stop, target, D, plan, share, pv, placed, worst, tranches, accounts };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [trade, orders, result, settings, Math.floor(now / 1000)]);
+  }
+  if (!any) return null;
+  return real + (qty ? (p - avg) * qty * pv : 0);
 }
 
-function Ladder({ live, last }: { live: NonNullable<ReturnType<typeof useLivePlan>>; last: number }) {
-  const { dir, entry, stop, target, D, tranches } = live;
-  const top = dir > 0 ? (target ?? entry + 2 * D) : stop;
-  const bottom = dir > 0 ? stop : (target ?? entry - 2 * D);
-  const hi = Math.max(top, bottom, last) + D * 0.12;
-  const lo = Math.min(top, bottom, last) - D * 0.12;
-  const y = (p: number) => ((hi - p) / (hi - lo)) * 100;
-  const rows: { p: number; label: string; kind: string; sub?: string }[] = [
-    ...(target !== undefined ? [{ p: target, label: "His target", kind: "target" }] : []),
-    { p: stop, label: "His stop", kind: "stop" },
-    ...tranches.map((t, i) => ({ p: t.price, label: t.level === 0 ? "His entry" : `Add ${i}`, kind: t.filledAt ? "filled" : "working", sub: t.filledAt ? `Filled ${clockS(t.filledAt)}` : "Working" })),
-  ];
-  if (!tranches.some((t) => t.level === 0)) rows.push({ p: entry, label: "His entry", kind: "his" });
+function Duet({ trade, his, fl, own, fills, log }: { trade: Trade; his: His; fl?: FollowT; own?: Trade; fills: Fill[]; log: LogItem[] }) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  const [theme, setTheme] = useState(0);
+  const [beat, setBeat] = useState(0);
+  const [geo, setGeo] = useState<Geo | null>(null);
+  const [tip, setTip] = useState<Tip | null>(null);
+  const geoKey = useRef("");
+  const model = useRef<null | { line: { t: number; p: number }[]; X: (t: number) => number; Y: (p: number) => number; plotR: number }>(null);
+  useEffect(() => onThemeChange(() => setTheme((n) => n + 1)), []);
+  const live = !trade.closedAt || (!!own && !own.closedAt);
+  useEffect(() => {
+    const id = window.setInterval(() => setBeat((n) => n + 1), live ? 1000 : 15_000);
+    return () => window.clearInterval(id);
+  }, [live]);
+  const inst = INSTRUMENTS[trade.sym];
+  const pvMicro = MICRO[his.under].pv;
+
+  useEffect(() => {
+    const cv = ref.current;
+    const m = getMarket();
+    if (!cv || !m) return;
+    const draw = () => {
+      const W = cv.clientWidth;
+      const H = cv.clientHeight;
+      if (!W || !H) return;
+      const now = Date.now();
+      const end = Math.max(trade.closedAt ?? now, own ? (own.closedAt ?? now) : 0);
+      const dur = Math.max(60_000, end - trade.openedAt);
+      const a = trade.openedAt - Math.max(3 * 60_000, dur * 0.4);
+      const done = !!trade.closedAt && (!own || !!own.closedAt);
+      const b = done ? Math.min(now, end + Math.max(2 * 60_000, dur * 0.25)) : now;
+      const secs = m.bars(his.under, 1);
+      const useSecs = secs.length > 0 && secs[0].t <= a && b - a <= 50 * 60_000;
+      const src = useSecs ? secs : m.bars(his.under, 60);
+      let i0 = 0;
+      let hiI = src.length;
+      while (i0 < hiI) {
+        const mid = (i0 + hiI) >> 1;
+        if (src[mid].t < a) i0 = mid + 1;
+        else hiI = mid;
+      }
+      const raw: { t: number; p: number }[] = [];
+      for (let i = i0; i < src.length && src[i].t <= b; i++) raw.push({ t: src[i].t, p: src[i].c });
+      if (raw.length < 2) return;
+      const every = Math.max(1, Math.ceil(raw.length / (W / 2)));
+      const line = raw.filter((_, k) => k % every === 0 || k === raw.length - 1);
+
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      cv.width = Math.round(W * dpr);
+      cv.height = Math.round(H * dpr);
+      const g = cv.getContext("2d")!;
+      g.setTransform(dpr, 0, 0, dpr, 0, 0);
+      g.clearRect(0, 0, W, H);
+      const cs = getComputedStyle(cv);
+      const col = (n: string) => cs.getPropertyValue(n).trim();
+
+      const working = fl?.status === "working" && fl.limit !== undefined ? fl.limit : undefined;
+      const ourStop = fl?.status === "in" && own && !own.closedAt ? fl.stop : undefined;
+      const ourAvg = own ? own.entryValue / Math.max(1, own.entryQty) : undefined;
+      let lo = Infinity;
+      let hi = -Infinity;
+      for (const x of line) {
+        lo = Math.min(lo, x.p);
+        hi = Math.max(hi, x.p);
+      }
+      for (const p of [his.entry, his.stop, his.exit, ourAvg, working, ourStop, his.targets[0]]) {
+        if (p === undefined) continue;
+        lo = Math.min(lo, p);
+        hi = Math.max(hi, p);
+      }
+      const padY = (hi - lo || 1) * 0.1;
+      lo -= padY;
+      hi += padY;
+      // the tags live in a gutter on the right, so the live point never reaches the edge
+      const plotR = W - (W > 560 ? 176 : 150);
+      const TOP = 8;
+      const BASE = H - 30;
+      const t0 = line[0].t;
+      const t1 = done ? line[line.length - 1].t : now;
+      const X = (t: number) => ((t - t0) / Math.max(1, t1 - t0)) * plotR;
+      const Y = (p: number) => TOP + (1 - (p - lo) / (hi - lo)) * (BASE - TOP);
+      const onPlot = (p: number) => p >= lo && p <= hi;
+      model.current = { line, X, Y, plotR };
+
+      // the time he was in, a quiet wash
+      const xa = X(trade.openedAt);
+      const xb = X(trade.closedAt ?? t1);
+      g.fillStyle = col("--hover");
+      g.fillRect(xa, 0, Math.max(1, xb - xa), BASE);
+
+      // glow under the price, in the colour of where we stand
+      const lastP = line[line.length - 1].p;
+      const up = (ourAvg !== undefined ? lastP - ourAvg : lastP - his.entry) * his.dir >= 0;
+      const cell = 3;
+      const ga = new Path2D();
+      const gb = new Path2D();
+      let k = 0;
+      for (let x = 0; x < X(line[line.length - 1].t); x += cell) {
+        const t = t0 + (x / plotR) * (t1 - t0);
+        while (k < line.length - 1 && line[k + 1].t <= t) k++;
+        const y0 = Y(line[k].p);
+        const reach = Math.max(1, BASE - y0);
+        for (let y = Math.ceil(y0 / cell) * cell; y < BASE; y += cell) {
+          const ff = 1 - (y - y0) / reach;
+          const I = 0.02 + 0.4 * ff * ff * ff;
+          if (I > (BAYER4[((y / cell) & 3) * 4 + ((x / cell) & 3)] + 0.5) / 16) (I > 0.26 ? gb : ga).rect(x, y, 2, 2);
+        }
+      }
+      g.fillStyle = col(up ? "--cv-dither-1" : "--cv-ember-1");
+      g.fill(ga);
+      g.fillStyle = col(up ? "--cv-dither-2" : "--cv-ember-2");
+      g.fill(gb);
+
+      const rule = (p: number, from: number, to: number, c: string, dash: number[], w = 1) => {
+        if (!onPlot(p)) return;
+        const y = Math.round(Y(p)) + 0.5;
+        g.setLineDash(dash);
+        g.strokeStyle = c;
+        g.lineWidth = w;
+        g.beginPath();
+        g.moveTo(Math.max(0, from), y);
+        g.lineTo(to, y);
+        g.stroke();
+        g.setLineDash([]);
+      };
+      for (const tp of his.targets) rule(tp, 0, W, col("--blue"), [4, 3]);
+      if (his.stop !== undefined) rule(his.stop, 0, W, col("--ember"), [4, 3]);
+      if (working !== undefined) rule(working, X(fl?.decidedAt ?? trade.openedAt), W, col("--dim"), [1, 4]);
+      const firstIn = fills.find((x) => x.side === his.dir);
+      if (ourAvg !== undefined && firstIn) rule(ourAvg, X(firstIn.at), own?.closedAt ? X(own.closedAt) : W, col("--text-strong"), []);
+      if (ourStop !== undefined) rule(ourStop, X(fl?.enteredAt ?? trade.openedAt), W, col("--ember"), [], 1.25);
+      // ours first and his dashes over it, so both read when we went in at his price
+      rule(his.entry, xa, trade.closedAt ? xb : W, col("--his"), [5, 4], 1.5);
+
+      g.beginPath();
+      line.forEach((x, i) => (i ? g.lineTo(X(x.t), Y(x.p)) : g.moveTo(X(x.t), Y(x.p))));
+      g.strokeStyle = col("--text-strong");
+      g.lineWidth = 1.4;
+      g.lineJoin = "round";
+      g.stroke();
+
+      const ring = (x: number, y: number, c: string) => {
+        g.beginPath();
+        g.arc(x, y, 4, 0, Math.PI * 2);
+        g.fillStyle = col("--page");
+        g.fill();
+        g.strokeStyle = c;
+        g.lineWidth = 1.6;
+        g.stroke();
+      };
+      // his way in (a diamond, his colour) and out
+      g.save();
+      g.translate(xa, Y(his.entry));
+      g.rotate(Math.PI / 4);
+      g.fillStyle = col("--page");
+      g.fillRect(-7.5, -7.5, 15, 15);
+      g.fillStyle = col("--his");
+      g.fillRect(-5.5, -5.5, 11, 11);
+      g.restore();
+      if (trade.closedAt && his.exit !== undefined) ring(xb, Y(his.exit), col("--his"));
+      // ours: squares in, rings out
+      for (const x of fills) {
+        const fx = Math.round(X(x.at));
+        const fy = Math.round(Y(x.price));
+        if (x.side === his.dir) {
+          g.fillStyle = col("--page");
+          g.fillRect(fx - 4.5, fy - 4.5, 9, 9);
+          g.fillStyle = col("--text-strong");
+          g.fillRect(fx - 3, fy - 3, 6, 6);
+        } else ring(fx, fy, col("--text-strong"));
+      }
+      if (!done) {
+        const last = line[line.length - 1];
+        g.fillStyle = col("--text-strong");
+        g.fillRect(Math.round(X(last.t)) - 2.5, Math.round(Y(last.p)) - 2.5, 5, 5);
+      }
+
+      // the floor, and a notch for every step the agent took
+      g.fillStyle = col("--tl");
+      g.fillRect(0, BASE, W, 1);
+      const ticks: Tick[] = [];
+      let free = -Infinity;
+      let lastLabel = "";
+      for (const l of log) {
+        const label = notch(l);
+        if (!label) continue;
+        const x = X(l.at);
+        if (x < 0 || x > plotR + 1) continue;
+        g.fillStyle = col(l.kind === "guard" ? "--ember" : "--text-strong");
+        g.fillRect(Math.round(x), BASE - 3, 1, 8);
+        if (label === lastLabel) continue;
+        lastLabel = label;
+        const half = (label.length * 6.4 + 12) / 2;
+        const show = x - half > free;
+        if (show) free = x + half;
+        ticks.push({ x: Math.round(x), label, show, title: l.sub ? `${l.text}. ${l.sub}` : l.text });
+      }
+
+      // tags down the right edge, nudged apart where levels sit close
+      const tags: Tag[] = [];
+      his.targets.forEach((tp, i) => tags.push({ id: `t${i}`, y: Y(tp), label: his.targets.length > 1 ? `His target ${i + 1}` : "His target", px: fmt(tp), kind: "target" }));
+      if (his.stop !== undefined) tags.push({ id: "hs", y: Y(his.stop), label: "His stop", px: fmt(his.stop), kind: "stop" });
+      tags.push({ id: "his", y: Y(his.entry), label: "Yazan", px: fmt(his.entry), kind: "his" });
+      if (ourAvg !== undefined) tags.push({ id: "you", y: Y(ourAvg) + 0.01, label: "You", px: fmt(ourAvg), kind: "you" });
+      if (ourStop !== undefined) tags.push({ id: "os", y: Y(ourStop), label: "Our stop", px: fmt(ourStop), kind: "ours" });
+      if (working !== undefined) tags.push({ id: "w", y: Y(working), label: "Asking", px: fmt(working), kind: "order" });
+      const shown = tags.filter((x) => x.y >= TOP - 4 && x.y <= BASE + 4).sort((p, q) => p.y - q.y);
+      const GAP = 21;
+      for (let i = 1; i < shown.length; i++) if (shown[i].y - shown[i - 1].y < GAP) shown[i].y = shown[i - 1].y + GAP;
+      const over = shown.length ? shown[shown.length - 1].y - (BASE - 10) : 0;
+      if (over > 0) {
+        shown[shown.length - 1].y -= over;
+        for (let i = shown.length - 2; i >= 0; i--) if (shown[i + 1].y - shown[i].y < GAP) shown[i].y = shown[i + 1].y - GAP;
+      }
+      for (const x of shown) x.y = Math.round(x.y);
+      const key = JSON.stringify([shown, ticks, BASE]);
+      if (key !== geoKey.current) {
+        geoKey.current = key;
+        setGeo({ tags: shown, ticks, base: BASE });
+      }
+    };
+    draw();
+    const ro = new ResizeObserver(draw);
+    ro.observe(cv);
+    return () => ro.disconnect();
+  }, [trade, his, fl, own, fills, log, theme, beat]);
+
+  const move = (e: RPE<HTMLDivElement>) => {
+    const md = model.current;
+    if (!md) return;
+    const r = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - r.left;
+    const { line } = md;
+    let lo = 0;
+    let hi = line.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (md.X(line[mid].t) < x) lo = mid + 1;
+      else hi = mid;
+    }
+    const pt = line[Math.max(0, Math.min(line.length - 1, lo))];
+    const hisP = pt.t >= trade.openedAt && pt.t <= (trade.closedAt ?? Infinity) ? (pt.p - his.entry) * his.dir * trade.qty * inst.pv : null;
+    const px = md.X(pt.t);
+    setTip({ x: px, y: md.Y(pt.p), t: pt.t, p: pt.p, his: hisP, mine: oursAt(fills, pt.t, pt.p, pvMicro), flip: px > md.plotR - 190 });
+  };
+
   return (
-    <div className={f.ladder}>
-      <div className={f.rail}>
-        {rows.map((r) => (
-          <span key={r.label + r.p} className={f.lvl} data-k={r.kind} style={{ top: `${y(r.p)}%` }}>
-            <i />
-            <b>
-              {r.label}
-              {r.sub && <small>{r.sub}</small>}
-            </b>
-            <em>{fmt(r.p)}</em>
-          </span>
-        ))}
-        <span className={f.now} style={{ top: `${y(last)}%` }}>
-          <i />
-          <b>{fmt(last)}</b>
-        </span>
+    <div className={f.duet} key={trade.id} onPointerMove={move} onPointerLeave={() => setTip(null)}>
+      <div className={f.duetCv}>
+        <canvas ref={ref} role="img" aria-label="Yazan's trade and ours on the price: his entry and targets, our fills and stop, and each step the agent took" />
       </div>
+      {geo?.tags.map((x) => (
+        <span key={x.id} className={f.tag} data-k={x.kind} style={{ top: x.y }}>
+          <b>{x.label}</b>
+          {x.px}
+        </span>
+      ))}
+      {geo?.ticks.map(
+        (x, i) =>
+          x.show && (
+            <span key={i} className={f.tick} data-done="" style={{ left: x.x, top: geo.base + 9 }} title={x.title}>
+              {x.label}
+            </span>
+          ),
+      )}
+      {tip && geo && (
+        <>
+          <i className={f.hair} style={{ left: tip.x, height: geo.base }} aria-hidden="true" />
+          <i className={f.hairDot} style={{ left: tip.x, top: tip.y }} aria-hidden="true" />
+          <div className={f.tip} data-flip={tip.flip ? "" : undefined} style={{ left: tip.x }}>
+            <span>
+              {clockS(tip.t)} · {fmt(tip.p)}
+            </span>
+            <span data-k="his">
+              Yazan <b className={tip.his === null ? undefined : tip.his >= 0 ? f.pos : f.neg}>{tip.his === null ? "Out" : signed(tip.his)}</b>
+            </span>
+            <span data-k="you">
+              You <b className={tip.mine === null ? undefined : tip.mine >= 0 ? f.pos : f.neg}>{tip.mine === null ? "Out" : signed(tip.mine)}</b>
+            </span>
+          </div>
+        </>
+      )}
     </div>
   );
 }
 
-type Step = { at: number; text: string; sub?: string; done: boolean };
+function OpenBtn({ children, onClick }: { children: string; onClick: () => void }) {
+  return (
+    <button type="button" className={f.openBtn} onClick={onClick}>
+      <span>{children}</span>
+      <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M3.5 2.5h6v6M9.5 2.5l-7 7" />
+      </svg>
+    </button>
+  );
+}
 
-function Live({ result, settings }: { result: Result; settings: Settings }) {
-  const trades = useDesk((x) => x.trades);
-  const quotes = useDesk((x) => x.quotes);
-  const ready = useDesk((x) => x.ready);
+/* ------------------------------------------------------------------ */
+/* the stage                                                            */
+/* ------------------------------------------------------------------ */
+
+function status(v: View): string {
+  const { st, f: fl, trade, now, limits } = v;
+  if (st?.halted) return "Stopped. Restart it when you're ready";
+  if (!trade) return "Waiting for his first trade";
+  if (fl?.status === "watching") return `Deciding · ${mmss(limits.window - (now - trade.openedAt) / 1000)} left`;
+  if (fl?.status === "working") return fl.limit !== undefined ? `Order working at ${fmt(fl.limit)}` : "Going in";
+  if (fl?.status === "in") return trade.closedAt ? "Closing with him" : "In with him";
+  return "Waiting for his next trade";
+}
+
+function Stage({ v }: { v: View }) {
   const following = useOwner((x) => x.following);
-  const now = useNow(1000);
-  const cur = currentTrade(trades);
-  const open = cur && !cur.closedAt ? cur : undefined;
-  const live = useLivePlan(open, result, settings, now);
+  const [open, setOpen] = useState<Open>(null);
+  const fills = useDesk((d) => d.fills);
+  const own = v.own;
+  const ownFills = useMemo(() => (own ? fills.filter((x) => x.tradeId === own.id) : []), [fills, own]);
+  const last = latestThought(v);
+  const { acct, rules, limits, trade, his } = v;
+  const budget = acct ? Math.max(0, acct.usable) * limits.risk[acct.phase] : 0;
+  const risk = v.f?.micros && v.f.stopDist && his && (v.f.status === "working" || v.f.status === "in") ? v.f.micros * v.f.stopDist * MICRO[his.under].pv : null;
+  const head = headline(v);
 
-  if (!ready) return <div className={f.liveRow} />;
-  if (!open || !live)
-    return (
-      <div className={f.liveRow}>
-        <Cell i={1} noTop label="Yazan" aside="Closed" className={f.liveCell}>
-          <p className={f.quiet}>Yazan has no open trade. When he opens one, the agent builds its brief and plans within a few seconds.</p>
-          {cur?.closedAt && (
-            <p className={o.none}>
-              Last: {cur.side.toLowerCase()} {sizeWords(cur.sym, cur.qty)}, closed {clock(cur.closedAt)} for {money(cur.pnl)}.
-            </p>
+  return (
+    <>
+      <header className={f.stageHead}>
+        <button type="button" className={f.follow} data-on={following ? "" : undefined} aria-pressed={following} onClick={() => setOwner({ following: !following })}>
+          <i />
+          {following ? "Following Yazan" : "Paused"}
+        </button>
+        <span className={f.headMeta}>{status(v)}</span>
+        <span className={f.headAcct}>
+          {rules.name} · {rules.size / 1000}K · Paper
+        </span>
+      </header>
+      {v.st?.halted && (
+        <div className={f.halt} role="alert">
+          <span>
+            <b>Trading stopped at the stop line.</b> {v.st.halted.why}. Everything was closed at {clock(v.st.halted.at)} and nothing trades until you restart it.
+          </span>
+          <button type="button" onClick={restartFollow}>
+            Restart
+          </button>
+        </div>
+      )}
+
+      <div className={f.hero}>
+        <Cell i={0} label={trade && !trade.closedAt ? "Right now" : "His last trade"} aside={last ? clock(last.at) : undefined}>
+          <div className={f.callSide}>
+            <h2 className={f.call} key={head}>
+              {head.split(" ").map((w, k) => (
+                <span key={k} style={{ "--w": k } as CSSProperties}>
+                  {w}{" "}
+                </span>
+              ))}
+            </h2>
+            {last ? (
+              <p className={f.why} key={last.at + last.text}>
+                {last.sub ? `${last.sub}.` : `${last.text}.`}
+                {last.by && (
+                  <span className={f.by} data-ai={last.by === "ai" ? "" : undefined}>
+                    {last.by === "ai" ? "AI" : "Rules"}
+                  </span>
+                )}
+              </p>
+            ) : v.f?.why ? (
+              <p className={f.why}>{v.f.why}.</p>
+            ) : null}
+            <dl className={f.trio}>
+              <div>
+                <dt>Phase</dt>
+                <dd>{acct ? (acct.phase === "eval" ? "Eval" : acct.phase === "buffer" ? "Buffer" : "Built") : "–"}</dd>
+                <dd>{acct ? PHASE_LABEL[acct.phase] : ""}</dd>
+              </div>
+              <div>
+                <dt>Before the stop line</dt>
+                <dd>{acct ? money(Math.max(0, acct.usable)) : "–"}</dd>
+                <dd>{acct ? `${pct(acct.used)} of the drawdown used` : ""}</dd>
+              </div>
+              <div>
+                <dt>{risk !== null ? "This trade risks" : "A trade can risk"}</dt>
+                <dd>{money(risk ?? budget)}</dd>
+                <dd>{risk !== null ? `of ${money(budget)} allowed` : `${pct(limits.risk[acct?.phase ?? "eval"])} of the room above the line`}</dd>
+              </div>
+            </dl>
+          </div>
+        </Cell>
+        <Cell
+          i={1}
+          label="His trade and ours"
+          aside={
+            <span className={f.key}>
+              <i data-k="his" />
+              Yazan
+              <i data-k="you" />
+              You
+            </span>
+          }
+          bodyClass={f.duetCell}
+        >
+          {v.ready && trade && his ? <Duet trade={trade} his={his} fl={v.f} own={own} fills={ownFills} log={v.log} /> : <p className={f.quiet}>When Yazan takes a trade, it draws here.</p>}
+        </Cell>
+      </div>
+
+      <div className={f.twins}>
+        <Cell
+          i={2}
+          label={
+            <span className={f.who} data-k="his">
+              Yazan
+            </span>
+          }
+          aside={
+            <em className={f.state} data-live={trade && !trade.closedAt ? "" : undefined}>
+              {trade ? (trade.closedAt ? "Last trade" : "Live") : "No trades yet"}
+            </em>
+          }
+        >
+          {v.ready && trade ? (
+            <div className={f.twin}>
+              <Preview compact trade={trade} now={v.now} onOpen={() => setOpen("his")} />
+              <footer className={f.twinFoot}>
+                <p className={f.fine}>{his?.targets.length ? `${his.targets.length > 1 ? "Targets" : "Target"} ${his.targets.map((x) => fmt(x)).join(" and ")}${his.stop === undefined ? ", no stop posted." : "."}` : "No target posted."}</p>
+                <OpenBtn onClick={() => setOpen("his")}>Chart and room</OpenBtn>
+              </footer>
+            </div>
+          ) : (
+            <p className={f.quiet}>When Yazan takes a trade, it shows here.</p>
+          )}
+        </Cell>
+        <Cell
+          i={3}
+          label={
+            <span className={f.who} data-k="you">
+              You
+            </span>
+          }
+          aside={
+            <em className={f.state} data-live={own && !own.closedAt ? "" : undefined}>
+              {own ? (own.closedAt ? "Closed" : "In") : v.f?.status === "passed" ? "Passed" : v.f?.status === "watching" ? "Deciding" : v.f?.status === "working" ? "Working" : ""}
+            </em>
+          }
+        >
+          {v.ready && own ? (
+            <div className={f.twin}>
+              <Preview compact who="mine" trade={own} now={v.now} onOpen={() => setOpen("mine")} />
+              <footer className={f.twinFoot}>
+                <p className={f.fine}>{v.f?.stop !== undefined && !own.closedAt ? `Our stop ${fmt(v.f.stop)}.${v.f.tp1Done ? " First target banked." : ""}` : v.f?.exitWhy ? `${v.f.exitWhy}.` : ""}</p>
+                <OpenBtn onClick={() => setOpen("mine")}>Chart and agent</OpenBtn>
+              </footer>
+            </div>
+          ) : v.ready && trade ? (
+            <Pending v={v} />
+          ) : (
+            <p className={f.quiet}>Our side shows here once he trades.</p>
           )}
         </Cell>
       </div>
-    );
+      <TradeSheets open={open} v={v} onClose={() => setOpen(null)} />
+    </>
+  );
+}
 
-  const { inst, dir, entry, stop, target, plan, tranches, accounts, pv, placed, share } = live;
-  const last = quotes[open.sym].last;
-  const hisPnl = (last - entry) * dir * open.qty * inst.pv;
-  const filled = tranches.filter((t) => t.filledAt);
-  const total = accounts.reduce((a, x) => a + x.micros, 0);
-  const ours = filled.reduce((a, t) => a + total * (last - t.price) * dir * pv, 0);
-  const worstOurs = tranches.reduce((a, t) => a + total * Math.abs(t.price - stop) * pv, 0);
-  const steps: Step[] = [
-    { at: open.openedAt, text: `Yazan ${dir > 0 ? "bought" : "sold"} ${sizeWords(open.sym, open.qty)} at ${fmt(entry)}`, done: true },
-    { at: open.openedAt + 3_000, text: "Brief built", sub: `His risk is ${pct(share)} of his room. ${plan.look[0].n} similar trades in his history`, done: true },
-    { at: placed, text: `Plan: ${MODE_LABEL[plan.mode].toLowerCase()}, ${total} micros across ${accounts.filter((a) => a.micros).length} accounts`, sub: plan.reason, done: true },
-    ...tranches
-      .filter((t) => t.filledAt && t.level > 0)
-      .map((t) => ({ at: t.filledAt!, text: `Add filled at ${fmt(t.price)}`, done: true })),
-    { at: open.openedAt + 60_000, text: "Check at one minute", sub: now >= open.openedAt + 60_000 ? `Price ${fmt(last)}. His stop and size unchanged, plan holds` : undefined, done: now >= open.openedAt + 60_000 },
-    { at: open.openedAt + 240_000, text: "Check at four minutes", sub: now >= open.openedAt + 240_000 ? "Working orders left in place until he exits or moves his stop" : undefined, done: now >= open.openedAt + 240_000 },
-  ].sort((a, b) => a.at - b.at);
-  const next = steps.find((x) => !x.done);
+/* ------------------------------------------------------------------ */
+/* the reasoning across his last few trades                            */
+/* ------------------------------------------------------------------ */
 
+function Journal({ v }: { v: View }) {
+  const hisTrades = useDesk((d) => (d.seat === "owner" && d.other ? d.other.trades : d.trades));
+  const st = v.st;
+  const groups = useMemo(() => {
+    if (!st) return [];
+    const list = Object.values(st.follows)
+      .filter((x) => x.why !== "Before following started" && !x.why?.startsWith("Missed"))
+      .sort((a, b) => b.seenAt - a.seenAt)
+      .slice(0, 4);
+    return list.map((fl) => ({ fl, t: hisTrades.find((x) => x.id === fl.his), log: st.log.filter((l) => l.his === fl.his) }));
+  }, [st, hisTrades]);
+  const general = st ? st.log.filter((l) => !l.his).slice(-4).reverse() : [];
+  if (!groups.length && !general.length) return <p className={f.quiet}>The agent writes down every step here, starting with Yazan&apos;s next trade.</p>;
   return (
-    <div className={f.liveRow}>
-      <Cell i={1} noTop label="Yazan" aside={<span className={f.liveTag}><i />Live</span>} className={f.liveCell}>
-        <div className={f.who}>
-          <span className={`${s.side} ${dir > 0 ? s.sideL : s.sideS}`}>{dir > 0 ? "Long" : "Short"}</span>
-          <span>{sizeWords(open.sym, open.qty)}</span>
-          <span className={f.code}>{inst.code}</span>
-        </div>
-        <span className={`${f.pnl} ${hisPnl >= 0 ? o.pos : o.neg}`}>{money(hisPnl)}</span>
-        <dl className={f.levels}>
-          <div>
-            <dt>Entry</dt>
-            <dd>{fmt(entry)}</dd>
-          </div>
-          <div>
-            <dt>Stop</dt>
-            <dd>{fmt(stop)}</dd>
-          </div>
-          <div>
-            <dt>Target</dt>
-            <dd>{target !== undefined ? fmt(target) : "Open"}</dd>
-          </div>
-          <div>
-            <dt>Held</dt>
-            <dd>{held(now - open.openedAt)}</dd>
-          </div>
-        </dl>
-        <p className={f.quiet}>His risk on this trade is {pct(share)} of his room.</p>
-      </Cell>
-
-      <Cell i={2} noTop label="Our plan" aside={following ? MODE_LABEL[plan.mode] : "Paused"} className={f.liveCell}>
-        <div className={f.planTop}>
-          <span className={`${f.pnl} ${ours >= 0 ? o.pos : o.neg}`}>{filled.length ? money(ours) : "$0.00"}</span>
-          <span className={f.planMeta}>
-            <b>
-              {filled.length} of {tranches.length} filled
-            </b>
-            <em>Worst case {plain(worstOurs)} if every order fills and his stop hits</em>
-          </span>
-        </div>
-        <Ladder live={live} last={last} />
-        <table className={f.split}>
-          <thead>
-            <tr>
-              <th>Account</th>
-              <th>Room</th>
-              <th>Micros per order</th>
-            </tr>
-          </thead>
-          <tbody>
-            {accounts.map(({ a, room, micros }) => (
-              <tr key={a.id}>
-                <td>{a.name}</td>
-                <td>{plain(room)}</td>
-                <td>{micros || "Too small"}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </Cell>
-
-      <Cell i={3} noTop label="Agent" aside={next ? `Next ${clock(next.at)}` : "Watching"} className={f.liveCell}>
-        <ol className={f.steps}>
-          {steps.map((x) => (
-            <li key={x.at + x.text} data-done={x.done ? "" : undefined}>
-              <i />
-              <time>{clockS(x.at)}</time>
-              <b>{x.text}</b>
-              {x.sub && <p>{x.sub}</p>}
+    <div className={f.journal}>
+      {general.length > 0 && (
+        <ul className={f.general}>
+          {general.map((l) => (
+            <li key={l.at + l.text} data-k={l.kind}>
+              <time>{clock(l.at)}</time>
+              <span>{l.text}</span>
             </li>
           ))}
-        </ol>
-        <p className={f.quiet}>Sample. The agent&apos;s reasoning here is written by the rules engine until the model is connected.</p>
-      </Cell>
+        </ul>
+      )}
+      {groups.map(({ fl, t, log }, k) => (
+        <section key={fl.his} className={f.jTrade} style={{ "--k": k } as CSSProperties}>
+          <header>
+            <span className={`${f.side} ${fl.dir > 0 ? f.sideL : f.sideS}`}>{fl.dir > 0 ? "Long" : "Short"}</span>
+            <b>
+              Yazan {t ? `${t.qty} ${INSTRUMENTS[t.sym].code}` : fl.under}
+              {t ? ` · ${clock(t.openedAt)}` : ""}
+            </b>
+            <em data-s={fl.status} className={fl.status === "done" ? ((fl.pnl ?? 0) >= 0 ? f.pos : f.neg) : undefined}>
+              {fl.status === "done" ? `${fl.exitWhy} · ${signed(fl.pnl ?? 0)}` : fl.status === "passed" ? "Passed" : fl.status === "in" ? "In" : fl.status === "working" ? "Working" : "Deciding"}
+            </em>
+          </header>
+          {log.length ? <Reasoning log={log} compact /> : <p className={f.fine}>{fl.why}.</p>}
+        </section>
+      ))}
     </div>
   );
 }
 
 /* ------------------------------------------------------------------ */
-/* accounts and settings                                               */
+/* the account: phase, room, the stop line                             */
 /* ------------------------------------------------------------------ */
 
-function Slider({ label, value, min, max, step, show, onChange, hint }: { label: string; value: number; min: number; max: number; step: number; show: string; onChange: (v: number) => void; hint: string }) {
+const PHASES: Phase[] = ["eval", "buffer", "built"];
+
+function AccountPanel({ v }: { v: View }) {
+  const { acct, rules, limits, st } = v;
+  const today = st ? (acct?.equity ?? 0) - st.dayStart : 0;
+  if (!acct || !st) return <p className={f.quiet}>Loading the account.</p>;
+  const line = st.floor + (1 - limits.stopLine) * rules.drawdown;
+  const goal = acct.phase === "eval" ? acct.target : acct.phase === "buffer" ? rules.size + rules.drawdown : Math.max(acct.equity, rules.size + rules.drawdown) + rules.drawdown * 0.5;
+  const lo = st.floor;
+  const hi = Math.max(goal, acct.equity);
+  const at = (x: number) => Math.max(0, Math.min(1, (x - lo) / (hi - lo)));
+  const goalName = acct.phase === "eval" ? "Profit target" : acct.phase === "buffer" ? "Buffer built" : "Room to spare";
+  const budget = Math.max(0, acct.usable) * limits.risk[acct.phase];
   return (
-    <label className={f.slider}>
-      <span className={f.slHead}>
-        <b>{label}</b>
-        <em>{show}</em>
+    <div className={f.acct}>
+      <ol className={f.ladder}>
+        {PHASES.map((p, i) => (
+          <li key={p} data-on={p === acct.phase ? "" : undefined} data-past={PHASES.indexOf(acct.phase) > i ? "" : undefined}>
+            <i aria-hidden="true" />
+            <b>{PHASE_LABEL[p]}</b>
+            <em>{p === "eval" ? `Make ${money(rules.profitTarget)}` : p === "buffer" ? `Smaller trades until ${money(rules.drawdown)} up` : "Bigger trades, then payouts"}</em>
+          </li>
+        ))}
+      </ol>
+      <div className={f.meter} style={{ "--eq": at(acct.equity), "--line": at(line), "--start": at(rules.size) } as CSSProperties}>
+        <span className={f.meterTrack} aria-hidden="true">
+          <i className={f.meterDanger} />
+          <i className={f.meterFill} />
+        </span>
+        <i className={f.mLine} aria-hidden="true" />
+        <i className={f.mStart} aria-hidden="true" />
+        <i className={f.mEq} aria-hidden="true" />
+        <span className={f.mLabels}>
+          <span>
+            Floor {fmt(st.floor, 0)}
+            <em>{rules.trailing === "eod" ? "Trails the close" : "Trails live"}</em>
+          </span>
+          <span data-end="">
+            {goalName} {fmt(goal, 0)}
+            <em>{money(Math.max(0, goal - acct.equity))} to go</em>
+          </span>
+        </span>
+        <span className={f.mLineTag}>Stop line</span>
+      </div>
+      <dl className={f.acctFacts}>
+        <div>
+          <dt>Equity</dt>
+          <dd>{money(acct.equity)}</dd>
+        </div>
+        <div>
+          <dt>Above the floor</dt>
+          <dd>{money(acct.room)}</dd>
+        </div>
+        <div>
+          <dt>Before the stop line</dt>
+          <dd className={acct.usable < rules.drawdown * 0.15 ? f.neg : undefined}>{money(Math.max(0, acct.usable))}</dd>
+        </div>
+        <div>
+          <dt>Today</dt>
+          <dd className={today > 0.5 ? f.pos : today < -0.5 ? f.neg : undefined}>{signed(today)}</dd>
+        </div>
+        <div>
+          <dt>A trade can risk</dt>
+          <dd>{money(budget)}</dd>
+        </div>
+        <div>
+          <dt>Stop line</dt>
+          <dd>{fmt(line, 0)}</dd>
+        </div>
+      </dl>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* guardrails: numbers you drag                                         */
+/* ------------------------------------------------------------------ */
+
+function Scrub({ label, value, min, max, step, show, hint, onChange }: { label: string; value: number; min: number; max: number; step: number; show: (v: number) => string; hint: string; onChange: (v: number) => void }) {
+  const drag = useRef<{ x: number; v: number } | null>(null);
+  const [live, setLive] = useState(false);
+  const clampTo = (v: number) => Math.round(Math.max(min, Math.min(max, v)) / step) * step;
+  const down = (e: RPE<HTMLDivElement>) => {
+    e.currentTarget.setPointerCapture(e.pointerId);
+    drag.current = { x: e.clientX, v: value };
+    setLive(true);
+  };
+  const move = (e: RPE<HTMLDivElement>) => {
+    const d = drag.current;
+    if (!d) return;
+    const w = e.currentTarget.clientWidth || 240;
+    onChange(clampTo(d.v + ((e.clientX - d.x) / w) * (max - min)));
+  };
+  const up = () => {
+    drag.current = null;
+    setLive(false);
+  };
+  const key = (e: RKE<HTMLDivElement>) => {
+    const by = e.shiftKey ? step * 5 : step;
+    if (e.key === "ArrowRight" || e.key === "ArrowUp") onChange(clampTo(value + by));
+    else if (e.key === "ArrowLeft" || e.key === "ArrowDown") onChange(clampTo(value - by));
+    else return;
+    e.preventDefault();
+  };
+  return (
+    <div
+      className={f.scrubber}
+      data-live={live ? "" : undefined}
+      role="slider"
+      tabIndex={0}
+      aria-label={label}
+      aria-valuemin={min}
+      aria-valuemax={max}
+      aria-valuenow={Number(value.toFixed(3))}
+      aria-valuetext={show(value)}
+      onPointerDown={down}
+      onPointerMove={move}
+      onPointerUp={up}
+      onPointerCancel={up}
+      onKeyDown={key}
+      style={{ "--at": (value - min) / (max - min) } as CSSProperties}
+    >
+      <span className={f.k}>{label}</span>
+      <b className={f.scrubVal}>{show(value)}</b>
+      <span className={f.ruler} aria-hidden="true">
+        <i />
       </span>
-      <input type="range" min={min} max={max} step={step} value={value} onChange={(e) => onChange(Number(e.target.value))} style={{ "--v": (value - min) / (max - min) } as CSSProperties} />
       <small>{hint}</small>
-    </label>
+    </div>
   );
 }
 
-function Accounts({ result }: { result: Result }) {
-  const paused = useOwner((x) => x.paused);
-  const lead = ACCOUNTS.find((a) => a.lead)!;
-  const leadRoom = result.accounts[lead.id].balance - result.accounts[lead.id].floor;
+function Switch({ on, label, onClick, disabled = false }: { on: boolean; label: string; onClick: () => void; disabled?: boolean }) {
   return (
-    <table className={`${s.mkts} ${f.accts}`}>
-      <thead>
-        <tr>
-          <th>Account</th>
-          <th>Balance</th>
-          <th>Room</th>
-          <th>Size vs lead</th>
-          <th>Following</th>
-        </tr>
-      </thead>
-      <tbody>
-        {ACCOUNTS.map((a, i) => {
-          const x = result.accounts[a.id];
-          const room = x.balance - x.floor;
-          const on = !paused[a.id] && x.breachedAt === null;
-          return (
-            <tr key={a.id} style={{ "--k": i } as CSSProperties}>
-              <td>
-                <span className={s.sym}>
-                  {a.name}
-                  {a.lead && <span className={o.lead}>Lead</span>}
-                </span>
-                <span className={s.symName}>
-                  {a.size / 1000}K · {plain(a.dd)} drawdown
-                </span>
-              </td>
-              <td>{plain(x.balance)}</td>
-              <td>{plain(room)}</td>
-              <td>{(room / leadRoom).toFixed(2)}×</td>
-              <td>
-                <button type="button" className={f.toggle} role="switch" aria-checked={on} disabled={x.breachedAt !== null} onClick={() => setOwner({ paused: { ...paused, [a.id]: on } })} aria-label={`${on ? "Pause" : "Resume"} ${a.name}`}>
-                  <i />
-                </button>
-              </td>
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
+    <button type="button" className={f.switch} role="switch" aria-checked={on} aria-label={label} onClick={onClick} disabled={disabled}>
+      <i />
+    </button>
   );
 }
 
-function Rules() {
-  const st = useOwner((x) => x.settings);
+function Guardrails({ limits }: { limits: Limits }) {
+  const ai = useFollow((x) => x.ai);
+  const r = (k: Phase, v: number) => setLimits({ risk: { ...limits.risk, [k]: v } });
+  return (
+    <div className={f.limits}>
+      <div className={f.scrubs} data-n="3">
+        <Scrub label="Risk · evaluation" value={limits.risk.eval} min={0.05} max={0.4} step={0.01} show={pct} hint="Of the room above the stop line, per trade" onChange={(v) => r("eval", v)} />
+        <Scrub label="Risk · building buffer" value={limits.risk.buffer} min={0.02} max={0.3} step={0.01} show={pct} hint="Smaller while the funded account is thin" onChange={(v) => r("buffer", v)} />
+        <Scrub label="Risk · buffer built" value={limits.risk.built} min={0.05} max={0.4} step={0.01} show={pct} hint="Of a bigger room, so trades grow with the buffer" onChange={(v) => r("built", v)} />
+        <Scrub label="Stop line" value={limits.stopLine} min={0.5} max={0.9} step={0.05} show={(v) => `${pct(v)} used`} hint="Everything closes and waits for your restart" onChange={(v) => setLimits({ stopLine: v })} />
+        <Scrub label="Daily stop" value={limits.dailyStop} min={0.1} max={0.6} step={0.05} show={pct} hint="No new trades once a day costs this much of its room" onChange={(v) => setLimits({ dailyStop: v })} />
+        <Scrub label="Decision window" value={limits.window} min={30} max={300} step={10} show={(v) => mmss(v)} hint="From his entry. It can go in sooner, never later" onChange={(v) => setLimits({ window: v })} />
+        <Scrub label="Least reward" value={limits.minRR} min={0.8} max={3} step={0.1} show={(v) => `${v.toFixed(1)}×`} hint="To his first target, against our stop" onChange={(v) => setLimits({ minRR: v })} />
+        <Scrub label="Stop width" value={limits.stopAtr} min={2} max={8} step={0.5} show={(v) => `${v.toFixed(1)}×`} hint="The average one-minute range, never under 40 NQ points" onChange={(v) => setLimits({ stopAtr: v })} />
+        <Scrub label="News" value={limits.newsMin} min={0} max={10} step={1} show={(v) => (v ? `${v} min` : "Off")} hint="No new trade this close to a high-impact release" onChange={(v) => setLimits({ newsMin: v })} />
+      </div>
+      <div className={f.toggleRow}>
+        <span>
+          <b>Let the AI decide</b>
+          <em>{ai ? "It picks from the same menu and the guardrails check every answer. The rules take over if it's slow or down." : "No AI key on the server yet, so the rules decide everything."}</em>
+        </span>
+        <Switch on={limits.useAI && !!ai} label="Let the AI decide" onClick={() => setLimits({ useAI: !limits.useAI })} disabled={!ai} />
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* the firm's rules                                                    */
+/* ------------------------------------------------------------------ */
+
+function Seg<T extends string | number>({ value, options, onChange, label }: { value: T; options: { id: T; label: string }[]; onChange: (v: T) => void; label: string }) {
+  return (
+    <span className={f.seg} role="radiogroup" aria-label={label}>
+      {options.map((o) => (
+        <button key={String(o.id)} type="button" role="radio" aria-checked={o.id === value} onClick={() => onChange(o.id)}>
+          {o.label}
+        </button>
+      ))}
+    </span>
+  );
+}
+
+function Dollars({ value, onChange, label, empty }: { value: number | null; onChange: (v: number | null) => void; label: string; empty?: string }) {
+  const [text, setText] = useState(value === null ? "" : String(value));
+  useEffect(() => setText(value === null ? "" : String(value)), [value]);
+  return (
+    <span className={f.dollars}>
+      <span aria-hidden="true">$</span>
+      <input
+        inputMode="numeric"
+        aria-label={label}
+        value={text ? Number(text).toLocaleString("en-US") : ""}
+        placeholder={empty}
+        onChange={(e) => setText(e.target.value.replace(/[^\d]/g, ""))}
+        onBlur={() => {
+          const n = text ? Number(text) : null;
+          if (n === null && empty) onChange(null);
+          else if (n && n > 0) onChange(n);
+          else setText(value === null ? "" : String(value));
+        }}
+        onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
+      />
+    </span>
+  );
+}
+
+function RulesForm() {
+  const rules = useFollow((x) => x.rules);
+  const [sure, setSure] = useState(false);
+  useEffect(() => {
+    if (!sure) return;
+    const id = window.setTimeout(() => setSure(false), 4000);
+    return () => window.clearTimeout(id);
+  }, [sure]);
   return (
     <div className={f.rules}>
-      <Slider label="Follow strength" value={st.follow} min={0.5} max={2} step={0.05} show={`${st.follow.toFixed(2)}×`} onChange={(v) => setSetting("follow", v)} hint="Risk per trade as a share of room, against his. 1× matches his." />
-      <Slider label="Max loss per trade" value={st.maxRisk} min={0.05} max={0.4} step={0.01} show={`${pct(st.maxRisk)} of room`} onChange={(v) => setSetting("maxRisk", v)} hint="A hard cap, whatever the agent decides." />
-      <Slider label="Daily stop" value={st.dailyStop} min={0.1} max={0.6} step={0.05} show={`${pct(st.dailyStop)} of room`} onChange={(v) => setSetting("dailyStop", v)} hint="No new trades once the day has cost this much." />
-      <Slider label="Caution" value={st.caution} min={0} max={0.25} step={0.01} show={st.caution.toFixed(2)} onChange={(v) => setSetting("caution", v)} hint="How much the agent marks down uneven ways of joining. Rises as room thins." />
-      <label className={f.check}>
-        <input type="checkbox" checked={st.skipNews} onChange={(e) => setSetting("skipNews", e.target.checked)} />
-        <span>
-          <b>Skip near releases</b>
-          <small>No new trade with a scheduled release due within ten minutes.</small>
-        </span>
-      </label>
+      <dl>
+        <div>
+          <dt>Size</dt>
+          <dd>
+            <Seg label="Account size" value={rules.size} options={[50_000, 100_000, 150_000].map((x) => ({ id: x, label: `${x / 1000}K` }))} onChange={(v) => setRules({ size: v })} />
+          </dd>
+        </div>
+        <div>
+          <dt>Drawdown</dt>
+          <dd>
+            <Dollars label="Drawdown" value={rules.drawdown} onChange={(v) => v && setRules({ drawdown: v })} />
+          </dd>
+        </div>
+        <div>
+          <dt>Trails</dt>
+          <dd>
+            <Seg
+              label="How the drawdown trails"
+              value={rules.trailing}
+              options={[
+                { id: "eod", label: "End of day" },
+                { id: "intraday", label: "Intraday" },
+              ]}
+              onChange={(v) => setRules({ trailing: v })}
+            />
+          </dd>
+        </div>
+        <div>
+          <dt>Profit target</dt>
+          <dd>
+            <Dollars label="Profit target" value={rules.profitTarget} onChange={(v) => v && setRules({ profitTarget: v })} />
+          </dd>
+        </div>
+        <div>
+          <dt>Daily loss limit</dt>
+          <dd>
+            <Dollars label="Daily loss limit" value={rules.dailyLoss} empty="None" onChange={(v) => setRules({ dailyLoss: v })} />
+          </dd>
+        </div>
+        <div>
+          <dt>Funded</dt>
+          <dd className={f.fundedRow}>
+            <Switch on={rules.funded} label="Funded" onClick={() => setRules({ funded: !rules.funded })} />
+            <em>{rules.funded ? "Building the buffer, then bigger" : "Still in the evaluation"}</em>
+          </dd>
+        </div>
+      </dl>
+      <footer className={f.rulesFoot}>
+        <p className={f.fine}>Sample rules until you pick a firm. The engine reads them every second.</p>
+        <button type="button" className={f.ghostBtn} data-sure={sure ? "" : undefined} onClick={() => (sure ? (startOver(), setSure(false)) : setSure(true))}>
+          {sure ? "Click again to start over" : "Start the paper account over"}
+        </button>
+      </footer>
     </div>
   );
 }
 
 /* ------------------------------------------------------------------ */
-/* the replay: every way of joining, on his whole history              */
+/* alerts and the AI                                                    */
 /* ------------------------------------------------------------------ */
 
-const LINE: Record<Method, string> = { ai: "var(--blue)", mirror: "var(--text)", staged: "var(--muted)", late: "var(--dim)", delay: "var(--dim)", full: "var(--neg)" };
-
-function Curves({ runs, pick }: { runs: { id: Method; sum: ReturnType<typeof summarize> }[]; pick: Method }) {
-  const W = 640;
-  const H = 230;
-  const all = runs.flatMap((r) => r.sum.curve.map((c) => c.eq));
-  const lo = Math.min(0, ...all);
-  const hi = Math.max(1, ...all);
-  const n = runs[0].sum.curve.length;
-  const X = (i: number) => (i / (n - 1)) * (W - 120);
-  const Y = (v: number) => 10 + (1 - (v - lo) / (hi - lo)) * (H - 20);
-  const ends = runs.map((r) => ({ id: r.id, y: Y(r.sum.net) })).sort((a, b) => a.y - b.y);
-  for (let i = 1; i < ends.length; i++) if (ends[i].y - ends[i - 1].y < 13) ends[i].y = ends[i - 1].y + 13;
-  return (
-    <svg className={f.curves} viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Combined P&L of each way of joining over his history">
-      <line x1="0" x2={W - 120} y1={Y(0)} y2={Y(0)} className={f.zero} />
-      {runs.map((r) => {
-        const step = Math.max(1, Math.floor(n / 320));
-        const d = r.sum.curve
-          .filter((_, i) => i % step === 0 || i === n - 1)
-          .map((c, i, arr) => `${i ? "L" : "M"}${X(Math.round((i / (arr.length - 1)) * (n - 1))).toFixed(1)} ${Y(c.eq).toFixed(1)}`)
-          .join(" ");
-        return <path key={r.id} d={d} fill="none" stroke={LINE[r.id]} strokeWidth={r.id === pick ? 1.8 : 1} strokeDasharray={r.id === "full" ? "3 3" : undefined} opacity={r.id === pick ? 1 : 0.7} />;
-      })}
-      {ends.map((e) => (
-        <text key={e.id} x={W - 112} y={e.y} dominantBaseline="central" className={f.endLabel} data-pick={e.id === pick ? "" : undefined}>
-          {METHODS.find((m) => m.id === e.id)!.label}
-        </text>
-      ))}
-    </svg>
+function Wiring() {
+  const ai = useFollow((x) => x.ai);
+  const model = useFollow((x) => x.model);
+  const discord = useFollow((x) => x.discord);
+  const alerts = useFollow((x) => x.alerts);
+  const recent = alerts.slice(-5).reverse();
+  const item = (on: boolean | null, name: string, yes: ReactNode, no: ReactNode) => (
+    <div className={f.wire} data-on={on ? "" : undefined}>
+      <i aria-hidden="true" />
+      <b>{name}</b>
+      <span>{on === null ? "Checking" : on ? yes : no}</span>
+    </div>
   );
-}
-
-function DipCurve() {
-  const rows = useMemo(() => dipCurve(), []);
   return (
-    <div className={f.dip}>
-      <div className={f.dipBars}>
-        {rows.map((r, i) => (
-          <div key={r.d} className={f.dipCol} style={{ "--h": r.win, "--k": i } as CSSProperties} data-late={Math.abs(r.d - 0.7) < 0.01 ? "" : undefined}>
-            <b>{pct(r.win)}</b>
-            <i />
-            <span>{r.d === 0 ? "Any" : `${r.d.toFixed(1)}R`}</span>
-            <em>{r.n}</em>
-          </div>
-        ))}
+    <div className={f.wiring}>
+      <div className={f.wires}>
+        {item(
+          discord,
+          "Discord",
+          "Connected. The stop line and a summary at each 5 PM close go to your phone.",
+          <>
+            Not connected. In Discord: a channel&apos;s settings, Integrations, Webhooks, New webhook, then copy its URL. In Vercel add it as <code>DISCORD_WEBHOOK_URL</code> and redeploy.
+          </>,
+        )}
+        {item(
+          ai,
+          "AI",
+          <>Connected ({model}). It reads each trade as it unfolds; the guardrails check every answer.</>,
+          <>
+            Not connected, so the rules decide everything. Add an Anthropic API key in Vercel as <code>ANTHROPIC_API_KEY</code> and redeploy.
+          </>,
+        )}
+        <button type="button" className={f.ghostBtn} onClick={testAlert}>
+          Send a test alert
+        </button>
       </div>
-      <p className={f.quiet}>
-        Of his trades that went at least this far toward his stop, the share that still won. The number under each bar is how many trades got that far. Late entries sit around 0.7R, so this is the curve that decides whether they pay.
-      </p>
-    </div>
-  );
-}
-
-function Replay({ result }: { result: Result }) {
-  const settings = useOwner((x) => x.settings);
-  const method = useOwner((x) => x.method);
-  const runs = useMemo(() => METHODS.map((m) => ({ id: m.id, sum: summarize(m.id === method ? result : replay(m.id, settings)) })), [settings, method, result]);
-  const best = runs.filter((r) => r.id !== "full").reduce((a, r) => (r.sum.net / Math.max(1, -r.sum.maxDD) > a.sum.net / Math.max(1, -a.sum.maxDD) ? r : a));
-  return (
-    <div className={f.replay}>
-      <div className={s.tableWrap}>
-        <table className={`${s.log} ${f.score}`}>
-          <thead>
-            <tr>
-              <th>Way of joining</th>
-              <th>Win rate</th>
-              <th>P&amp;L</th>
-              <th>Max drawdown</th>
-              <th>P&amp;L per $1 of drawdown</th>
-              <th>Breached</th>
-              <th>Paid out</th>
-              <th>On dashboard</th>
-            </tr>
-          </thead>
-          <tbody>
-            {runs.map((r) => (
-              <tr key={r.id} data-pick={r.id === method ? "" : undefined}>
-                <td>
-                  <span className={f.method}>
-                    <i style={{ background: LINE[r.id] }} />
-                    <b>{METHODS.find((m) => m.id === r.id)!.label}</b>
-                    {r.id === best.id && <span className={f.best}>Best</span>}
-                  </span>
-                  <span className={f.blurb}>{METHODS.find((m) => m.id === r.id)!.blurb}</span>
-                </td>
-                <td>{pct(r.sum.winRate)}</td>
-                <td className={r.sum.net >= 0 ? s.pos : s.neg}>{money(r.sum.net)}</td>
-                <td className={s.neg}>{k(r.sum.maxDD)}</td>
-                <td>${(r.sum.net / Math.max(1, -r.sum.maxDD)).toFixed(2)}</td>
-                <td className={r.sum.breached ? s.neg : s.dimCell}>{r.sum.breached ? `${r.sum.breached} of ${ACCOUNTS.length}` : "None"}</td>
-                <td>{plain(r.sum.payouts)}</td>
-                <td>
-                  <button type="button" className={f.radio} aria-pressed={r.id === method} onClick={() => setOwner({ method: r.id })} aria-label={`Show ${METHODS.find((m) => m.id === r.id)!.label} on the dashboard`}>
-                    <i />
-                  </button>
-                </td>
-              </tr>
+      <div className={f.sent}>
+        <span className={f.k}>Recent alerts</span>
+        {recent.length ? (
+          <ul>
+            {recent.map((a) => (
+              <li key={a.at + a.title} data-k={a.kind}>
+                <time>{clock(a.at)}</time>
+                <b>{a.title}</b>
+                <em>{a.sent === null ? "Sending" : a.sent ? "Sent" : "Kept here"}</em>
+              </li>
             ))}
-          </tbody>
-        </table>
+          </ul>
+        ) : (
+          <p className={f.fine}>None yet. The first comes at the 5 PM close.</p>
+        )}
       </div>
     </div>
   );
 }
 
-function ReplayCurves({ result }: { result: Result }) {
-  const settings = useOwner((x) => x.settings);
-  const method = useOwner((x) => x.method);
-  const runs = useMemo(() => METHODS.map((m) => ({ id: m.id, sum: summarize(m.id === method ? result : replay(m.id, settings)) })), [settings, method, result]);
-  return (
-    <div className={f.replay}>
-      <Curves runs={runs} pick={method} />
-      <p className={f.quiet}>
-        All {ACCOUNTS.length} accounts together over his {result.rows.length} trades, with the limits above. Sample data: settings tuned on one history fit it better than the future, so rerun on his real record before trusting a number.
-      </p>
-    </div>
-  );
-}
-
 /* ------------------------------------------------------------------ */
-/* the page                                                            */
+/* the page                                                             */
 /* ------------------------------------------------------------------ */
 
 export function Follow() {
-  const { result, settings, method } = useOwnerReplay();
-  const sum = useMemo(() => summarize(result), [result]);
+  const v = useFollowView();
   return (
     <div className={f.page}>
-      <Live result={result} settings={settings} />
       <div className={s.sheet}>
         <i className={s.sheetR} aria-hidden="true" />
         <i className={s.sheetB} aria-hidden="true" />
-        <div className={f.setRow}>
-          <Cell i={4} label="Accounts" aside="The copier sizes each by its room">
-            <Accounts result={result} />
+        <Stage v={v} />
+        <div className={f.acctRow}>
+          <Cell i={4} label="The agent's reasoning" aside="Every step, as it happened">
+            <Journal v={v} />
           </Cell>
-          <Cell i={5} label="Limits" aside="Code enforces these">
-            <Rules />
+          <Cell i={5} label="The account" aside={v.acct ? PHASE_LABEL[v.acct.phase] : undefined}>
+            <AccountPanel v={v} />
+          </Cell>
+        </div>
+        <div className={f.acctRow}>
+          <Cell i={6} label="Guardrails" aside="Enforced in code, whatever the AI says">
+            <Guardrails limits={v.limits} />
+          </Cell>
+          <Cell i={7} label="Account rules" aside="From the firm">
+            <RulesForm />
           </Cell>
         </div>
         <div className={s.row1}>
-          <Cell i={6} label="Replay" aside={`His ${result.rows.length} trades · ${METHODS.find((m) => m.id === method)!.label} on the dashboard`}>
-            <Replay result={result} />
-          </Cell>
-        </div>
-        <div className={f.repRow}>
-          <Cell i={7} label="Combined P&L" aside="Every way of joining">
-            <ReplayCurves result={result} />
-          </Cell>
-          <Cell i={8} label="Win rate by dip" aside="His whole record">
-            <DipCurve />
-          </Cell>
-        </div>
-        <div className={s.row1}>
-          <Cell i={9} label="Agent decisions" aside={`${sum.taken} taken · ${sum.skipped} skipped · ${sum.unfilled} not filled`}>
-            <Decisions rows={sum.rows} day={null} />
+          <Cell i={8} label="Alerts and the AI">
+            <Wiring />
           </Cell>
         </div>
       </div>
+      <p className={f.sample}>Paper trading on simulated prices. Yazan&apos;s trades come from his desk; ours go on a paper book until an account is connected.</p>
     </div>
   );
 }

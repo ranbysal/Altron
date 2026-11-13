@@ -1,0 +1,72 @@
+/* Parts both owner pages share: the agent's steps, our orders, the waiting card, our sheet. */
+
+.side { display: inline-block; padding: 3px 7px; border-radius: 5px; font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; }
+.sideL { background: var(--blue-wash); color: var(--blue-soft); }
+.sideS { background: var(--ember-wash); color: var(--ember-soft); }
+.fine { margin: 0; font-size: 12px; line-height: 1.5; color: var(--dim); }
+
+/* ---------- the agent's steps ---------- */
+.steps { --ease: cubic-bezier(0.2, 0.8, 0.2, 1); margin: 0; padding: 0 0 0 18px; list-style: none; display: flex; flex-direction: column; gap: 14px; }
+.steps li { position: relative; display: grid; grid-template-columns: 62px minmax(0, 1fr); gap: 2px 10px; animation: x-rise 0.5s var(--ease) backwards; animation-delay: calc(var(--k) * 55ms + 80ms); }
+.steps li:not([data-done]) > :not(i) { opacity: 0.45; }
+.steps li::before { content: ""; position: absolute; left: -14.5px; top: 12px; bottom: -14px; width: 1px; background: var(--tl); }
+.steps li[data-done]::before { background: color-mix(in srgb, var(--text-strong) 38%, var(--tl)); }
+.steps li:last-child::before { display: none; }
+.steps i { position: absolute; left: -18px; top: 4px; width: 8px; height: 8px; background: var(--page); box-shadow: inset 0 0 0 1px var(--dim); }
+.steps li[data-done] i { background: var(--text-strong); box-shadow: none; }
+/* the step being waited on breathes */
+.steps li:not([data-done]) i { animation: x-wait 1.8s ease-in-out infinite; }
+.steps li:not([data-done]) ~ li:not([data-done]) i { animation: none; }
+.steps time { padding-top: 2px; font-family: var(--mono); font-size: 10px; color: var(--dim); font-variant-numeric: tabular-nums; }
+.steps b { font-weight: 400; font-size: 13px; line-height: 1.35; color: var(--text-strong); }
+.steps p { grid-column: 2; margin: 0; font-size: 12px; line-height: 1.45; color: var(--muted); text-wrap: pretty; }
+@keyframes x-rise {
+  from { opacity: 0; transform: translateY(6px); }
+}
+@keyframes x-wait {
+  50% { box-shadow: inset 0 0 0 1px var(--ember), 0 0 0 4px var(--ember-wash); }
+}
+
+/* ---------- our orders ---------- */
+.orders { margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--tl); }
+.orders li { display: grid; grid-template-columns: 12px minmax(0, 1fr) auto; align-items: baseline; gap: 2px 10px; padding: 10px 0; border-bottom: 1px solid var(--tl); }
+.orders li > i { grid-row: span 2; align-self: center; width: 8px; height: 8px; border-radius: 50%; box-shadow: inset 0 0 0 1.3px var(--dim); }
+.orders li[data-filled] > i { border-radius: 1px; background: var(--text-strong); box-shadow: none; }
+.orders li span { font-size: 12.5px; color: var(--text); }
+.orders li b { font-family: var(--mono); font-size: 11.5px; font-weight: 400; color: var(--text); font-variant-numeric: tabular-nums; }
+.orders li em { grid-column: 2 / -1; font-style: normal; font-family: var(--mono); font-size: 10px; color: var(--dim); }
+.orders li[data-filled] em { color: var(--muted); }
+
+/* ---------- nothing filled yet ---------- */
+.waiting { display: flex; flex-direction: column; gap: 13px; }
+.waitHead { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--text); }
+.waitHead em { margin-left: auto; font-style: normal; font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--dim); }
+.waitSay { margin: 2px 0 4px; font-family: var(--serif); font-size: 30px; line-height: 1.08; letter-spacing: -0.01em; color: var(--text-strong); text-wrap: balance; }
+
+/* ---------- beside our own trade's chart ---------- */
+.mine { display: flex; flex-direction: column; }
+.mine section { display: flex; flex-direction: column; gap: 12px; padding: 18px 20px 20px; border-bottom: 1px solid var(--tl); }
+.mine section:last-child { border-bottom: 0; }
+.mine header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; font-family: var(--mono); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; }
+.mine header span { color: var(--muted); }
+.mine header em { font-style: normal; color: var(--dim); }
+.mineCall { margin: 0; font-family: var(--serif); font-size: 26px; line-height: 1.1; color: var(--text-strong); text-wrap: balance; }
+.mineWhy { margin: 0; font-size: 13px; line-height: 1.5; color: var(--muted); text-wrap: pretty; }
+
+@media (prefers-reduced-motion: reduce) {
+  .steps li, .steps i { animation: none !important; }
+}
+
+/* ---------- the engine's words ---------- */
+.ai { display: inline-block; margin-left: 8px; padding: 1px 5px; border-radius: 4px; background: color-mix(in srgb, var(--his) 16%, transparent); color: var(--his); font-family: var(--mono); font-size: 9px; letter-spacing: 0.1em; vertical-align: 2px; }
+.waitWhy { margin: 0; font-size: 13px; line-height: 1.5; color: var(--muted); text-wrap: pretty; }
+/* the decision window running down */
+.window { position: relative; display: block; height: 2px; margin: 2px 0 4px; background: var(--tl); overflow: hidden; }
+.window i { position: absolute; inset: 0; background: var(--text-strong); transform-origin: left; transform: scaleX(var(--p)); transition: transform 1s linear; }
+.steps li[data-k="guard"] i { background: var(--ember); }
+.steps li[data-k="out"] i, .steps li[data-k="fill"] i { border-radius: 50%; }
+.steps[data-compact] { gap: 11px; }
+.steps[data-compact] b { font-size: 12.5px; }
+.steps[data-compact] p { font-size: 11.5px; }
+.orders li > i[data-k="stop"] { border-radius: 1px; box-shadow: inset 0 0 0 1.3px var(--ember); }
+.orders li > i[data-k^="tp"] { box-shadow: inset 0 0 0 1.3px var(--blue); }

@@ -1,0 +1,27 @@
+/* The Follow view of the owner's desk: Yazan's trade, ours, and the agent, down one column. */
+
+.panel { --ease: cubic-bezier(0.2, 0.8, 0.2, 1); display: flex; flex-direction: column; margin: 0 -16px; }
+.block { display: flex; flex-direction: column; gap: 14px; padding: 16px 16px 20px; border-top: 1px solid var(--tl); animation: od-rise 0.5s var(--ease) both; animation-delay: calc(var(--k) * 70ms + 60ms); }
+.block:first-child { border-top: 0; padding-top: 0; }
+.blockHead { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-family: var(--mono); font-size: 10px; letter-spacing: 0.13em; text-transform: uppercase; }
+.blockHead span { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); }
+/* the same marks the chart uses for each of us */
+.blockHead span[data-who]::before { content: ""; width: 14px; height: 0; border-top: 1.5px dashed var(--his); }
+.blockHead span[data-who="you"]::before { border-top: 1.5px solid var(--text-strong); }
+.blockHead em { font-style: normal; color: var(--dim); }
+.blockHead em[data-live] { display: inline-flex; align-items: center; gap: 7px; color: var(--live-green); }
+.blockHead em[data-live]::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--live-green); animation: od-ping 2.2s ease-out infinite; }
+.quiet { margin: 0; font-size: 13px; line-height: 1.5; color: var(--dim); }
+/* the card sits a little tighter in a column this narrow */
+.block :global([data-compact]) { gap: 12px; }
+
+@keyframes od-rise {
+  from { opacity: 0; transform: translateY(8px); }
+}
+@keyframes od-ping {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--live-green) 55%, transparent); }
+  70%, 100% { box-shadow: 0 0 0 7px transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .block, .blockHead em::before { animation: none; }
+}

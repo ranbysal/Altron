@@ -8,11 +8,13 @@ type OwnerState = {
   settings: Settings;
   /** the way of joining the dashboard shows */
   method: Method;
+  /** the Desk's right column: the order ticket, or Yazan's trade beside ours */
+  deskView: "order" | "follow";
 };
 
 const KEY = "altron-owner-v1";
 
-export const useOwner = create<OwnerState>(() => ({ following: true, paused: {}, settings: DEFAULT_SETTINGS, method: "ai" }));
+export const useOwner = create<OwnerState>(() => ({ following: true, paused: {}, settings: DEFAULT_SETTINGS, method: "ai", deskView: "order" }));
 
 let started = false;
 export function startOwner() {
@@ -20,7 +22,7 @@ export function startOwner() {
   started = true;
   try {
     const raw = JSON.parse(localStorage.getItem(KEY) ?? "null") as Partial<OwnerState> | null;
-    if (raw) useOwner.setState({ following: raw.following !== false, paused: raw.paused ?? {}, settings: { ...DEFAULT_SETTINGS, ...raw.settings }, method: raw.method ?? "ai" });
+    if (raw) useOwner.setState({ following: raw.following !== false, paused: raw.paused ?? {}, settings: { ...DEFAULT_SETTINGS, ...raw.settings }, method: raw.method ?? "ai", deskView: raw.deskView === "follow" ? "follow" : "order" });
   } catch {
     /* nothing saved */
   }

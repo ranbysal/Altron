@@ -20,6 +20,7 @@
   --muted: #a3acb6;
   --dim: #7c8692;
   --blue: #4da3ff;
+  --his: #b49cff; /* Yazan, where the owner sees him beside his own trades */
   --blue-soft: #8ec5ff;
   --blue-ink: #04101c;
   --blue-wash: rgba(77, 163, 255, 0.14);
@@ -95,6 +96,7 @@
   --muted: #4d5763;
   --dim: #646e7a;
   --blue: #1e7bef;
+  --his: #6b4cf0;
   --blue-soft: #1560c9;
   --blue-ink: #ffffff;
   --blue-wash: rgba(30, 123, 239, 0.1);
