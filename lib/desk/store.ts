@@ -33,8 +33,11 @@ export type Order = {
   /** a stop or target: the price members were last told, and a price he chose not to announce */
   told?: number;
   quiet?: number;
-  /** placed by the follow agent for this trade of Yazan's */
+  /** placed by the follow agent for this trade of Yazan's, and what for */
   follows?: string;
+  tag?: string;
+  /** an exit the agent sizes itself (half at a first target): never resized to the position */
+  fixed?: boolean;
   at: number;
 };
 
@@ -396,7 +399,7 @@ function applyFill(d: Draft, o: Order, qty: number, price: number, at: number) {
   // keep protective orders the same size as the position
   if (pos) {
     const size = Math.abs(pos.qty);
-    d.orders = d.orders.map((x) => (x.sym === sym && x.reduceOnly && (x.role === "stop" || x.role === "target") ? { ...x, qty: size } : x));
+    d.orders = d.orders.map((x) => (x.sym === sym && x.reduceOnly && !x.fixed && (x.role === "stop" || x.role === "target") ? { ...x, qty: size } : x));
   }
 
   syncExits(d, sym);
@@ -519,8 +522,9 @@ export type OrderInput = {
   /** the ticket's exits, exact prices or tick distances; otherwise the settings' distances */
   exits?: Order["attach"];
   notify?: { note?: string };
-  /** the follow agent's order, and the trade of Yazan's it follows */
+  /** the follow agent's order, the trade of Yazan's it follows, and what it's for */
   follows?: string;
+  tag?: string;
 };
 
 export function placeOrder(input: OrderInput): void {
@@ -546,6 +550,7 @@ export function placeOrder(input: OrderInput): void {
     attach: attach && (attach.stopTicks || attach.targetTicks || attach.stopPx !== undefined || attach.targetPx !== undefined) ? attach : undefined,
     notify: input.notify && s.seat === "trader" ? { note: input.notify.note?.trim() || undefined } : undefined,
     follows: input.follows,
+    tag: input.tag,
     at,
   };
   const d = draft();
@@ -577,6 +582,41 @@ export function fillAt(input: { sym: Sym; side: Side; qty: number; price: number
   d.mute = true;
   applyFill(d, o, o.qty, snap(input.sym, input.price), input.at);
   commit(d);
+}
+
+/** An exit the follow agent sizes and places itself: a stop or a target for part or all of the position. */
+export function placeExit(input: { sym: Sym; side: Side; qty: number; role: "stop" | "target"; price: number; follows?: string; tag?: string }): void {
+  const s = get();
+  const pos = s.positions[input.sym];
+  if (!s.ready || !pos || input.qty <= 0 || Math.sign(pos.qty) === input.side) return;
+  const p = snap(input.sym, input.price);
+  const o: Order = {
+    id: uid("o"),
+    sym: input.sym,
+    side: input.side,
+    qty: Math.min(Math.round(input.qty), Math.abs(pos.qty)),
+    type: input.role === "stop" ? "STP" : "LMT",
+    role: input.role,
+    stop: input.role === "stop" ? p : undefined,
+    limit: input.role === "target" ? p : undefined,
+    reduceOnly: true,
+    fixed: true,
+    follows: input.follows,
+    tag: input.tag,
+    at: Date.now(),
+  };
+  const d = draft();
+  d.orders = [...d.orders, o];
+  syncExits(d, input.sym);
+  work(d, input.sym, s.quotes[input.sym], o.at);
+  commit(d);
+}
+
+/** A fresh paper book for the owner: the follow engine starts its account from the firm's size. */
+export function resetOwnerBook(start: number) {
+  const s = get();
+  if (s.seat !== "owner") return;
+  set({ positions: {}, orders: [], fills: [], trades: [], notes: [], alerts: [], start, thread: null });
 }
 
 export function describe(o: Order): string {

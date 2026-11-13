@@ -9,7 +9,7 @@ import { FloatLayer } from "@/components/desk/Floating";
 import { Toaster } from "@/components/desk/Toaster";
 import { SYMS } from "@/lib/desk/instruments";
 import { arm, openPnl, selectSym, sit, startDesk, togglePanel, useDesk } from "@/lib/desk/store";
-import { startAgent } from "@/lib/owner/agent";
+import { startFollow } from "@/lib/follow/runner";
 import { startOwner } from "@/lib/owner/store";
 import { useMarketClock } from "./clock";
 import s from "./trader.module.css";
@@ -167,7 +167,7 @@ export function TraderShell({ children }: { children: ReactNode }) {
     sit(side);
     if (side === "owner") {
       startOwner();
-      startAgent();
+      startFollow();
     }
   }, [side]);
   return (
