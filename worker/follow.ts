@@ -154,6 +154,19 @@ export class Follow {
     this.data.advice = [];
     this.mark();
   }
+  /** The day's review now, rather than at the close. Once a day. */
+  reviewNow(): boolean {
+    const mine = this.env.mine();
+    if (!mine || !this.data.state) return false;
+    const day = sessionDay(Date.now() - 60_000);
+    if (this.data.reviews.some((r) => r.day === day && (r.coach || !r.coachError))) return false;
+    const w = worldFrom({ now: Date.now(), his: this.env.his(), mine, start: mine.start, quotes: this.env.quotes(), market: this.env.market(), following: this.data.following, news: null, advice: [], ai: false });
+    const equity = w.mine.balance + w.mine.open;
+    const d = equity - this.data.state.dayStart;
+    void this.review({ kind: "summary", title: `The day so far: ${d >= 0 ? "+" : "−"}$${Math.round(Math.abs(d)).toLocaleString("en-US")}`, lines: ["Asked for before the close."] }, equity);
+    return true;
+  }
+
   test() {
     void this.raise({ kind: "info", title: "Test alert from Altron", lines: ["Sent by the server. If this reached your phone, stop line alerts, session summaries and the daily review will too."] });
   }
@@ -281,8 +294,9 @@ export class Follow {
     const now = Date.now();
     const since = now - 24 * 3_600_000;
     const day = sessionDay(now - 60_000);
-    const prev = d.reviews.find((r) => r.day === day);
-    if (prev) return;
+    // a day is reviewed once; one that failed (no key, a timeout) can be asked for again
+    if (d.reviews.some((r) => r.day === day && (r.coach || !r.coachError))) return;
+    d.reviews = d.reviews.filter((r) => r.day !== day);
     const acc = account(d.rules, d.limits, st, equity);
     const follows = Object.values(st.follows).filter((f) => f.seenAt >= since);
     const rev: Review = { day, at: now, title: al.title, lines: al.lines, equity, pnl: equity - st.dayStart, trades: follows.filter((f) => f.enteredAt).length, phase: PHASE_LABEL[acc.phase] };

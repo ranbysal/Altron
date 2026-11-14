@@ -23,6 +23,7 @@ const OWNER_TABS = [
   { href: "/owner", label: "Dashboard" },
   { href: "/owner/desk", label: "Desk" },
   { href: "/owner/follow", label: "Follow" },
+  { href: "/owner/review", label: "Review" },
   { href: "/community", label: "Community" },
   { href: "/owner/admin", label: "Admin" },
 ];
@@ -81,22 +82,8 @@ function Nav({ side }: { side: "trader" | "owner" }) {
   const path = usePathname() ?? "/trader";
   const clock = useMarketClock();
   const TABS = side === "owner" ? OWNER_TABS : TRADER_TABS;
-  const active =
-    side === "owner"
-      ? path.startsWith("/owner/admin")
-        ? 4
-        : path.startsWith("/community")
-          ? 3
-          : path.startsWith("/owner/follow")
-            ? 2
-            : path.startsWith("/owner/desk")
-              ? 1
-              : 0
-      : path.startsWith("/community")
-        ? 2
-        : path.startsWith("/trader/desk")
-          ? 1
-          : 0;
+  // the tab whose address is the longest match for this page
+  const active = TABS.reduce((best, t, i) => (path === t.href || path.startsWith(t.href + "/") ? (best < 0 || t.href.length > TABS[best].href.length ? i : best) : best), -1);
   const refs = useRef<(HTMLAnchorElement | null)[]>([]);
   const [pill, setPill] = useState<{ x: number; w: number } | null>(null);
 

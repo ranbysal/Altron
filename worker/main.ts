@@ -202,6 +202,7 @@ const server = http.createServer(async (req, res) => {
       else if (b.action === "restart") follow.restart();
       else if (b.action === "startOver") follow.startOver();
       else if (b.action === "test") follow.test();
+      else if (b.action === "review") follow.reviewNow();
       else return json(res, 400, { error: "Unknown action" });
       return json(res, 200, follow.view());
     }

@@ -244,6 +244,10 @@ export function startOver() {
   set({ state: initState(f.rules, f.rules.size, Date.now()), advice: [] });
   save();
 }
+/** Ask for today's review now (on the server only). */
+export function reviewNow() {
+  server("review");
+}
 /** Send a test alert, so the owner knows Discord is wired. */
 export function testAlert() {
   if (server("test")) return;

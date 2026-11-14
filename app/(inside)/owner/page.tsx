@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { OwnerDashboard } from "@/components/owner/OwnerDashboard";
+import { Results } from "@/components/owner/Results";
 
 export const metadata: Metadata = {
   title: "Dashboard · Altron",
@@ -7,5 +7,5 @@ export const metadata: Metadata = {
 };
 
 export default function OwnerPage() {
-  return <OwnerDashboard />;
+  return <Results />;
 }

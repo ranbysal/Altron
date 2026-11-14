@@ -252,6 +252,17 @@
 .sent b { font-weight: 400; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sent li[data-k="stopline"] b { color: var(--ember); }
 .sent em { font-style: normal; font-family: var(--mono); font-size: 10px; color: var(--dim); }
+.sent > .k:not(:first-child) { margin-top: 18px; }
+.calls li { grid-template-columns: 64px 128px minmax(0, 1fr) auto; }
+.calls li span { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.calls li:not([data-ok]) span { color: var(--ember); }
+.calls li:not([data-acted]) b { color: var(--muted); }
+.budget { display: grid; gap: 8px; width: 100%; max-width: 420px; padding: 4px 0 2px; }
+.budget b { font-weight: 300; font-size: 22px; letter-spacing: -0.02em; color: var(--text-strong); font-variant-numeric: tabular-nums; }
+.budget b em { font-style: normal; font-size: 13px; color: var(--dim); letter-spacing: 0; }
+.budgetBar { position: relative; height: 4px; border-radius: 2px; background: var(--tl); overflow: visible; }
+.budgetBar::before { content: ""; position: absolute; inset: 0 auto 0 0; width: calc(var(--p) * 100%); border-radius: 2px; background: var(--his); transition: width 0.6s cubic-bezier(0.3, 1, 0.4, 1); }
+.budgetBar i { position: absolute; top: -3px; width: 1px; height: 10px; background: var(--dim); }
 
 /* ---------------- narrower screens ---------------- */
 

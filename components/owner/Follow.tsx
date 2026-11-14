@@ -7,7 +7,7 @@ import { INSTRUMENTS } from "@/lib/desk/instruments";
 import { getMarket, useDesk, type Fill, type Trade } from "@/lib/desk/store";
 import { BAYER4 } from "@/lib/noise";
 import { onThemeChange } from "@/lib/theme";
-import { MICRO, PHASE_LABEL, type Follow as FollowT, type His, type Limits, type LogItem, type Phase } from "@/lib/follow/engine";
+import { MICRO, PHASE_LABEL, PRESETS, type Rules, type Follow as FollowT, type His, type Limits, type LogItem, type Phase } from "@/lib/follow/engine";
 import { restartFollow, setLimits, setRules, startOver, testAlert, useFollow } from "@/lib/follow/runner";
 import { setOwner, useOwner } from "@/lib/owner/store";
 import { Preview } from "@/components/community/Community";
@@ -784,6 +784,8 @@ function Dollars({ value, onChange, label, empty }: { value: number | null; onCh
 
 function RulesForm() {
   const rules = useFollow((x) => x.rules);
+  // a change by hand leaves the preset: the rules are now the owner's own
+  const edit = (patch: Partial<Rules>) => setRules({ ...patch, preset: null });
   const [sure, setSure] = useState(false);
   useEffect(() => {
     if (!sure) return;
@@ -794,15 +796,30 @@ function RulesForm() {
     <div className={f.rules}>
       <dl>
         <div>
+          <dt>Firm</dt>
+          <dd>
+            <Seg
+              label="Firm account"
+              value={rules.preset ?? "custom"}
+              options={[...PRESETS.map((p) => ({ id: p.id, label: p.label.replace("Lucid ", "") })), { id: "custom", label: "Custom" }]}
+              onChange={(v) => {
+                const p = PRESETS.find((x) => x.id === v);
+                if (p) setRules(p.rules);
+                else setRules({ preset: null });
+              }}
+            />
+          </dd>
+        </div>
+        <div>
           <dt>Size</dt>
           <dd>
-            <Seg label="Account size" value={rules.size} options={[50_000, 100_000, 150_000].map((x) => ({ id: x, label: `${x / 1000}K` }))} onChange={(v) => setRules({ size: v })} />
+            <Seg label="Account size" value={rules.size} options={[50_000, 100_000, 150_000].map((x) => ({ id: x, label: `${x / 1000}K` }))} onChange={(v) => edit({ size: v })} />
           </dd>
         </div>
         <div>
           <dt>Drawdown</dt>
           <dd>
-            <Dollars label="Drawdown" value={rules.drawdown} onChange={(v) => v && setRules({ drawdown: v })} />
+            <Dollars label="Drawdown" value={rules.drawdown} onChange={(v) => v && edit({ drawdown: v })} />
           </dd>
         </div>
         <div>
@@ -815,20 +832,50 @@ function RulesForm() {
                 { id: "eod", label: "End of day" },
                 { id: "intraday", label: "Intraday" },
               ]}
-              onChange={(v) => setRules({ trailing: v })}
+              onChange={(v) => edit({ trailing: v })}
             />
           </dd>
         </div>
         <div>
           <dt>Profit target</dt>
           <dd>
-            <Dollars label="Profit target" value={rules.profitTarget} onChange={(v) => v && setRules({ profitTarget: v })} />
+            <Dollars label="Profit target" value={rules.profitTarget} onChange={(v) => v && edit({ profitTarget: v })} />
           </dd>
         </div>
         <div>
           <dt>Daily loss limit</dt>
           <dd>
-            <Dollars label="Daily loss limit" value={rules.dailyLoss} empty="None" onChange={(v) => setRules({ dailyLoss: v })} />
+            <Dollars label="Daily loss limit" value={rules.dailyLoss} empty="None" onChange={(v) => edit({ dailyLoss: v })} />
+          </dd>
+        </div>
+        <div>
+          <dt>Consistency</dt>
+          <dd>
+            <Seg
+              label="Consistency rule"
+              value={rules.consistency ?? 0}
+              options={[
+                { id: 0, label: "None" },
+                { id: 0.4, label: "40%" },
+                { id: 0.5, label: "50%" },
+              ]}
+              onChange={(v) => edit({ consistency: v || null })}
+            />
+          </dd>
+        </div>
+        <div>
+          <dt>Most micros</dt>
+          <dd>
+            <Seg
+              label="The most micros the firm allows"
+              value={rules.firmMicros ?? 0}
+              options={[
+                { id: 60, label: "60" },
+                { id: 100, label: "100" },
+                { id: 0, label: "No cap" },
+              ]}
+              onChange={(v) => edit({ firmMicros: v || null })}
+            />
           </dd>
         </div>
         <div>
@@ -840,7 +887,7 @@ function RulesForm() {
         </div>
       </dl>
       <footer className={f.rulesFoot}>
-        <p className={f.fine}>Sample rules until you pick a firm. The engine reads them every second.</p>
+        <p className={f.fine}>{rules.preset ? `${PRESETS.find((p) => p.id === rules.preset)?.label}, as Lucid lists it. In the evaluation no day may make more than ${Math.round((rules.consistency ?? 0) * 100)}% of the target, so the engine stops adding a little short of ${money((rules.consistency ?? 0) * rules.profitTarget)} a day.` : "Your own rules. The engine reads them every second."}</p>
         <button type="button" className={f.ghostBtn} data-sure={sure ? "" : undefined} onClick={() => (sure ? (startOver(), setSure(false)) : setSure(true))}>
           {sure ? "Click again to start over" : "Start the paper account over"}
         </button>
@@ -854,11 +901,16 @@ function RulesForm() {
 /* ------------------------------------------------------------------ */
 
 function Wiring() {
+  const where = useFollow((x) => x.where);
   const ai = useFollow((x) => x.ai);
   const model = useFollow((x) => x.model);
   const discord = useFollow((x) => x.discord);
   const alerts = useFollow((x) => x.alerts);
+  const wiring = useFollow((x) => x.wiring);
+  const spend = useFollow((x) => x.spend);
+  const calls = useFollow((x) => x.calls);
   const recent = alerts.slice(-5).reverse();
+  const server = where === "server";
   const item = (on: boolean | null, name: string, yes: ReactNode, no: ReactNode) => (
     <div className={f.wire} data-on={on ? "" : undefined}>
       <i aria-hidden="true" />
@@ -866,24 +918,69 @@ function Wiring() {
       <span>{on === null ? "Checking" : on ? yes : no}</span>
     </div>
   );
+  const keyHome = server ? "Railway" : "Vercel";
+  const used = spend?.usd ?? 0;
+  const cap = wiring?.cap ?? 25;
   return (
     <div className={f.wiring}>
       <div className={f.wires}>
         {item(
-          discord,
-          "Discord",
-          "Connected. The stop line and a summary at each 5 PM close go to your phone.",
-          <>
-            Not connected. In Discord: a channel&apos;s settings, Integrations, Webhooks, New webhook, then copy its URL. In Vercel add it as <code>DISCORD_WEBHOOK_URL</code> and redeploy.
-          </>,
+          server,
+          "Engine",
+          "On the server, always on. It follows Yazan whether or not a page is open.",
+          "In this page. It only runs while an owner page is open; the server takes over once it's deployed.",
         )}
         {item(
-          ai,
-          "AI",
-          <>Connected ({model}). It reads each trade as it unfolds; the guardrails check every answer.</>,
+          discord,
+          "Discord",
+          "Connected. The stop line, a summary at each 5 PM close and the day's review go to your phone.",
           <>
-            Not connected, so the rules decide everything. Add an Anthropic API key in Vercel as <code>ANTHROPIC_API_KEY</code> and redeploy.
+            Not connected. Add the webhook URL in {keyHome} as <code>DISCORD_WEBHOOK_URL</code>.
           </>,
+        )}
+        {server && wiring ? (
+          <>
+            {item(
+              wiring.anthropic,
+              "Claude",
+              <>
+                {wiring.tiers.entry} (high) decides entries, {wiring.tiers.manage} manages open trades, {wiring.tiers.coach} (max) writes the day&apos;s review.
+              </>,
+              <>
+                No key, so the rules decide everything. Add <code>ANTHROPIC_API_KEY</code> in Railway.
+              </>,
+            )}
+            {item(
+              wiring.google,
+              "Gemini",
+              <>{wiring.tiers.shadow} (high) answers every entry alongside, for comparing. It never places anything.</>,
+              <>
+                Off. Add <code>GEMINI_API_KEY</code> in Railway for a second opinion on entries.
+              </>,
+            )}
+          </>
+        ) : (
+          item(
+            ai,
+            "AI",
+            <>Connected ({model}). It reads each trade as it unfolds; the guardrails check every answer.</>,
+            <>
+              Not connected, so the rules decide everything. Add <code>ANTHROPIC_API_KEY</code> in {keyHome}.
+            </>,
+          )
+        )}
+        {server && (
+          <div className={f.budget}>
+            <span className={f.k}>AI this week</span>
+            <b>
+              ${used.toFixed(2)} <em>of ${cap}</em>
+            </b>
+            <span className={f.budgetBar} style={{ "--p": Math.min(1, used / cap) } as CSSProperties} aria-hidden="true">
+              <i style={{ left: "70%" }} />
+              <i style={{ left: "90%" }} />
+            </span>
+            <p className={f.fine}>Past 70% the second opinion stops; past 90% entries go to {wiring?.tiers.manage ?? "the quick model"}; at the cap the rules decide alone until Monday.</p>
+          </div>
         )}
         <button type="button" className={f.ghostBtn} onClick={testAlert}>
           Send a test alert
@@ -903,6 +1000,33 @@ function Wiring() {
           </ul>
         ) : (
           <p className={f.fine}>None yet. The first comes at the 5 PM close.</p>
+        )}
+        {server && (
+          <>
+            <span className={f.k}>The models, lately</span>
+            {calls.length ? (
+              <ul className={f.calls}>
+                {calls
+                  .slice(-8)
+                  .reverse()
+                  .map((c) => (
+                    <li key={c.at + c.model} data-acted={c.acted ? "" : undefined} data-ok={c.ok ? "" : undefined}>
+                      <time>{clock(c.at)}</time>
+                      <b>
+                        {c.label}
+                        {c.kind !== "coach" && !c.acted && c.ok ? " · alongside" : ""}
+                      </b>
+                      <span>{c.ok ? (c.kind === "coach" ? "Wrote the day's review" : `${c.action?.replace("_", " ")}: ${c.reason}`) : c.error}</span>
+                      <em>
+                        ${c.usd.toFixed(3)} · {Math.round(c.ms / 1000)}s
+                      </em>
+                    </li>
+                  ))}
+              </ul>
+            ) : (
+              <p className={f.fine}>No calls yet. The first comes with Yazan&apos;s next trade.</p>
+            )}
+          </>
         )}
       </div>
     </div>
