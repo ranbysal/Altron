@@ -11,6 +11,7 @@ import { SYMS } from "@/lib/desk/instruments";
 import { arm, openPnl, selectSym, sit, startDesk, togglePanel, useDesk } from "@/lib/desk/store";
 import { startFollow } from "@/lib/follow/runner";
 import { startOwner } from "@/lib/owner/store";
+import { initialsOf, startMe, useMe } from "@/lib/me";
 import { useMarketClock } from "./clock";
 import s from "./trader.module.css";
 
@@ -27,6 +28,8 @@ const OWNER_TABS = [
   { href: "/community", label: "Community" },
   { href: "/owner/admin", label: "Admin" },
 ];
+/** Members have one page. */
+const MEMBER_TABS = [{ href: "/community", label: "Community" }];
 const SIDE_KEY = "altron-side";
 
 /** Whose pages these are. Community is shared, so it keeps the side the visitor came from. */
@@ -81,7 +84,8 @@ function Bolt() {
 function Nav({ side }: { side: "trader" | "owner" }) {
   const path = usePathname() ?? "/trader";
   const clock = useMarketClock();
-  const TABS = side === "owner" ? OWNER_TABS : TRADER_TABS;
+  const me = useMe();
+  const TABS = me.role === "member" ? MEMBER_TABS : side === "owner" ? OWNER_TABS : TRADER_TABS;
   // the tab whose address is the longest match for this page
   const active = TABS.reduce((best, t, i) => (path === t.href || path.startsWith(t.href + "/") ? (best < 0 || t.href.length > TABS[best].href.length ? i : best) : best), -1);
   const refs = useRef<(HTMLAnchorElement | null)[]>([]);
@@ -127,19 +131,28 @@ function Nav({ side }: { side: "trader" | "owner" }) {
           {(side === "owner" || path.startsWith("/trader")) && <Bolt />}
           <ThemeSwitch />
         </span>
-        {side === "owner" ? (
-          <form action="/auth/signout" method="post" className={s.meForm}>
+        <form action="/auth/signout" method="post" className={s.meForm}>
+          {me.role === "owner" || (!me.role && side === "owner") ? (
             <button type="submit" className={`${s.me} ${s.meOwner}`} aria-label="Sign out" data-tip="Sign out">
               <Mark size={15} />
             </button>
-          </form>
-        ) : (
-          <span className={s.me} aria-label="Yazan, online">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/yazan.webp" alt="" width={38} height={38} />
-            <i />
-          </span>
-        )}
+          ) : me.role === "trader" || !me.role ? (
+            <button type="submit" className={`${s.me} ${s.meBtn}`} aria-label="Yazan, online. Sign out" data-tip="Sign out">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/yazan.webp" alt="" width={38} height={38} />
+              <i />
+            </button>
+          ) : (
+            <button type="submit" className={`${s.me} ${s.meBtn} ${s.meMember}`} aria-label={`${me.name}. Sign out`} data-tip="Sign out">
+              {me.avatar ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={me.avatar} alt="" width={38} height={38} referrerPolicy="no-referrer" />
+              ) : (
+                <b>{initialsOf(me.name)}</b>
+              )}
+            </button>
+          )}
+        </form>
       </div>
     </nav>
   );
@@ -150,6 +163,7 @@ export function TraderShell({ children }: { children: ReactNode }) {
   const side = useSide(path);
   // each side sits at its own book; Yazan's keeps working behind the owner's
   useEffect(() => {
+    startMe(side);
     startDesk();
     sit(side);
     if (side === "owner") {

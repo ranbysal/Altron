@@ -329,7 +329,7 @@ function Duet({ trade, his, fl, own, fills, log }: { trade: Trade; his: His; fl?
         <>
           <i className={f.hair} style={{ left: tip.x, height: geo.base }} aria-hidden="true" />
           <i className={f.hairDot} style={{ left: tip.x, top: tip.y }} aria-hidden="true" />
-          <div className={f.tip} data-flip={tip.flip ? "" : undefined} style={{ left: tip.x }}>
+          <div data-pop="" className={f.tip} data-flip={tip.flip ? "" : undefined} style={{ left: tip.x }}>
             <span>
               {clockS(tip.t)} · {fmt(tip.p)}
             </span>

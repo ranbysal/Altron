@@ -46,9 +46,10 @@
 .trade { display: flex; flex-direction: column; gap: 14px; }
 .tLine { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--text); }
 .tCode { margin-left: auto; font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em; color: var(--dim); }
-.tNum { display: flex; align-items: flex-end; justify-content: space-between; gap: 14px; }
+/* the P&L scales with its card, and the R and time drop below it when there's no room beside */
+.tNum { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 8px 14px; container-type: inline-size; }
 .tPnl { font-size: 46px; font-weight: 300; letter-spacing: -0.035em; line-height: 0.95; font-variant-numeric: tabular-nums; }
-.tMeta { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; padding-bottom: 3px; font-family: var(--mono); font-size: 11.5px; white-space: nowrap; }
+.tMeta { margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; gap: 5px; padding-bottom: 3px; font-family: var(--mono); font-size: 11.5px; white-space: nowrap; }
 .tMeta b { font-weight: 400; }
 .tMeta em { font-style: normal; font-size: 10px; letter-spacing: 0.06em; color: var(--dim); }
 .tBare { margin: 0; font-family: var(--mono); font-size: 10.5px; color: var(--dim); }
@@ -408,7 +409,7 @@
 .preview { position: relative; display: flex; flex-direction: column; gap: 13px; margin: -6px -8px -8px; padding: 6px 8px 8px; border-radius: 12px; cursor: pointer; outline: none; }
 .pvHead { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--text); }
 .tSize { white-space: nowrap; }
-.preview .tPnl { font-size: 40px; }
+.preview .tPnl { font-size: clamp(30px, 12.5cqi, 40px); }
 .preview { flex: 1; }
 .preview[data-compact] { flex: none; }
 .trace { flex: 1 1 0; min-height: 132px; display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }

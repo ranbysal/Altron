@@ -165,8 +165,11 @@
 .me i { position: absolute; right: -1px; bottom: -1px; width: 9px; height: 9px; border-radius: 50%; background: var(--live-green); box-shadow: 0 0 0 2px var(--bg); }
 .meOwner { display: grid; place-items: center; padding: 0; border: 0; background: var(--text-strong); color: var(--page); cursor: pointer; }
 .meForm { display: contents; }
-.meOwner::after { content: attr(data-tip); position: absolute; top: calc(100% + 8px); right: 0; padding: 4px 8px; border-radius: 6px; background: var(--text-strong); color: var(--page); font-family: var(--mono); font-size: 10px; white-space: nowrap; opacity: 0; transform: translateY(-3px); transition: opacity 0.15s, transform 0.15s; pointer-events: none; }
-.meOwner:hover::after, .meOwner:focus-visible::after { opacity: 1; transform: none; }
+.meBtn { padding: 0; border: 0; background: none; cursor: pointer; }
+.meMember { display: grid; place-items: center; background: var(--tl); color: var(--text-strong); }
+.meMember b { font-family: var(--mono); font-size: 12px; font-weight: 400; letter-spacing: 0.04em; }
+:is(.meOwner, .meBtn)::after { content: attr(data-tip); position: absolute; top: calc(100% + 8px); right: 0; padding: 4px 8px; border-radius: 6px; background: var(--text-strong); color: var(--page); font-family: var(--mono); font-size: 10px; white-space: nowrap; opacity: 0; transform: translateY(-3px); transition: opacity 0.15s, transform 0.15s; pointer-events: none; }
+:is(.meOwner, .meBtn):hover::after, :is(.meOwner, .meBtn):focus-visible::after { opacity: 1; transform: none; }
 
 /* ---------- page ---------- */
 .page { min-height: 100vh; padding: 6px 6px 28px; }
@@ -184,6 +187,9 @@
 .row3 { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); }
 
 .cell { position: relative; min-width: 0; }
+/* a cell showing a popover rises above its neighbours and its own grid lines */
+.cell:has([data-pop]) { z-index: 30; }
+.cell:has([data-pop]) > .cellIn { z-index: 4; }
 .cellIn {
   position: relative;
   height: 100%;

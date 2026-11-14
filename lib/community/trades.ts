@@ -51,7 +51,7 @@ export function roomOf(t: Trade, trades: Trade[], now: number): RoomState {
 export type Line =
   | { kind: "event"; id: string; at: number; text: string; tone: "buy" | "sell" | "move" | "flat"; sub?: string }
   | { kind: "note"; id: string; at: number; text: string }
-  | { kind: "msg"; id: string; at: number; name: string; trader: boolean; text: string; reply?: { name: string; text: string } };
+  | { kind: "msg"; id: string; at: number; name: string; trader: boolean; owner?: boolean; uid?: string; text: string; reply?: { name: string; text: string } };
 
 /** Everything said and done in one trade's room, in order. */
 export function streamOf(t: Trade, fills: Fill[], notices: Notice[], notes: Note[], msgs: Msg[], now: number): Line[] {
@@ -83,7 +83,7 @@ export function streamOf(t: Trade, fills: Fill[], notices: Notice[], notes: Note
   const byId = new Map(said.map((m) => [m.id, m]));
   for (const m of said) {
     const r = m.replyTo ? byId.get(m.replyTo) : undefined;
-    out.push({ kind: "msg", id: m.id, at: m.at, name: m.name, trader: !!m.trader, text: m.text, reply: r ? { name: r.name, text: r.text } : undefined });
+    out.push({ kind: "msg", id: m.id, at: m.at, name: m.name, trader: !!m.trader, owner: m.owner, uid: m.uid, text: m.text, reply: r ? { name: r.name, text: r.text } : undefined });
   }
   return out.sort((a, b) => a.at - b.at);
 }
