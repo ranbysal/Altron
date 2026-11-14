@@ -521,7 +521,7 @@ export function tick(prev: State, w: World, rules: Rules, limits: Limits): Out {
   function step(h: His) {
     if (!st.follows[h.id]) {
       const late = (w.now - h.openedAt) / 1000;
-      const why = h.closedAt ? (h.closedAt < st.startedAt ? "Before following started" : "Missed: Follow wasn't running") : late > limits.window ? `Seen ${Math.round(late / 60)} min after his entry, past the window` : null;
+      const why = h.closedAt ? (h.closedAt < st.startedAt ? "Before following started" : "Missed: Follow wasn't running") : late > limits.window ? `Seen ${late >= 5400 ? `${Math.round(late / 3600)} h` : `${Math.round(late / 60)} min`} after his entry, past the window` : null;
       st.follows[h.id] = { his: h.id, under: h.under, dir: h.dir, status: why ? "passed" : "watching", seenAt: w.now, why: why ?? undefined };
       if (!why) log({ his: h.id, kind: "see", text: `Yazan ${h.dir > 0 ? "bought" : "sold"} ${h.qty} ${h.under} at ${px(h.entry)}`, sub: h.targets.length ? `${h.targets.length > 1 ? "Targets" : "Target"} ${h.targets.map(px).join(" and ")}${h.stop !== undefined ? `, stop ${px(h.stop)}` : ", no stop posted"}` : "No target posted yet" });
     }

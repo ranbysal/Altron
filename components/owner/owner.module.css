@@ -14,7 +14,7 @@
 }
 
 /* following, on or off */
-.follow { display: inline-flex; align-items: center; gap: 8px; padding: 0; border: 0; background: none; font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text); cursor: pointer; }
+.follow { display: inline-flex; align-items: center; gap: 8px; padding: 0; border: 0; background: none; font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text); white-space: nowrap; cursor: pointer; }
 .follow i { width: 7px; height: 7px; border-radius: 50%; background: none; box-shadow: inset 0 0 0 1.2px var(--dim); }
 .follow[data-on] i { background: var(--live-green); box-shadow: none; animation: o-ping 2.2s infinite; }
 .follow:hover { color: var(--text-strong); }

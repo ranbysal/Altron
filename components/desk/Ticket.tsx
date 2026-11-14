@@ -21,6 +21,7 @@ import {
   ticketProblem,
   useDesk,
   type ExitUnit,
+  type DeskState,
   type ExitWhich,
   type OrderType,
   type Side,
@@ -340,6 +341,12 @@ export function Ticket() {
   const entry = useDesk((st) => ticketEntry(st, st.settings.sym));
   const [stopPx, targetPx, target2Px] = useDesk(useShallow((st) => { const e = ticketExits(st, st.settings.sym); return [e.stop, e.target, e.target2]; }));
   const targetOn = useDesk((st) => st.settings.targetOn);
+  // switched off, an exit still shows where it would go
+  const idle = (which: "stopTicks" | "targetTicks" | "target2Ticks", dir: 1 | -1) => (st: DeskState) =>
+    snap(st.settings.sym, ticketEntry(st, st.settings.sym) + dir * st.ticket.side * st.settings[which][st.settings.sym] * INSTRUMENTS[st.settings.sym].tick);
+  const stopIdle = useDesk(idle("stopTicks", -1));
+  const targetIdle = useDesk(idle("targetTicks", 1));
+  const target2Idle = useDesk(idle("target2Ticks", 1));
   const problem = useDesk((st) => ticketProblem(st, st.settings.sym));
   const inst = INSTRUMENTS[sym];
   const qty = settings.qty[sym];
@@ -471,9 +478,9 @@ export function Ticket() {
           <span className={s.tLabel}>Exits</span>
           {rr !== null && <span className={s.rr}>{rr.toFixed(2)}R</span>}
         </div>
-        <ExitRow which="target" entry={entry} price={targetPx} />
-        {targetOn && <ExitRow which="target2" entry={entry} price={target2Px} />}
-        <ExitRow which="stop" entry={entry} price={stopPx} />
+        <ExitRow which="target" entry={entry} price={targetPx ?? targetIdle} />
+        {targetOn && <ExitRow which="target2" entry={entry} price={target2Px ?? target2Idle} />}
+        <ExitRow which="stop" entry={entry} price={stopPx ?? stopIdle} />
       </div>
 
       <div className={s.sendRow}>

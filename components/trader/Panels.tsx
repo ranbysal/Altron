@@ -71,6 +71,9 @@ export function SessionDots({ trades }: { trades: Trade[] }) {
 }
 
 /** Daily loss limit as a dial of ticks. */
+/** Rounded so the server and the browser write the same numbers (their trig differs in the last digits). */
+const r2 = (n: number) => Math.round(n * 100) / 100;
+
 export function RiskGauge({ used, limit, tradesToday, maxTrades }: { used: number; limit: number; tradesToday: number; maxTrades: number }) {
   const share = Math.max(0, Math.min(1, used / limit));
   const N = 46;
@@ -90,17 +93,17 @@ export function RiskGauge({ used, limit, tradesToday, maxTrades }: { used: numbe
           return (
             <line
               key={i}
-              x1={cx + Math.cos(ang) * R1}
-              y1={cy - Math.sin(ang) * R1}
-              x2={cx + Math.cos(ang) * R2}
-              y2={cy - Math.sin(ang) * R2}
+              x1={r2(cx + Math.cos(ang) * R1)}
+              y1={r2(cy - Math.sin(ang) * R1)}
+              x2={r2(cx + Math.cos(ang) * R2)}
+              y2={r2(cy - Math.sin(ang) * R2)}
               className={on ? (hot ? s.gTickHot : s.gTickOn) : s.gTick}
               style={{ "--k": i } as CSSProperties}
             />
           );
         })}
         <path d={`M ${cx - 70} ${cy} A 70 70 0 0 1 ${cx + 70} ${cy}`} className={s.gArc} />
-        <circle cx={cx + Math.cos(a) * 70} cy={cy - Math.sin(a) * 70} r="4.5" className={hot ? s.gKnobHot : s.gKnob} />
+        <circle cx={r2(cx + Math.cos(a) * 70)} cy={r2(cy - Math.sin(a) * 70)} r="4.5" className={hot ? s.gKnobHot : s.gKnob} />
       </svg>
       <div className={s.gaugeRead}>
         <b>${fmt(used, 0)}</b>

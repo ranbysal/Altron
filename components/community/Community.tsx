@@ -14,6 +14,7 @@ import { fmt, money } from "@/lib/format";
 import { TRADES, computeStats } from "@/lib/journal";
 import { placeholders, say, startRoom, useRoom } from "@/lib/community/room";
 import { useMe } from "@/lib/me";
+import { isOpen } from "@/lib/desk/market";
 import { clock, clockS, currentTrade, dayWord, dirOf, entryOf, exitOf, held, notesOf, roomOf, stopOf, streamOf, targetOf, type Line } from "@/lib/community/trades";
 import { useFeed, useNow, type Calendar, type Wire } from "@/lib/community/watch";
 import { CalControls, CalendarCard, Moves, News, XWatcher, useCalView } from "./Watcher";
@@ -970,7 +971,7 @@ export function Community() {
           {ready && <History trades={past} now={now} onOpen={(x) => setOpen({ id: x.id, kind: "history" })} />}
         </Cell>
 
-        <Cell i={6} className={c.aMoves} label="Moves" aside="NQ and ES · this session" bodyClass={c.body}>
+        <Cell i={6} className={c.aMoves} label="Moves" aside={`NQ and ES · ${isOpen(now) ? "this session" : "last session"}`} bodyClass={c.body}>
           <Moves now={now} />
         </Cell>
       </div>

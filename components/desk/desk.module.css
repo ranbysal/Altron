@@ -164,7 +164,7 @@
 .barFull[aria-pressed="true"] { color: var(--text-strong); }
 .desk .body { padding: 16px 16px 16px; gap: 14px; min-height: 0; overflow: hidden; }
 .desk .bodyFlush { padding: 0; gap: 0; min-height: 0; overflow: hidden; }
-.aTicket .body { overflow-y: auto; scrollbar-width: none; }
+.aTicket .body { overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--tl) transparent; }
 
 /* the markets column keeps its width while it slides open, so nothing reflows */
 .aMarkets > div { width: var(--mk-w); transition: opacity 0.35s var(--ease) 0.08s; }
@@ -439,7 +439,7 @@
   .bar { gap: 8px; }
   .bar > .barSep, .barKeys, .barRight > .barSep { display: none; }
   .syms { grid-template-columns: repeat(4, 38px); }
-  .symBar { left: 9px; transform: translateX(calc(var(--i) * 38px)); }
+  .symBar { left: 9px; transform: translate(calc(var(--c) * 38px), calc((var(--r) - 1) * 21px)); }
   .quotePx { font-size: 21px; }
 }
 .chartBody { flex: 1; min-height: 0; display: flex; }
@@ -1026,6 +1026,10 @@
 .exit[data-kind="target"] .exitName::before { background: var(--blue); }
 .exit[data-off] .exitName { color: var(--dim); }
 .exit[data-off] .exitField { opacity: 0.5; }
+/* the second target is one line until it's switched on */
+.exit[data-kind="target2"][data-off] .exitField { display: none; }
+.exit[data-kind="target2"] .exitName::before { content: ""; display: inline-block; width: 6px; height: 6px; margin: 0 7px 1px 0; border-radius: 50%; box-shadow: inset 0 0 0 1.4px var(--blue); }
+.exit[data-kind="target2"][data-off] .unitPick { visibility: hidden; }
 .miniSwitch {
   position: relative;
   flex: none;
@@ -1469,6 +1473,16 @@
 .pipTabs button[aria-selected="true"] { background: var(--page); color: var(--text); box-shadow: 0 1px 2px rgba(12, 18, 28, 0.12); }
 .pipSym { margin-left: auto; font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em; color: var(--dim); }
 
+/* a short laptop screen: the ticket drops its money facts and tightens, so the stop loss stays in view */
+@media (max-height: 860px) and (min-width: 1021px) {
+  .ticket { gap: 10px; }
+  .ticket .facts { display: none; }
+  .dealBtn { gap: 5px; padding: 9px 12px 10px; }
+  .exits { gap: 7px; padding-top: 10px; }
+}
+@media (max-height: 740px) and (min-width: 1021px) {
+  .ticket .dealTop { display: none; }
+}
 @media (max-width: 1280px) {
   .desk { --mk-w: 216px; --tk-w: 284px; }
   .acctLine > div:nth-child(2) { display: none; }
@@ -1482,9 +1496,13 @@
   .desk {
     height: auto;
     grid-template-columns: minmax(0, 1fr) !important;
-    grid-template-rows: auto 520px auto auto auto !important;
-    grid-template-areas: "mk" "chart" "ticket" "pos" "blot";
+    grid-template-rows: auto auto auto auto !important;
+    grid-template-areas: "mk" "center" "ticket" "pos";
   }
+  /* the chart and the blotter stack at their own heights */
+  .center { height: auto; }
+  .aChart { flex: none; height: min(520px, 62vh); }
+  .aBlotter { height: auto; }
   .aFollow { grid-column: 1; grid-row: 3 / 5; }
   .followIn { overflow: visible; }
   .desk[data-mk="off"] .aMarkets { display: none; }
@@ -1504,7 +1522,7 @@
 }
 @media (max-width: 600px) {
   .syms { grid-template-columns: repeat(4, 42px); }
-  .symBar { left: 11px; transform: translateX(calc(var(--i) * 42px)); }
+  .symBar { left: 11px; transform: translate(calc(var(--c) * 42px), calc((var(--r) - 1) * 21px)); }
   .barBtn { font-size: 0; gap: 0; padding: 0 9px; }
   .barBtn em { font-size: 9.5px; margin-left: 5px; }
   .legend span:nth-child(n + 5) { display: none; }

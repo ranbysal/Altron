@@ -277,6 +277,8 @@ export function EquityChart({
       ro.disconnect();
       off();
       cancelAnimationFrame(st.raf);
+      // a frame cancelled here must not look pending to the next mount (React runs effects twice in development)
+      st.raf = 0;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
