@@ -46,7 +46,7 @@ export function useFollowView() {
   const ownOrders = useDesk((d) => d.orders);
   const f: Follow | undefined = trade && st ? st.follows[trade.id] : undefined;
   const log = useMemo(() => (st && trade ? st.log.filter((l) => l.his === trade.id) : NO_LOG), [st, trade]);
-  const his = useMemo(() => (trade ? hisOf(trade, { orders: hisOrders } as never) : null), [trade, hisOrders]);
+  const his = useMemo(() => (trade ? hisOf(trade, hisOrders) : null), [trade, hisOrders]);
   const acct = st ? account(rules, limits, st, equity) : null;
   const orders = useMemo(() => (trade ? ownOrders.filter((o) => o.follows === trade.id) : []), [ownOrders, trade]);
   return { now, ready: ready && !!st, trade, his, f, own, log, st, rules, limits, acct, orders, thinking };

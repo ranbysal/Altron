@@ -3,6 +3,9 @@ import { INSTRUMENTS, SYMS, TIMEFRAMES, snap, tickValue, type Sym, type Timefram
 import { Market, nyClock, sessionDay, type Band, type Pin, type Pins, type Quote } from "./market";
 import { applyFill, applyOp, draftOf, fmtPx, uid, work, type Draft, type ExitInput, type FillAtInput, type Op, type OrderInput as BrokerOrderInput } from "./broker";
 import type { Fill, Note, Notice, Order, OrderType, Phase, Position, Role, Seat, Side, Toast, Trade } from "./types";
+import { call, listen, live } from "@/lib/live/link";
+import type { BookData } from "./broker";
+import type { MarketSnap, MarketTick } from "./market";
 export { describe, noticeText, noticeTime, sizeWords, type Op } from "./broker";
 
 /**
@@ -222,8 +225,8 @@ export type OrderInput = BrokerOrderInput & {
 };
 
 /** Where operations go once they've been applied here: the server, when one is connected. */
-let relay: ((x: Op) => void) | null = null;
-export function setRelay(fn: ((x: Op) => void) | null) {
+let relay: ((x: Op, seat: Seat) => void) | null = null;
+export function setRelay(fn: ((x: Op, seat: Seat) => void) | null) {
   relay = fn;
 }
 
@@ -234,7 +237,7 @@ function run(x: Op) {
   const d = draft();
   if (!applyOp(d, x, { now: Date.now(), quotes: s.quotes })) return;
   commit(d);
-  relay?.(x);
+  relay?.(x, s.seat);
 }
 
 export function placeOrder(input: OrderInput): void {
@@ -262,7 +265,7 @@ export function placeExit(input: ExitInput): void {
 /** A fresh paper book for the owner: the follow engine starts its account from the firm's size. */
 export function resetOwnerBook(start: number) {
   const s = get();
-  if (s.seat !== "owner") return;
+  if (s.seat !== "owner" || remote) return;
   set({ positions: {}, orders: [], fills: [], trades: [], notes: [], alerts: [], start, thread: null });
 }
 
@@ -576,6 +579,7 @@ const BLANK_TICKET: Ticket = { type: "MKT", side: 1, limit: null, stop: null, tr
 
 function ownerBook(): Book {
   let saved: Partial<Book> | null = null;
+  const server = remote ? remoteBooks.owner : null;
   try {
     const raw = JSON.parse(localStorage.getItem(OWNER_KEY) ?? "null") as (Partial<Book> & { v?: number }) | null;
     if (raw?.v === 1) saved = raw;
@@ -583,14 +587,15 @@ function ownerBook(): Book {
     /* nothing saved */
   }
   const base: Settings = { ...DEFAULT_SETTINGS, sym: "MNQ", qty: { NQ: 1, ES: 1, MNQ: 4, MES: 4 }, layout: { ...DEFAULT_SETTINGS.layout, right: 340 } };
+  const src: Partial<Book> | null = server ?? saved;
   return {
-    positions: saved?.positions ?? {},
-    orders: saved?.orders ?? [],
-    fills: saved?.fills ?? [],
-    trades: saved?.trades ?? [],
-    notes: saved?.notes ?? [],
+    positions: src?.positions ?? {},
+    orders: src?.orders ?? [],
+    fills: src?.fills ?? [],
+    trades: src?.trades ?? [],
+    notes: src?.notes ?? [],
     alerts: saved?.alerts ?? [],
-    start: saved?.start ?? OWNER_ACCOUNT.start,
+    start: src?.start ?? OWNER_ACCOUNT.start,
     ticket: BLANK_TICKET,
     settings: saved?.settings
       ? {
@@ -607,9 +612,15 @@ function ownerBook(): Book {
 }
 
 /** Put one account's book on the desk. The other keeps working behind it. */
+let wanted: Seat | null = null;
 export function sit(seat: Seat) {
   const s = get();
-  if (!s.ready || s.seat === seat) return;
+  if (!s.ready) {
+    // the worker's books are still on their way: sit once they're here
+    wanted = seat;
+    return;
+  }
+  if (s.seat === seat) return;
   const next = s.other ?? (seat === "owner" ? ownerBook() : null);
   if (!next) return;
   set({ ...next, other: pickBook(s), seat, armedUntil: 0, pick: null, preview: 0, thread: null, full: false, toasts: [] });
@@ -662,6 +673,7 @@ function load(): Saved | null {
 function save() {
   const s = get();
   if (!s.ready || !market) return;
+  if (remote) return saveLocalOnly();
   const his = hisBook(s);
   const data: Saved = {
     v: 1,
@@ -1011,6 +1023,11 @@ let started = false;
 export function startDesk() {
   if (started || typeof window === "undefined") return;
   started = true;
+  if (live()) void startRemote();
+  else startLocal();
+}
+
+function startLocal() {
   const saved = load();
   market = new Market(saved?.prices, saved ? pinsOf(saved.trades ?? [], saved.fills ?? []) : {});
   archived = saved?.archive ?? 0;
@@ -1041,7 +1058,10 @@ export function startDesk() {
     if (more) set(more);
   }
   set({ toasts: [] });
+  loop();
+}
 
+function loop() {
   window.setInterval(() => {
     if (!market) return;
     const now = Date.now();
@@ -1051,14 +1071,14 @@ export function startDesk() {
     if (moved) {
       const quotes = readQuotes();
       patch.quotes = quotes;
-      if (s.orders.length) {
+      if (s.orders.length && !remote) {
         const d = draft();
         for (const sym of SYMS) if (d.orders.some((o) => o.sym === sym)) work(d, sym, quotes[sym], now);
         Object.assign(patch, changes(d, s));
       }
       // the book behind the desk fills too, quietly
       const o = s.other;
-      if (o?.orders.length) {
+      if (o?.orders.length && !remote) {
         const was: Draft = { positions: o.positions, orders: o.orders, fills: o.fills, trades: o.trades, notes: o.notes, toasts: [], notices: patch.notices ?? s.notices };
         const d: Draft = { positions: { ...o.positions }, orders: o.orders.slice(), fills: o.fills.slice(), trades: o.trades.slice(), notes: o.notes.slice(), toasts: [], notices: was.notices.slice(), who: s.seat === "owner" ? "trader" : "owner", mute: true };
         for (const sym of SYMS) if (d.orders.some((x) => x.sym === sym)) work(d, sym, quotes[sym], now);
@@ -1099,3 +1119,153 @@ export function startDesk() {
   window.setInterval(save, 15_000);
   window.addEventListener("pagehide", save);
 }
+
+/* ------------------------------------------------------------------ */
+/* live: the worker keeps the tape and the books                       */
+/* ------------------------------------------------------------------ */
+
+let remote = false;
+type RemoteBook = BookData & { start: number; rev: number };
+const remoteBooks: Partial<Record<Seat, RemoteBook>> = {};
+const pending: Record<Seat, number> = { trader: 0, owner: 0 };
+/** whether the worker is reachable right now */
+export const useLink = create<{ up: boolean; role: string | null }>(() => ({ up: false, role: null }));
+
+function saveLocalOnly() {
+  const s = get();
+  const his = hisBook(s);
+  const mine = s.seat === "owner" ? pickBook(s) : s.other;
+  try {
+    localStorage.setItem(LIVE_KEY, JSON.stringify({ v: 1, settings: his.settings, alerts: his.alerts, owner: mine ? { settings: mine.settings, alerts: mine.alerts } : null }));
+  } catch {
+    /* storage full or blocked */
+  }
+}
+const LIVE_KEY = "altron-desk-live-v1";
+
+/** Put a book the worker sent where it belongs: on the desk if it's seated, behind it if not. */
+function takeBook(seat: Seat, b: RemoteBook, toasts: Toast[] = []) {
+  const known = remoteBooks[seat];
+  if (known && b.rev < known.rev) return;
+  remoteBooks[seat] = b;
+  const s = get();
+  const data = { positions: b.positions, orders: b.orders, fills: b.fills, trades: b.trades, notes: b.notes, start: b.start };
+  const patch: Partial<DeskState> = {};
+  if (seat === "trader") patch.notices = b.notices;
+  if (s.seat === seat) {
+    Object.assign(patch, data);
+    if (toasts.length) patch.toasts = [...s.toasts.slice(-3), ...toasts].slice(-4);
+  } else if (s.other) patch.other = { ...s.other, ...data };
+  set(patch);
+}
+
+async function startRemote() {
+  remote = true;
+  let saved: { settings?: Settings; alerts?: Alert[]; owner?: { settings?: Settings; alerts?: Alert[] } | null } | null = null;
+  try {
+    saved = JSON.parse(localStorage.getItem(LIVE_KEY) ?? "null");
+  } catch {
+    saved = null;
+  }
+  if (saved?.owner) {
+    try {
+      const raw = JSON.parse(localStorage.getItem(OWNER_KEY) ?? "null") ?? {};
+      localStorage.setItem(OWNER_KEY, JSON.stringify({ ...raw, v: 1, settings: saved.owner.settings ?? raw.settings, alerts: saved.owner.alerts ?? raw.alerts }));
+    } catch {
+      /* storage blocked */
+    }
+  }
+  let snap: MarketSnap | null = null;
+  for (let i = 0; !snap; i++) {
+    try {
+      snap = await call<MarketSnap>("/market");
+    } catch {
+      await new Promise((r) => setTimeout(r, Math.min(15_000, 1000 * 2 ** i)));
+    }
+  }
+  market = new Market(undefined, {}, snap);
+  let books: { role: string; books: Partial<Record<Seat, RemoteBook>> } | null = null;
+  try {
+    books = await call("/books");
+  } catch {
+    books = null;
+  }
+  Object.assign(remoteBooks, books?.books ?? {});
+  const his = remoteBooks.trader;
+  set({
+    quotes: readQuotes(),
+    ready: true,
+    positions: his?.positions ?? {},
+    orders: his?.orders ?? [],
+    fills: his?.fills ?? [],
+    trades: his?.trades ?? [],
+    notes: his?.notes ?? [],
+    notices: his?.notices ?? [],
+    alerts: saved?.alerts ?? [],
+    settings: saved?.settings ? { ...DEFAULT_SETTINGS, ...saved.settings, panels: { pnl: !!saved.settings.panels?.pnl, markets: !!saved.settings.panels?.markets }, layout: { ...DEFAULT_SETTINGS.layout, ...saved.settings.layout }, chart: { ...DEFAULT_SETTINGS.chart, ...saved.settings.chart }, exitUnits: { ...DEFAULT_SETTINGS.exitUnits, ...saved.settings.exitUnits } } : DEFAULT_SETTINGS,
+    toasts: [],
+  });
+  useLink.setState({ up: true, role: books?.role ?? null });
+  if (wanted) sit(wanted);
+
+  setRelay((x, seat) => {
+    pending[seat]++;
+    call<{ seat: Seat; rev: number; book: RemoteBook }>("/op", { method: "POST", body: { seat, ops: [x] } })
+      .then((r) => {
+        pending[seat]--;
+        takeBook(r.seat, r.book);
+      })
+      .catch(() => {
+        pending[seat]--;
+        // refused or unreachable: put back what the server has
+        const s = get();
+        set({ toasts: [...s.toasts.slice(-3), { id: uid("t"), tone: "neg", title: "Not sent", body: "The desk couldn't reach the server. Nothing was placed.", at: Date.now() }] });
+        void resync();
+      });
+  });
+
+  listen({
+    tick: (t) => market?.feed(t as MarketTick),
+    book: (m) => {
+      const x = m as { seat: Seat; rev: number; book: RemoteBook; toasts: Toast[] };
+      // while an order is on its way, its answer brings the book
+      if (pending[x.seat] > 0) return;
+      takeBook(x.seat, x.book, x.toasts);
+    },
+    hello: (h) => {
+      const x = h as { role: string | null; revs: Partial<Record<Seat, number>> };
+      useLink.setState({ up: true, role: x.role });
+      if ((["trader", "owner"] as Seat[]).some((k) => x.revs[k] !== undefined && x.revs[k] !== remoteBooks[k]?.rev)) void resync();
+    },
+    down: () => useLink.setState({ up: false }),
+  });
+
+  loop();
+  let timer = 0;
+  useDesk.subscribe((s, prev) => {
+    if (s.settings === prev.settings && s.alerts === prev.alerts && s.other === prev.other) return;
+    if (timer) return;
+    timer = window.setTimeout(() => {
+      timer = 0;
+      save();
+    }, 400);
+  });
+}
+
+async function resync() {
+  try {
+    const r = await call<{ books: Partial<Record<Seat, RemoteBook>> }>("/books");
+    for (const seat of ["trader", "owner"] as Seat[]) {
+      const b = r.books[seat];
+      if (b) {
+        delete remoteBooks[seat];
+        takeBook(seat, b);
+      }
+    }
+  } catch {
+    /* the stream will say hello again when it's back */
+  }
+}
+
+/** True when the desk runs against the worker. */
+export const isRemote = () => remote;

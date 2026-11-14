@@ -359,16 +359,60 @@ type Series = {
 export const TF_SECONDS = [1, 30, 60, 300, 900, 1800, 3600, 86400] as const;
 export type TfSec = (typeof TF_SECONDS)[number];
 
+/* ------------------------------------------------------------------ */
+/* one tape for everyone: the server's market, streamed                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Bars as a flat list of small whole numbers: seconds since the bar before, then (in ticks) the
+ * open against the last close, high above open, open above low, close against open, and volume.
+ */
+export function packBars(bars: Bar[], tick: number): number[] {
+  const out: number[] = [];
+  let prevT = 0;
+  let prevC = 0;
+  for (const b of bars) {
+    const t = Math.round(b.t / 1000);
+    const o = Math.round(b.o / tick);
+    const c = Math.round(b.c / tick);
+    out.push(t - prevT, o - prevC, Math.round(b.h / tick) - o, o - Math.round(b.l / tick), c - o, b.v);
+    prevT = t;
+    prevC = c;
+  }
+  return out;
+}
+export function unpackBars(a: number[], tick: number): Bar[] {
+  const out: Bar[] = [];
+  let t = 0;
+  let c = 0;
+  for (let i = 0; i + 5 < a.length; i += 6) {
+    t += a[i];
+    const o = c + a[i + 1];
+    c = o + a[i + 4];
+    out.push({ t: t * 1000, o: o * tick, h: (o + a[i + 2]) * tick, l: (o - a[i + 3]) * tick, c: c * tick, v: a[i + 5] });
+  }
+  return out;
+}
+
+type SnapSeries = { s1: number[]; m1: number[]; quote: Quote; latent: number; anchor: number; heat: number };
+/** What a browser needs to draw the same tape as the server: recent seconds and minutes, and the quote. */
+export type MarketSnap = { at: number; u: Record<Under, SnapSeries> };
+/** One streamed step: each market's quote and its latest second and minute bars. */
+export type MarketTick = { at: number; u: Partial<Record<Under, { q: Quote; s: Bar; m: Bar }>> };
+
 export class Market {
   private series: Record<Under, Series>;
   private rnd: () => number;
   private lastStep = 0;
   private rolls = new Map<string, Rollup>();
   private joined = new Map<string, { n: number; bars: Bar[] }>();
+  /** fed by the server rather than walking on its own */
+  private remote = false;
+  private pending: MarketTick[] = [];
 
   private pins: Pins;
 
-  constructor(endPrices?: Partial<Record<Under, number>>, pins: Pins = {}) {
+  constructor(endPrices?: Partial<Record<Under, number>>, pins: Pins = {}, snap?: MarketSnap) {
     this.pins = pins;
     let seed = (Date.now() % 2147483647) | 0;
     this.rnd = () => {
@@ -378,8 +422,72 @@ export class Market {
       return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
     };
     const now = Date.now();
-    this.series = { NQ: this.build("NQ", now, endPrices?.NQ), ES: this.build("ES", now, endPrices?.ES) };
+    if (snap) {
+      this.remote = true;
+      this.series = { NQ: this.fromSnap("NQ", snap.u.NQ, now), ES: this.fromSnap("ES", snap.u.ES, now) };
+    } else this.series = { NQ: this.build("NQ", now, endPrices?.NQ), ES: this.build("ES", now, endPrices?.ES) };
     this.lastStep = now;
+  }
+
+  /** The server's recent tape, with older history drawn here to meet it. */
+  private fromSnap(under: Under, x: SnapSeries, now: number): Series {
+    const sp = SPEC[under];
+    const m1 = unpackBars(x.m1, sp.tick);
+    const s1 = unpackBars(x.s1, sp.tick);
+    const m30 = this.halfHours(under, m1[0].t, m1[0].o);
+    const d1 = this.days(under, m30[0].t, m30[0].o);
+    return { under, tick: sp.tick, latent: x.latent, anchor: x.anchor, s1, m1, m30, d1, version: 0, heat: x.heat, quote: { ...x.quote, at: x.quote.at || now } };
+  }
+
+  snapshot(): MarketSnap {
+    // three days of minutes and half an hour of seconds; older history is drawn by the page
+    const one = (s: Series): SnapSeries => ({ s1: packBars(s.s1.slice(-1800), s.tick), m1: packBars(s.m1.slice(-3 * 1380), s.tick), quote: s.quote, latent: s.latent, anchor: s.anchor, heat: s.heat });
+    return { at: Date.now(), u: { NQ: one(this.series.NQ), ES: one(this.series.ES) } };
+  }
+
+  /** The latest step, for streaming. */
+  tickNow(): MarketTick {
+    const one = (s: Series) => ({ q: s.quote, s: s.s1[s.s1.length - 1], m: s.m1[s.m1.length - 1] });
+    return { at: Date.now(), u: { NQ: one(this.series.NQ), ES: one(this.series.ES) } };
+  }
+
+  /** A step from the server; applied on the next `step`. */
+  feed(t: MarketTick) {
+    this.pending.push(t);
+  }
+
+  isRemote() {
+    return this.remote;
+  }
+
+  private applyRemote(): boolean {
+    if (!this.pending.length) return false;
+    const list = this.pending;
+    this.pending = [];
+    let changed = false;
+    for (const t of list) {
+      for (const under of ["NQ", "ES"] as Under[]) {
+        const u = t.u[under];
+        if (!u) continue;
+        const s = this.series[under];
+        const put = (arr: Bar[], b: Bar, keep: number) => {
+          const last = arr[arr.length - 1];
+          if (last && last.t === b.t) arr[arr.length - 1] = { ...b };
+          else if (!last || b.t > last.t) {
+            arr.push({ ...b });
+            const extra = arr.length - keep;
+            if (extra > 600) arr.splice(0, extra);
+          }
+        };
+        put(s.s1, u.s, S1_KEEP);
+        put(s.m1, u.m, M1_DAYS * 1380 + 900);
+        if (u.q.last !== s.quote.last || u.q.at !== s.quote.at) changed = true;
+        s.quote = u.q;
+        s.latent = u.q.last;
+        s.version++;
+      }
+    }
+    return changed;
   }
 
   private snapper(tick: number) {
@@ -627,6 +735,7 @@ export class Market {
 
   /** Advance the tape to `now`. Returns true if any price changed. */
   step(now: number): boolean {
+    if (this.remote) return this.applyRemote();
     let changed = false;
     // after a long sleep (hidden tab), pick the tape up again instead of racing through it
     if (now - this.lastStep > 20_000) this.lastStep = now - 20_000;
