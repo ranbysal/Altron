@@ -1,6 +1,7 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { mkdir, readFile, writeFile, rename } from "node:fs/promises";
 import path from "node:path";
+import os from "node:os";
 
 /*
  * Where the worker keeps what must survive a restart: both books, the follow engine's state,
@@ -10,7 +11,8 @@ import path from "node:path";
 
 const URL_ = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const SERVICE = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
-const DIR = process.env.WORKER_DATA || path.join(process.cwd(), ".worker");
+// outside the project, so a local dev server doesn't see the files change and reload
+const DIR = process.env.WORKER_DATA || path.join(os.tmpdir(), "altron-worker");
 
 let db: SupabaseClient | null = null;
 export function admin(): SupabaseClient | null {

@@ -17,7 +17,7 @@ WORKER_AUTH_OFF=1 npm run worker   # local only: everyone is the owner (ignored 
   are applied with the same broker the pages use, and the new book goes to everyone.
 - **Follow**: the engine reads both books once a second, trades the owner's book, asks the
   models, sends Discord alerts and writes the day's review after the 5 PM close.
-- **State**: Supabase table `worker_state` (see `supabase/schema.sql`), or `.worker/` files locally.
+- **State**: Supabase table `worker_state` (see `supabase/schema.sql`), or files in the temp folder locally.
 
 Only one replica: the books live in memory and are saved every few seconds.
 
