@@ -76,7 +76,7 @@ function save() {
 /* the world, from the desk                                            */
 /* ------------------------------------------------------------------ */
 
-const MICROS: Sym[] = ["MNQ", "MES"];
+const MICROS: Sym[] = ["MNQ", "MES", "MYM", "MGC"];
 
 function worldOf(now: number): World | null {
   const d = useDesk.getState();

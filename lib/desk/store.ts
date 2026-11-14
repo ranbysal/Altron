@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { INSTRUMENTS, SYMS, TIMEFRAMES, snap, tickValue, type Sym, type Timeframe } from "./instruments";
+import { INSTRUMENTS, SYMS, TIMEFRAMES, UNDERS, snap, tickValue, type Sym, type Timeframe, type Under } from "./instruments";
 import { Market, nyClock, sessionDay, type Band, type Pin, type Pins, type Quote } from "./market";
 import { applyFill, applyOp, draftOf, fmtPx, uid, work, type Draft, type ExitInput, type FillAtInput, type Op, type OrderInput as BrokerOrderInput } from "./broker";
 import type { Fill, Note, Notice, Order, OrderType, Phase, Position, Role, Seat, Side, Toast, Trade } from "./types";
@@ -111,14 +111,14 @@ const ARM_MS = 60_000;
 const DEFAULT_SETTINGS: Settings = {
   sym: "NQ",
   tf: "1m",
-  qty: { NQ: 1, ES: 1, MNQ: 5, MES: 5 },
+  qty: { NQ: 1, ES: 1, YM: 1, GC: 1, MNQ: 5, MES: 5, MYM: 5, MGC: 5 },
   sizes: { mini: [1, 2, 3, 5], micro: [1, 5, 10, 20] },
   stopOn: true,
   targetOn: true,
-  stopTicks: { NQ: 80, ES: 24, MNQ: 80, MES: 24 },
-  targetTicks: { NQ: 160, ES: 48, MNQ: 160, MES: 48 },
+  stopTicks: { NQ: 80, ES: 24, YM: 40, GC: 35, MNQ: 80, MES: 24, MYM: 40, MGC: 35 },
+  targetTicks: { NQ: 160, ES: 48, YM: 80, GC: 70, MNQ: 160, MES: 48, MYM: 80, MGC: 70 },
   target2On: false,
-  target2Ticks: { NQ: 320, ES: 96, MNQ: 320, MES: 96 },
+  target2Ticks: { NQ: 320, ES: 96, YM: 160, GC: 140, MNQ: 320, MES: 96, MYM: 160, MGC: 140 },
   hotkeys: true,
   panels: { pnl: false, markets: false },
   blotter: true,
@@ -133,7 +133,7 @@ export const useDesk = create<DeskState>(() => ({
   ready: false,
   seat: "trader",
   other: null,
-  quotes: { NQ: blankQuote(), ES: blankQuote(), MNQ: blankQuote(), MES: blankQuote() },
+  quotes: Object.fromEntries(SYMS.map((s) => [s, blankQuote()])) as Record<Sym, Quote>,
   positions: {},
   orders: [],
   fills: [],
@@ -166,9 +166,7 @@ const get = useDesk.getState;
 /* ------------------------------------------------------------------ */
 
 function readQuotes(): Record<Sym, Quote> {
-  const nq = market!.quote("NQ");
-  const es = market!.quote("ES");
-  return { NQ: nq, MNQ: nq, ES: es, MES: es };
+  return Object.fromEntries(SYMS.map((s) => [s, market!.quote(INSTRUMENTS[s].under)])) as Record<Sym, Quote>;
 }
 
 export function mid(sym: Sym): number {
@@ -602,7 +600,7 @@ function ownerBook(): Book {
   } catch {
     /* nothing saved */
   }
-  const base: Settings = { ...DEFAULT_SETTINGS, sym: "MNQ", qty: { NQ: 1, ES: 1, MNQ: 4, MES: 4 }, layout: { ...DEFAULT_SETTINGS.layout, right: 340 } };
+  const base: Settings = { ...DEFAULT_SETTINGS, sym: "MNQ", qty: { NQ: 1, ES: 1, YM: 1, GC: 1, MNQ: 4, MES: 4, MYM: 4, MGC: 4 }, layout: { ...DEFAULT_SETTINGS.layout, right: 340 } };
   const src: Partial<Book> | null = server ?? saved;
   return {
     positions: src?.positions ?? {},
@@ -673,7 +671,7 @@ export function realizedSince(trades: Trade[], since: number): number {
 /* boot, tape and persistence                                          */
 /* ------------------------------------------------------------------ */
 
-type Saved = Pick<DeskState, "positions" | "orders" | "fills" | "trades" | "notes" | "settings"> & { alerts?: Alert[]; notices?: Notice[] } & { prices?: { NQ: number; ES: number }; archive?: number; v: 1 };
+type Saved = Pick<DeskState, "positions" | "orders" | "fills" | "trades" | "notes" | "settings"> & { alerts?: Alert[]; notices?: Notice[] } & { prices?: Partial<Record<Under, number>>; archive?: number; v: 1 };
 
 function load(): Saved | null {
   try {
@@ -701,7 +699,7 @@ function save() {
     alerts: his.alerts,
     notices: s.notices.slice(-300),
     settings: his.settings,
-    prices: { NQ: market.quote("NQ").last, ES: market.quote("ES").last },
+    prices: Object.fromEntries(UNDERS.map((u) => [u, market!.quote(u).last])),
     archive: archived,
   };
   const mine = s.seat === "owner" ? pickBook(s) : s.other;
@@ -832,8 +830,8 @@ function seed(): Partial<DeskState> {
  * target until it ended, so a past trade replays on the chart the way it happened.
  */
 function pinsOf(trades: Trade[], fills: Fill[]): Pins {
-  const at: Partial<Record<"NQ" | "ES", Pin[]>> = {};
-  const bands: Partial<Record<"NQ" | "ES", Band[]>> = {};
+  const at: Partial<Record<Under, Pin[]>> = {};
+  const bands: Partial<Record<Under, Band[]>> = {};
   for (const f of fills) (at[INSTRUMENTS[f.sym].under] ??= []).push({ t: f.at, p: f.price });
   for (const t of trades) {
     if (!t.closedAt || (t.stop === undefined && t.target === undefined)) continue;
@@ -885,8 +883,8 @@ function archive(): Partial<DeskState> | null {
     [5, 612, "ES", 2, "win", "Retest of yesterday's value area high."],
     [5, 750, "NQ", 1, "loss"],
   ];
-  const days = new Map<"NQ" | "ES", { keys: number[]; bars: ReturnType<Market["bars"]> }>();
-  const dayList = (under: "NQ" | "ES") => {
+  const days = new Map<Under, { keys: number[]; bars: ReturnType<Market["bars"]> }>();
+  const dayList = (under: Under) => {
     let hit = days.get(under);
     if (!hit) {
       const bars = m.bars(under, 60);
@@ -900,7 +898,7 @@ function archive(): Partial<DeskState> | null {
     }
     return hit;
   };
-  const taken = (under: "NQ" | "ES", a: number, b: number) => d.trades.some((t) => INSTRUMENTS[t.sym].under === under && t.openedAt < b + 120_000 && (t.closedAt ?? Infinity) > a - 120_000);
+  const taken = (under: Under, a: number, b: number) => d.trades.some((t) => INSTRUMENTS[t.sym].under === under && t.openedAt < b + 120_000 && (t.closedAt ?? Infinity) > a - 120_000);
   let made = 0;
   for (const [back, minute, sym, qty, want, before, after] of plan) {
     const inst = INSTRUMENTS[sym];

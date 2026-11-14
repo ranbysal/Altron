@@ -51,7 +51,7 @@ export function openPnlOf(positions: BookData["positions"], quotes: Record<Sym, 
   return sum;
 }
 
-const MICROS: Sym[] = ["MNQ", "MES"];
+const MICROS: Sym[] = ["MNQ", "MES", "MYM", "MGC"];
 
 export function worldFrom(x: {
   now: number;

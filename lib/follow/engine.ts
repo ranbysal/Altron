@@ -14,7 +14,7 @@
 /* inputs                                                              */
 /* ------------------------------------------------------------------ */
 
-export type Under = "NQ" | "ES";
+export type Under = "NQ" | "ES" | "YM" | "GC";
 export type Dir = 1 | -1;
 
 /** Yazan's trade as his book has it. */
@@ -122,13 +122,13 @@ export const DEFAULT_LIMITS: Limits = {
   window: 120,
   minRR: 1.2,
   stopAtr: 4,
-  minStop: { NQ: 40, ES: 10 },
+  minStop: { NQ: 40, ES: 10, YM: 80, GC: 6 },
   newsMin: 2,
   maxMicros: 30,
   useAI: true,
 };
 
-export const MICRO = { NQ: { sym: "MNQ", pv: 2, tick: 0.25 }, ES: { sym: "MES", pv: 5, tick: 0.25 } } as const;
+export const MICRO = { NQ: { sym: "MNQ", pv: 2, tick: 0.25 }, ES: { sym: "MES", pv: 5, tick: 0.25 }, YM: { sym: "MYM", pv: 0.5, tick: 1 }, GC: { sym: "MGC", pv: 10, tick: 0.1 } } as const;
 const COMMISSION = 0.9; // per micro, round turn
 
 /* ------------------------------------------------------------------ */

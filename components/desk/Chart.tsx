@@ -64,7 +64,7 @@ function ChartBar({ viewer = false, frozen = false }: { viewer?: boolean; frozen
           <rect className={s.barIconFill} x="2.6" y="3.6" width="2.4" height="8.8" rx="0.8" />
         </svg>
       </button>
-      <div className={s.syms} role="tablist" aria-label="Market" style={{ "--i": SYMS.indexOf(sym) } as CSSProperties}>
+      <div className={s.syms} role="tablist" aria-label="Market" style={{ "--c": SYMS.indexOf(sym) % 4, "--r": Math.floor(SYMS.indexOf(sym) / 4) } as CSSProperties}>
         <span className={s.symBar} aria-hidden="true" />
         {SYMS.map((x, k) => (
           <button key={x} type="button" role="tab" aria-selected={x === sym} onClick={() => selectSym(x)} title={`${INSTRUMENTS[x].name} (${k + 1})`}>

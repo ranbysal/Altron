@@ -728,7 +728,7 @@ function Guardrails({ limits }: { limits: Limits }) {
         <Scrub label="Daily stop" value={limits.dailyStop} min={0.1} max={0.6} step={0.05} show={pct} hint="No new trades once a day costs this much of its room" onChange={(v) => setLimits({ dailyStop: v })} />
         <Scrub label="Decision window" value={limits.window} min={30} max={300} step={10} show={(v) => mmss(v)} hint="From his entry. It can go in sooner, never later" onChange={(v) => setLimits({ window: v })} />
         <Scrub label="Least reward" value={limits.minRR} min={0.8} max={3} step={0.1} show={(v) => `${v.toFixed(1)}×`} hint="To his first target, against our stop" onChange={(v) => setLimits({ minRR: v })} />
-        <Scrub label="Stop width" value={limits.stopAtr} min={2} max={8} step={0.5} show={(v) => `${v.toFixed(1)}×`} hint="The average one-minute range, never under 40 NQ points" onChange={(v) => setLimits({ stopAtr: v })} />
+        <Scrub label="Stop width" value={limits.stopAtr} min={2} max={8} step={0.5} show={(v) => `${v.toFixed(1)}×`} hint={`The average one-minute range, never under ${limits.minStop.NQ} NQ or ${limits.minStop.YM} US30 points`} onChange={(v) => setLimits({ stopAtr: v })} />
         <Scrub label="News" value={limits.newsMin} min={0} max={10} step={1} show={(v) => (v ? `${v} min` : "Off")} hint="No new trade this close to a high-impact release" onChange={(v) => setLimits({ newsMin: v })} />
       </div>
       <div className={f.toggleRow}>

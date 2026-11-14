@@ -1,7 +1,7 @@
-import type { Under } from "./instruments";
+import { UNDERS, type Under } from "./instruments";
 
 /**
- * Simulated CME feed for the desk: NQ and ES, correlated, ticking four times a
+ * Simulated CME feed for the desk: NQ, ES and the Dow, correlated, and Gold, ticking four times a
  * second. History comes in layers so every timeframe has depth:
  *   - one-second bars for the last two hours
  *   - one-minute bars for the last ten days
@@ -27,6 +27,8 @@ export type Quote = {
 const SPEC: Record<Under, { tick: number; start: number; sigma: number; vol: number; dayVol: number }> = {
   NQ: { tick: 0.25, start: 24486.25, sigma: 9.5, vol: 950, dayVol: 0.0145 },
   ES: { tick: 0.25, start: 6836.5, sigma: 2.3, vol: 2300, dayVol: 0.0105 },
+  YM: { tick: 1, start: 47852, sigma: 15, vol: 260, dayVol: 0.0095 },
+  GC: { tick: 0.1, start: 4085.3, sigma: 1.45, vol: 620, dayVol: 0.0115 },
 };
 
 /** Rough turning points of the last few years, so the long views look like the market did. */
@@ -70,6 +72,44 @@ const PATH: Record<Under, [string, number][]> = {
     ["2025-07-28", 6420],
     ["2025-10-29", 6900],
     ["2026-01-15", 7010],
+  ],
+  YM: [
+    ["2019-01-02", 23300],
+    ["2019-12-31", 28500],
+    ["2020-02-12", 29500],
+    ["2020-03-23", 18300],
+    ["2020-09-02", 29100],
+    ["2021-12-31", 36300],
+    ["2022-09-30", 28700],
+    ["2023-03-15", 31800],
+    ["2023-07-31", 35600],
+    ["2023-10-27", 32400],
+    ["2024-07-17", 41200],
+    ["2024-08-05", 38700],
+    ["2024-12-04", 45000],
+    ["2025-04-07", 37600],
+    ["2025-07-28", 44900],
+    ["2025-10-28", 48000],
+    ["2026-01-15", 49000],
+  ],
+  GC: [
+    ["2019-01-02", 1285],
+    ["2019-09-04", 1560],
+    ["2020-03-16", 1460],
+    ["2020-08-06", 2070],
+    ["2021-03-08", 1680],
+    ["2022-03-08", 2070],
+    ["2022-09-28", 1630],
+    ["2023-05-04", 2080],
+    ["2023-10-05", 1830],
+    ["2024-04-12", 2440],
+    ["2024-10-30", 2800],
+    ["2024-12-30", 2610],
+    ["2025-04-22", 3500],
+    ["2025-06-30", 3300],
+    ["2025-10-20", 4380],
+    ["2025-10-28", 3950],
+    ["2026-01-15", 4300],
   ],
 };
 
@@ -424,8 +464,8 @@ export class Market {
     const now = Date.now();
     if (snap) {
       this.remote = true;
-      this.series = { NQ: this.fromSnap("NQ", snap.u.NQ, now), ES: this.fromSnap("ES", snap.u.ES, now) };
-    } else this.series = { NQ: this.build("NQ", now, endPrices?.NQ), ES: this.build("ES", now, endPrices?.ES) };
+      this.series = Object.fromEntries(UNDERS.map((u) => [u, snap.u[u] ? this.fromSnap(u, snap.u[u], now) : this.build(u, now)])) as Record<Under, Series>;
+    } else this.series = Object.fromEntries(UNDERS.map((u) => [u, this.build(u, now, endPrices?.[u])])) as Record<Under, Series>;
     this.lastStep = now;
   }
 
@@ -442,13 +482,13 @@ export class Market {
   snapshot(): MarketSnap {
     // three days of minutes and half an hour of seconds; older history is drawn by the page
     const one = (s: Series): SnapSeries => ({ s1: packBars(s.s1.slice(-1800), s.tick), m1: packBars(s.m1.slice(-3 * 1380), s.tick), quote: s.quote, latent: s.latent, anchor: s.anchor, heat: s.heat });
-    return { at: Date.now(), u: { NQ: one(this.series.NQ), ES: one(this.series.ES) } };
+    return { at: Date.now(), u: Object.fromEntries(UNDERS.map((u) => [u, one(this.series[u])])) as Record<Under, SnapSeries> };
   }
 
   /** The latest step, for streaming. */
   tickNow(): MarketTick {
     const one = (s: Series) => ({ q: s.quote, s: s.s1[s.s1.length - 1], m: s.m1[s.m1.length - 1] });
-    return { at: Date.now(), u: { NQ: one(this.series.NQ), ES: one(this.series.ES) } };
+    return { at: Date.now(), u: Object.fromEntries(UNDERS.map((u) => [u, one(this.series[u])])) };
   }
 
   /** A step from the server; applied on the next `step`. */
@@ -466,7 +506,7 @@ export class Market {
     this.pending = [];
     let changed = false;
     for (const t of list) {
-      for (const under of ["NQ", "ES"] as Under[]) {
+      for (const under of UNDERS) {
         const u = t.u[under];
         if (!u) continue;
         const s = this.series[under];
@@ -745,8 +785,11 @@ export class Market {
       const t = this.lastStep + (k + 1) * STEP_MS;
       const z1 = gauss(this.rnd);
       const z2 = gauss(this.rnd);
-      const shocks: Record<Under, number> = { NQ: z1, ES: 0.86 * z1 + 0.51 * z2 };
-      for (const under of ["NQ", "ES"] as Under[]) {
+      const z3 = gauss(this.rnd);
+      const z4 = gauss(this.rnd);
+      // the indexes move together; gold mostly on its own, a little against them
+      const shocks: Record<Under, number> = { NQ: z1, ES: 0.86 * z1 + 0.51 * z2, YM: 0.78 * z1 + 0.32 * z2 + 0.54 * z3, GC: -0.12 * z1 + 0.99 * z4 };
+      for (const under of UNDERS) {
         const s = this.series[under];
         const sp = SPEC[under];
         // bursts: volatility clusters, then calms

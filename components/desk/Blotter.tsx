@@ -120,7 +120,7 @@ function PositionsTab() {
         {!open.length && (
           <tr>
             <td colSpan={9} className={s.none}>
-              No open positions. All four markets are closed.
+              No open positions.
             </td>
           </tr>
         )}

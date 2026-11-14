@@ -2,7 +2,7 @@ import http from "node:http";
 import { gzipSync } from "node:zlib";
 import { Market, type MarketTick, type Quote } from "@/lib/desk/market";
 import { applyOp, draftOf, workAll, type BookData, type Op } from "@/lib/desk/broker";
-import type { Sym } from "@/lib/desk/instruments";
+import { INSTRUMENTS, SYMS, UNDERS, type Sym } from "@/lib/desk/instruments";
 import type { Seat, Toast } from "@/lib/desk/types";
 import { canSee, canTrade, whoIs, type Who } from "./auth";
 import { Follow } from "./follow";
@@ -37,18 +37,14 @@ const blank = (start: number) => ({ positions: {}, orders: [], fills: [], trades
 
 let market: Market;
 let quotes: Record<Sym, Quote>;
-const readQuotes = (): Record<Sym, Quote> => {
-  const nq = market.quote("NQ");
-  const es = market.quote("ES");
-  return { NQ: nq, MNQ: nq, ES: es, MES: es };
-};
+const readQuotes = (): Record<Sym, Quote> => Object.fromEntries(SYMS.map((s) => [s, market.quote(INSTRUMENTS[s].under)])) as Record<Sym, Quote>;
 
 /* ------------------------------------------------------------------ */
 /* the books                                                           */
 /* ------------------------------------------------------------------ */
 
 let books: Saved["books"] = { trader: blank(START.trader), owner: blank(START.owner) };
-const booksSaver = saver("books", (): Saved => ({ v: 1, books: trim(books), prices: { NQ: quotes.NQ.last, ES: quotes.ES.last } }), 1500);
+const booksSaver = saver("books", (): Saved => ({ v: 1, books: trim(books), prices: Object.fromEntries(UNDERS.map((u) => [u, market.quote(u).last])) }), 1500);
 
 function trim(b: Saved["books"]): Saved["books"] {
   const one = (x: Saved["books"]["trader"]) => ({ ...x, fills: x.fills.slice(-600), trades: x.trades.slice(-400), notices: x.notices.slice(-300), notes: x.notes.slice(-400) });
@@ -223,7 +219,7 @@ const server = http.createServer(async (req, res) => {
 
 async function main() {
   const saved = await load<Saved>("books");
-  market = new Market(saved?.prices as { NQ: number; ES: number } | undefined);
+  market = new Market(saved?.prices);
   quotes = readQuotes();
   if (saved?.v === 1) books = { trader: { ...blank(START.trader), ...saved.books.trader }, owner: { ...blank(START.owner), ...saved.books.owner } };
 
