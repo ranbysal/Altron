@@ -156,13 +156,21 @@ export function applyFill(d: Draft, o: Order, qty: number, price: number, at: nu
       const size = Math.abs(pos.qty);
       const stopAt = o.attach.stopPx ?? (o.attach.stopTicks ? price - side * o.attach.stopTicks * inst.tick : undefined);
       const targetAt = o.attach.targetPx ?? (o.attach.targetTicks ? price + side * o.attach.targetTicks * inst.tick : undefined);
+      const target2At = o.attach.target2Px ?? (o.attach.target2Ticks ? price + side * o.attach.target2Ticks * inst.tick : undefined);
       if (stopAt !== undefined) {
         const p = snap(sym, stopAt);
         d.orders.push({ id: uid("o"), sym, side: (-side) as Side, qty: size, type: "STP", role: "stop", stop: p, oco, reduceOnly: true, at, told: p });
       }
+      // two targets: half comes off at the first (a fixed size), the rest at the second
+      const split = targetAt !== undefined && target2At !== undefined && size >= 2;
       if (targetAt !== undefined) {
         const p = snap(sym, targetAt);
-        d.orders.push({ id: uid("o"), sym, side: (-side) as Side, qty: size, type: "LMT", role: "target", limit: p, oco, reduceOnly: true, at, told: p });
+        const q1 = split ? Math.floor(size / 2) : size;
+        d.orders.push({ id: uid("o"), sym, side: (-side) as Side, qty: q1, type: "LMT", role: "target", limit: p, oco, reduceOnly: true, fixed: split || undefined, at, told: p });
+      }
+      if (split) {
+        const p = snap(sym, target2At!);
+        d.orders.push({ id: uid("o"), sym, side: (-side) as Side, qty: size - Math.floor(size / 2), type: "LMT", role: "target", limit: p, oco, reduceOnly: true, fixed: true, at, told: p, tag: "tp2" });
       }
     }
   }
@@ -181,7 +189,8 @@ export function applyFill(d: Draft, o: Order, qty: number, price: number, at: nu
   // and about an entry that was sent with a notification
   if (o.notify && pos && Math.sign(pos.qty) === side) {
     const stopO = d.orders.find((x) => x.sym === sym && x.role === "stop");
-    const tgtO = d.orders.find((x) => x.sym === sym && x.role === "target");
+    const tgtO = d.orders.find((x) => x.sym === sym && x.role === "target" && x.tag !== "tp2");
+    const tgt2 = d.orders.find((x) => x.sym === sym && x.role === "target" && x.tag === "tp2");
     updateTrade(d, pos.tradeId, (t) => ({ ...t, notify: true }));
     publish(d, {
       kind: o.type === "MKT" ? "entry" : "fill",
@@ -193,6 +202,7 @@ export function applyFill(d: Draft, o: Order, qty: number, price: number, at: nu
       type: o.type,
       stop: stopO?.stop,
       target: tgtO?.limit,
+      target2: tgt2?.limit,
       note: o.type === "MKT" ? o.notify.note : undefined,
       tradeId: pos.tradeId,
     });
@@ -236,7 +246,9 @@ export function work(d: Draft, sym: Sym, q: Quote, at: number) {
       }
       if (px === null) continue;
       const qty = o.reduceOnly && pos ? Math.min(o.qty, Math.abs(pos.qty)) : o.qty;
-      d.orders = d.orders.filter((x) => x !== o && !(o.oco && x.oco === o.oco));
+      // one side of a bracket cancels the others, unless it only takes part of the position off
+      const partial = o.reduceOnly && pos && qty < Math.abs(pos.qty);
+      d.orders = d.orders.filter((x) => x !== o && (partial || !(o.oco && x.oco === o.oco)));
       applyFill(d, o, qty, px, at);
       again = true;
       break;
@@ -272,7 +284,7 @@ export function noticeText(n: Notice): { head: string; body: string } {
   const px = (p?: number) => (p === undefined ? "" : fmtPx(p));
   const root = INSTRUMENTS[n.sym].code.replace(/[FGHJKMNQUVXZ]\d$/, "");
   const size = sizeWords(n.sym, n.qty ?? 1);
-  const exits = [n.stop !== undefined ? `Stop ${px(n.stop)}` : "", n.target !== undefined ? `Target ${px(n.target)}` : ""].filter(Boolean).join(" · ");
+  const exits = [n.stop !== undefined ? `Stop ${px(n.stop)}` : "", n.target !== undefined ? (n.target2 !== undefined ? `Targets ${px(n.target)} and ${px(n.target2)}` : `Target ${px(n.target)}`) : ""].filter(Boolean).join(" · ");
   switch (n.kind) {
     case "entry":
       return { head: `${n.side! > 0 ? "Bought" : "Sold"} ${size} @ ${px(n.price)}`, body: exits || "No stop or target set" };
@@ -362,7 +374,7 @@ export function applyOp(d: Draft, x: Op, ctx: Ctx): boolean {
           const px = o.type === "LMT" ? o.limit : o.stop;
           const tk = INSTRUMENTS[o.sym].tick;
           const exit = (abs: number | undefined, ticks: number | undefined, dir: number) => (abs !== undefined ? snap(o.sym, abs) : ticks && px !== undefined ? snap(o.sym, px + dir * o.side * ticks * tk) : undefined);
-          publish(d, { kind: "order", sym: o.sym, at, side: o.side, qty: o.qty, price: px, type: o.type, stop: exit(o.attach?.stopPx, o.attach?.stopTicks, -1), target: exit(o.attach?.targetPx, o.attach?.targetTicks, 1), note: o.notify.note });
+          publish(d, { kind: "order", sym: o.sym, at, side: o.side, qty: o.qty, price: px, type: o.type, stop: exit(o.attach?.stopPx, o.attach?.stopTicks, -1), target: exit(o.attach?.targetPx, o.attach?.targetTicks, 1), target2: o.qty >= 2 ? exit(o.attach?.target2Px, o.attach?.target2Ticks, 1) : undefined, note: o.notify.note });
         }
         work(d, input.sym, q, at);
         if (d.orders.includes(o)) pushToast(d, { tone: "plain", title: `Working ${o.side > 0 ? "buy" : "sell"} ${o.qty} ${INSTRUMENTS[o.sym].code}`, body: describe(o) });

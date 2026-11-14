@@ -5,6 +5,7 @@ import { useShallow } from "zustand/react/shallow";
 import { fmt, money } from "@/lib/format";
 import { DAY_MARGIN, INSTRUMENTS, snap, tickValue } from "@/lib/desk/instruments";
 import {
+  EXIT_ON,
   EXIT_UNITS,
   openPnl,
   sendTicket,
@@ -20,6 +21,7 @@ import {
   ticketProblem,
   useDesk,
   type ExitUnit,
+  type ExitWhich,
   type OrderType,
   type Side,
 } from "@/lib/desk/store";
@@ -180,9 +182,9 @@ const Caret = () => (
 );
 
 /** A stop loss or take profit: on or off, typed in one unit, read back in another. */
-function ExitRow({ which, entry, price }: { which: "stop" | "target"; entry: number; price: number | null }) {
+function ExitRow({ which, entry, price }: { which: ExitWhich; entry: number; price: number | null }) {
   const sym = useDesk((st) => st.settings.sym);
-  const on = useDesk((st) => (which === "stop" ? st.settings.stopOn : st.settings.targetOn));
+  const on = useDesk((st) => st.settings[EXIT_ON[which]]);
   const units = useDesk((st) => st.settings.exitUnits[which]);
   const qty = useDesk((st) => st.settings.qty[st.settings.sym]);
   const inst = INSTRUMENTS[sym];
@@ -196,7 +198,7 @@ function ExitRow({ which, entry, price }: { which: "stop" | "target"; entry: num
   const readback = (u: ExitUnit) =>
     u === "price" ? fmt(price ?? entry) : u === "ticks" ? `${ticks} ticks` : u === "pts" ? `${dist.toFixed(2)} pts` : money(sign * ticks * tv * qty);
   const step = main === "price" ? inst.tick : main === "ticks" ? 1 : main === "pts" ? inst.tick : tv * qty;
-  const name = which === "stop" ? "Stop loss" : "Take profit";
+  const name = which === "stop" ? "Stop loss" : which === "target2" ? "Second target" : "Take profit";
   const unitLabel = (u: ExitUnit) => EXIT_UNITS.find((x) => x.id === u)!.label;
   return (
     <div className={s.exit} data-off={on ? undefined : ""} data-kind={which}>
@@ -207,7 +209,7 @@ function ExitRow({ which, entry, price }: { which: "stop" | "target"; entry: num
           aria-checked={on}
           className={s.miniSwitch}
           aria-label={`Attach a ${name.toLowerCase()}`}
-          onClick={() => setSettings(which === "stop" ? { stopOn: !on } : { targetOn: !on })}
+          onClick={() => setSettings({ [EXIT_ON[which]]: !on })}
         />
         <span className={s.exitName}>{name}</span>
         <label className={s.unitPick}>
@@ -267,7 +269,7 @@ function NotifyPop({ onClose }: { onClose: () => void }) {
   const t = useDesk((st) => st.ticket);
   const qty = useDesk((st) => st.settings.qty[st.settings.sym]);
   const entry = useDesk((st) => ticketEntry(st, st.settings.sym));
-  const [stop, target] = useDesk(useShallow((st) => { const e = ticketExits(st, st.settings.sym); return [e.stop, e.target]; }));
+  const [stop, target, target2] = useDesk(useShallow((st) => { const e = ticketExits(st, st.settings.sym); return [e.stop, e.target, e.target2]; }));
   const problem = useDesk((st) => ticketProblem(st, st.settings.sym));
   const [note, setNote] = useState("");
   const area = useRef<HTMLTextAreaElement>(null);
@@ -291,7 +293,7 @@ function NotifyPop({ onClose }: { onClose: () => void }) {
     sendTicket({ note });
     onClose();
   };
-  const exits = [stop !== null ? `Stop ${fmt(stop)}` : "", target !== null ? `Target ${fmt(target)}` : ""].filter(Boolean).join(" · ");
+  const exits = [stop !== null ? `Stop ${fmt(stop)}` : "", target !== null ? (target2 !== null && qty >= 2 ? `Targets ${fmt(target)} and ${fmt(target2)}` : `Target ${fmt(target)}`) : ""].filter(Boolean).join(" · ");
   return (
     <div className={s.notifyPop} role="dialog" aria-label="Notify members">
       <header>
@@ -336,7 +338,8 @@ export function Ticket() {
   const trades = useDesk((st) => st.trades);
   const quotes = useDesk((st) => st.quotes);
   const entry = useDesk((st) => ticketEntry(st, st.settings.sym));
-  const [stopPx, targetPx] = useDesk(useShallow((st) => { const e = ticketExits(st, st.settings.sym); return [e.stop, e.target]; }));
+  const [stopPx, targetPx, target2Px] = useDesk(useShallow((st) => { const e = ticketExits(st, st.settings.sym); return [e.stop, e.target, e.target2]; }));
+  const targetOn = useDesk((st) => st.settings.targetOn);
   const problem = useDesk((st) => ticketProblem(st, st.settings.sym));
   const inst = INSTRUMENTS[sym];
   const qty = settings.qty[sym];
@@ -365,7 +368,7 @@ export function Ticket() {
     if (next === side) return;
     const mid = (quote.bid + quote.ask) / 2;
     const flip = (p: number | null) => (p === null ? p : snap(sym, 2 * mid - p));
-    const patch: Partial<typeof ticket> = { side: next, stopPx: null, targetPx: null, pxSym: null };
+    const patch: Partial<typeof ticket> = { side: next, stopPx: null, targetPx: null, target2Px: null, pxSym: null };
     if (t === "LMT" && ticket.limit !== null && (next > 0 ? ticket.limit >= quote.ask : ticket.limit <= quote.bid)) patch.limit = flip(ticket.limit);
     if (t === "STP" && ticket.stop !== null && (next > 0 ? ticket.stop <= quote.ask : ticket.stop >= quote.bid)) patch.stop = flip(ticket.stop);
     setTicket(patch);
@@ -469,6 +472,7 @@ export function Ticket() {
           {rr !== null && <span className={s.rr}>{rr.toFixed(2)}R</span>}
         </div>
         <ExitRow which="target" entry={entry} price={targetPx} />
+        {targetOn && <ExitRow which="target2" entry={entry} price={target2Px} />}
         <ExitRow which="stop" entry={entry} price={stopPx} />
       </div>
 

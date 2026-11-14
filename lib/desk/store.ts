@@ -33,8 +33,11 @@ export type Settings = {
   sizes: { mini: number[]; micro: number[] };
   stopOn: boolean;
   targetOn: boolean;
+  /** a second target: half the position comes off at the first, the rest here */
+  target2On: boolean;
   stopTicks: Record<Sym, number>;
   targetTicks: Record<Sym, number>;
+  target2Ticks: Record<Sym, number>;
   hotkeys: boolean;
   panels: { pnl: boolean; markets: boolean };
   /** the blotter is showing; its height and the right column's width are in `layout` */
@@ -42,8 +45,13 @@ export type Settings = {
   layout: { blot: number; right: number };
   chart: { volume: boolean; fills: boolean; zone: boolean; grid: boolean; log: boolean };
   /** each exit is typed in one unit and read back in another, as on TradingView */
-  exitUnits: { stop: [ExitUnit, ExitUnit]; target: [ExitUnit, ExitUnit] };
+  exitUnits: Record<ExitWhich, [ExitUnit, ExitUnit]>;
 };
+
+export type ExitWhich = "stop" | "target" | "target2";
+export const EXIT_ON = { stop: "stopOn", target: "targetOn", target2: "target2On" } as const;
+const TICKS = { stop: "stopTicks", target: "targetTicks", target2: "target2Ticks" } as const;
+const PX = { stop: "stopPx", target: "targetPx", target2: "target2Px" } as const;
 
 export type Alert = { id: string; sym: Sym; price: number; above: boolean; at: number };
 
@@ -57,6 +65,7 @@ export type Ticket = {
   /** exits typed or dragged to an exact price; null follows the tick distance in settings */
   stopPx: number | null;
   targetPx: number | null;
+  target2Px: number | null;
   /** the market those exact prices were set on */
   pxSym: Sym | null;
 };
@@ -108,12 +117,14 @@ const DEFAULT_SETTINGS: Settings = {
   targetOn: true,
   stopTicks: { NQ: 80, ES: 24, MNQ: 80, MES: 24 },
   targetTicks: { NQ: 160, ES: 48, MNQ: 160, MES: 48 },
+  target2On: false,
+  target2Ticks: { NQ: 320, ES: 96, MNQ: 320, MES: 96 },
   hotkeys: true,
   panels: { pnl: false, markets: false },
   blotter: true,
   layout: { blot: 158, right: 300 },
   chart: { volume: true, fills: true, zone: true, grid: true, log: false },
-  exitUnits: { stop: ["price", "usd"], target: ["price", "usd"] },
+  exitUnits: { stop: ["price", "usd"], target: ["price", "usd"], target2: ["price", "usd"] },
 };
 
 const blankQuote = (): Quote => ({ last: 0, bid: 0, ask: 0, prev: 0, hi: 0, lo: 0, dir: 0, at: 0 });
@@ -130,7 +141,7 @@ export const useDesk = create<DeskState>(() => ({
   notes: [],
   start: ACCOUNT.start,
   settings: DEFAULT_SETTINGS,
-  ticket: { type: "MKT", side: 1, limit: null, stop: null, trail: 20, stopPx: null, targetPx: null, pxSym: null },
+  ticket: { type: "MKT", side: 1, limit: null, stop: null, trail: 20, stopPx: null, targetPx: null, target2Px: null, pxSym: null },
   armedUntil: 0,
   toasts: [],
   thread: null,
@@ -331,18 +342,19 @@ export function ticketEntry(s: Pick<DeskState, "ticket" | "quotes">, sym: Sym): 
   return t.side > 0 ? q.ask : q.bid;
 }
 
-const usesExact = (s: Pick<DeskState, "ticket" | "settings">, sym: Sym, which: "stop" | "target") =>
-  s.ticket.pxSym === sym && s.settings.exitUnits[which][0] === "price" && (which === "stop" ? s.ticket.stopPx : s.ticket.targetPx) !== null;
+const usesExact = (s: Pick<DeskState, "ticket" | "settings">, sym: Sym, which: ExitWhich) =>
+  s.ticket.pxSym === sym && s.settings.exitUnits[which][0] === "price" && s.ticket[PX[which]] !== null;
 
 /** The ticket's stop and target as prices: exact where typed, otherwise their distance from the entry. */
-export function ticketExits(s: Pick<DeskState, "ticket" | "quotes" | "settings">, sym: Sym): { stop: number | null; target: number | null } {
+export function ticketExits(s: Pick<DeskState, "ticket" | "quotes" | "settings">, sym: Sym): { stop: number | null; target: number | null; target2: number | null } {
   const st = s.settings;
   const tk = INSTRUMENTS[sym].tick;
   const entry = ticketEntry(s, sym);
   const side = s.ticket.side;
   const stop = !st.stopOn ? null : usesExact(s, sym, "stop") ? s.ticket.stopPx! : snap(sym, entry - side * st.stopTicks[sym] * tk);
   const target = !st.targetOn ? null : usesExact(s, sym, "target") ? s.ticket.targetPx! : snap(sym, entry + side * st.targetTicks[sym] * tk);
-  return { stop, target };
+  const target2 = !st.targetOn || !st.target2On ? null : usesExact(s, sym, "target2") ? s.ticket.target2Px! : snap(sym, entry + side * st.target2Ticks[sym] * tk);
+  return { stop, target, target2 };
 }
 
 /** What a ticket order carries for its bracket. */
@@ -356,6 +368,10 @@ function ticketAttach(s: DeskState, sym: Sym): NonNullable<Order["attach"]> {
   if (st.targetOn) {
     if (usesExact(s, sym, "target")) out.targetPx = s.ticket.targetPx!;
     else out.targetTicks = st.targetTicks[sym];
+    if (st.target2On) {
+      if (usesExact(s, sym, "target2")) out.target2Px = s.ticket.target2Px!;
+      else out.target2Ticks = st.target2Ticks[sym];
+    }
   }
   return out;
 }
@@ -372,14 +388,15 @@ export function ticketProblem(s: Pick<DeskState, "ticket" | "quotes" | "settings
     if (t.side < 0 && t.stop >= q.bid) return "A sell stop goes below the bid";
   }
   const entry = ticketEntry(s, sym);
-  const { stop, target } = ticketExits(s, sym);
+  const { stop, target, target2 } = ticketExits(s, sym);
   if (stop !== null && (entry - stop) * t.side <= 0) return `The stop must be ${t.side > 0 ? "below" : "above"} the entry`;
   if (target !== null && (target - entry) * t.side <= 0) return `The target must be ${t.side > 0 ? "above" : "below"} the entry`;
+  if (target !== null && target2 !== null && (target2 - target) * t.side <= 0) return "The second target goes past the first";
   return null;
 }
 
 /** Sets an exit from a price: dragged on the chart or typed in price. */
-export function setExitPrice(which: "stop" | "target", price: number) {
+export function setExitPrice(which: ExitWhich, price: number) {
   const s = get();
   const sym = s.settings.sym;
   const tk = INSTRUMENTS[sym].tick;
@@ -388,22 +405,21 @@ export function setExitPrice(which: "stop" | "target", price: number) {
   let p = snap(sym, price);
   if ((p - entry) * dir < tk) p = snap(sym, entry + dir * tk); // stays on its own side, a tick away at least
   if (s.settings.exitUnits[which][0] === "price") {
-    const key = which === "stop" ? "stopPx" : "targetPx";
-    const other = which === "stop" ? "targetPx" : "stopPx";
-    setTicket({ [key]: p, pxSym: sym, ...(s.ticket.pxSym !== sym ? { [other]: null } : {}) });
+    const others = (["stopPx", "targetPx", "target2Px"] as const).filter((k) => k !== PX[which]);
+    setTicket({ [PX[which]]: p, pxSym: sym, ...(s.ticket.pxSym !== sym ? Object.fromEntries(others.map((k) => [k, null])) : {}) });
   } else {
     setExitTicks(which, Math.abs(p - entry) / tk);
   }
 }
 
-function setExitTicks(which: "stop" | "target", ticks: number) {
+function setExitTicks(which: ExitWhich, ticks: number) {
   const st = get().settings;
-  const key = which === "stop" ? "stopTicks" : "targetTicks";
+  const key = TICKS[which];
   setSettings({ [key]: { ...st[key], [st.sym]: Math.max(1, Math.round(ticks)) } });
 }
 
 /** Sets an exit from a number typed in one of the units. */
-export function setExitValue(which: "stop" | "target", unit: ExitUnit, value: number) {
+export function setExitValue(which: ExitWhich, unit: ExitUnit, value: number) {
   if (!Number.isFinite(value)) return;
   const s = get();
   const sym = s.settings.sym;
@@ -414,15 +430,15 @@ export function setExitValue(which: "stop" | "target", unit: ExitUnit, value: nu
 }
 
 /** Picks the units an exit is typed in and read back as. Switching keeps the exit where it is. */
-export function setExitUnits(which: "stop" | "target", units: [ExitUnit, ExitUnit]) {
+export function setExitUnits(which: ExitWhich, units: [ExitUnit, ExitUnit]) {
   const s = get();
   const sym = s.settings.sym;
   const was = s.settings.exitUnits[which][0];
   if (was === "price" && units[0] !== "price" && usesExact(s, sym, which)) {
-    const exact = (which === "stop" ? s.ticket.stopPx : s.ticket.targetPx)!;
+    const exact = s.ticket[PX[which]]!;
     setExitTicks(which, Math.abs(exact - ticketEntry(s, sym)) / INSTRUMENTS[sym].tick);
   }
-  if (units[0] === "price" && was !== "price") setTicket({ [which === "stop" ? "stopPx" : "targetPx"]: null });
+  if (units[0] === "price" && was !== "price") setTicket({ [PX[which]]: null });
   setSettings({ exitUnits: { ...get().settings.exitUnits, [which]: units } });
 }
 
@@ -434,7 +450,7 @@ export function ticketFromPosition(side: Side, entry: number, stop: number, targ
   setSettings({
     stopOn: true,
     targetOn: true,
-    exitUnits: { stop: u.stop[0] === "price" ? u.stop : ["price", u.stop[0]], target: u.target[0] === "price" ? u.target : ["price", u.target[0]] },
+    exitUnits: { ...u, stop: u.stop[0] === "price" ? u.stop : ["price", u.stop[0]], target: u.target[0] === "price" ? u.target : ["price", u.target[0]] },
   });
   setPick(null);
   setTicket({ type: "LMT", side, limit: snap(sym, entry), stopPx: snap(sym, stop), targetPx: snap(sym, target), pxSym: sym });
@@ -451,7 +467,7 @@ export function sendTicket(notify?: { note?: string }) {
   else if (t.type === "STP") placeOrder({ ...base, type: "STP", stop: t.stop! });
   else placeOrder({ ...base, type: "MKT" });
   // the next order starts from market, its exits back on their distances
-  set({ ticket: { ...get().ticket, type: "MKT", stopPx: null, targetPx: null, pxSym: null }, preview: 0 });
+  set({ ticket: { ...get().ticket, type: "MKT", stopPx: null, targetPx: null, target2Px: null, pxSym: null }, preview: 0 });
 }
 
 /* notes ------------------------------------------------------------- */
@@ -575,7 +591,7 @@ export function resetPaper() {
 
 const pickBook = (s: DeskState): Book => ({ positions: s.positions, orders: s.orders, fills: s.fills, trades: s.trades, notes: s.notes, alerts: s.alerts, settings: s.settings, ticket: s.ticket, start: s.start });
 
-const BLANK_TICKET: Ticket = { type: "MKT", side: 1, limit: null, stop: null, trail: 20, stopPx: null, targetPx: null, pxSym: null };
+const BLANK_TICKET: Ticket = { type: "MKT", side: 1, limit: null, stop: null, trail: 20, stopPx: null, targetPx: null, target2Px: null, pxSym: null };
 
 function ownerBook(): Book {
   let saved: Partial<Book> | null = null;

@@ -20,7 +20,7 @@ export type Order = {
   oco?: string;
   reduceOnly?: boolean;
   /** the bracket set around the fill: a distance in ticks, or an exact price typed on the ticket */
-  attach?: { stopTicks?: number; targetTicks?: number; stopPx?: number; targetPx?: number };
+  attach?: { stopTicks?: number; targetTicks?: number; stopPx?: number; targetPx?: number; target2Ticks?: number; target2Px?: number };
   /** members are told when this order is placed and when it fills */
   notify?: { note?: string };
   /** a stop or target: the price members were last told, and a price he chose not to announce */
@@ -74,6 +74,8 @@ export type Notice = {
   type?: OrderType;
   stop?: number;
   target?: number;
+  /** a second target: half comes off at the first, the rest here */
+  target2?: number;
   /** a moved stop or target: what members were told before */
   was?: number;
   pnl?: number;
