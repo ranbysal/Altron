@@ -1,10 +1,11 @@
 {
   "$schema": "https://railway.com/railway.schema.json",
-  "build": { "builder": "RAILPACK", "buildCommand": "npm ci" },
+  "build": { "builder": "RAILPACK", "buildCommand": "echo 'worker: nothing to build'" },
   "deploy": {
     "startCommand": "npm run worker",
     "healthcheckPath": "/health",
     "healthcheckTimeout": 60,
-    "restartPolicyType": "ALWAYS"
+    "restartPolicyType": "ALWAYS",
+    "numReplicas": 1
   }
 }

@@ -59,9 +59,18 @@ const wrap = (ev: string) => (e: Event) => {
 };
 
 let retry = 1000;
+/** A one-time ticket for the stream, so the sign-in token never goes in a URL. */
+async function ticket(): Promise<string | null> {
+  try {
+    return (await call<{ ticket: string }>("/ticket", { method: "POST", body: {} })).ticket;
+  } catch {
+    return null;
+  }
+}
+
 async function connect() {
-  const t = await token();
-  const es = new EventSource(`${WORKER}/stream${t ? `?token=${encodeURIComponent(t)}` : ""}`);
+  const t = await ticket();
+  const es = new EventSource(`${WORKER}/stream${t ? `?ticket=${encodeURIComponent(t)}` : ""}`);
   source = es;
   const events = new Set(handlers.flatMap((h) => Object.keys(h)));
   for (const ev of events) es.addEventListener(ev, wrap(ev));

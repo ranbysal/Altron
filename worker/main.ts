@@ -1,5 +1,6 @@
 import http from "node:http";
 import { gzipSync } from "node:zlib";
+import { randomBytes } from "node:crypto";
 import { Market, type MarketTick, type Quote } from "@/lib/desk/market";
 import { applyOp, draftOf, workAll, type BookData, type Op } from "@/lib/desk/broker";
 import { INSTRUMENTS, SYMS, UNDERS, type Sym } from "@/lib/desk/instruments";
@@ -137,10 +138,28 @@ async function body<T>(req: http.IncomingMessage): Promise<T | null> {
     return null;
   }
 }
-const tokenOf = (req: http.IncomingMessage, url: URL) => {
+const tokenOf = (req: http.IncomingMessage) => {
   const h = req.headers.authorization;
-  return h?.startsWith("Bearer ") ? h.slice(7) : url.searchParams.get("token");
+  return h?.startsWith("Bearer ") ? h.slice(7) : null;
 };
+
+/*
+ * The event stream can't send headers, so a page first trades its token for a one-time ticket
+ * (good for a minute) and opens the stream with that. Tokens never appear in a URL.
+ */
+const tickets = new Map<string, { who: Who; until: number }>();
+function ticketFor(who: Who): string {
+  const t = randomBytes(18).toString("base64url");
+  tickets.set(t, { who, until: Date.now() + 60_000 });
+  for (const [k, v] of tickets) if (v.until < Date.now()) tickets.delete(k);
+  return t;
+}
+function redeem(t: string | null): Who | null {
+  if (!t) return null;
+  const x = tickets.get(t);
+  tickets.delete(t);
+  return x && x.until > Date.now() ? x.who : null;
+}
 
 const OPS = new Set(["place", "cancel", "cancelAll", "move", "notifyMove", "dismissMove", "addBracket", "close", "flatten", "exit", "fillAt", "note", "editNote", "reset"]);
 
@@ -162,23 +181,29 @@ const server = http.createServer(async (req, res) => {
       return void res.end(gz ? gzipSync(raw) : raw);
     }
 
-    const who = await whoIs(tokenOf(req, url));
+    if (p === "/stream" && req.method === "GET") {
+      const who = redeem(url.searchParams.get("ticket"));
+      res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache, no-transform", connection: "keep-alive", "x-accel-buffering": "no" });
+      const c: Client = { res, who };
+      clients.add(c);
+      send(c, "hello", { role: who?.role ?? null, revs: { trader: canSee(who, "trader") ? books.trader.rev : undefined, owner: canSee(who, "owner") ? books.owner.rev : undefined } });
+      if (who?.role === "owner") send(c, "follow", follow.view());
+      req.on("close", () => clients.delete(c));
+      return;
+    }
+
+    const who = await whoIs(tokenOf(req));
+
+    if (p === "/ticket" && req.method === "POST") {
+      if (!who) return json(res, 401, { error: "Sign in" });
+      return json(res, 200, { ticket: ticketFor(who) });
+    }
 
     if (p === "/books" && req.method === "GET") {
       if (!who) return json(res, 401, { error: "Sign in" });
       const out: Partial<Saved["books"]> = {};
       for (const seat of ["trader", "owner"] as Seat[]) if (canSee(who, seat)) out[seat] = books[seat];
       return json(res, 200, { role: who.role, books: out });
-    }
-
-    if (p === "/stream" && req.method === "GET") {
-      res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache, no-transform", connection: "keep-alive", "x-accel-buffering": "no" });
-      const c: Client = { res, who };
-      clients.add(c);
-      send(c, "hello", { role: who?.role ?? null, revs: { trader: books.trader.rev, owner: canSee(who, "owner") ? books.owner.rev : undefined } });
-      if (who?.role === "owner") send(c, "follow", follow.view());
-      req.on("close", () => clients.delete(c));
-      return;
     }
 
     if (p === "/op" && req.method === "POST") {
