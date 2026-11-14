@@ -374,7 +374,7 @@ export function Chart({
         for (const o of orders) {
           if (o.role !== "stop" && o.role !== "target") continue;
           const p = o.role === "stop" ? o.stop! : o.limit!;
-          const pnl = (p - pos.avg) * pos.qty * inst.pv;
+          const pnl = (p - pos.avg) * Math.sign(pos.qty) * Math.min(o.qty, Math.abs(pos.qty)) * inst.pv;
           out.push({ id: o.id, price: p, kind: o.role, title: o.role === "stop" ? "Stop" : "Target", value: money(pnl), tone: pnl >= 0 ? "pos" : "neg", drag: false });
         }
       }
@@ -386,9 +386,9 @@ export function Chart({
       for (const o of orders) {
         if (o.role !== "stop" && o.role !== "target") continue;
         const p = o.role === "stop" ? o.stop! : o.limit!;
-        const pnl = (p - pos.avg) * pos.qty * inst.pv;
+        const pnl = (p - pos.avg) * Math.sign(pos.qty) * Math.min(o.qty, Math.abs(pos.qty)) * inst.pv;
         const moved = seat === "trader" && p !== o.told && p !== o.quiet;
-        out.push({ id: o.id, price: p, kind: o.role, title: o.role === "stop" ? (o.type === "TRAIL" ? "Trail" : "Stop") : "Target", value: money(pnl), tone: pnl >= 0 ? "pos" : "neg", order: o, moved, drag: true });
+        out.push({ id: o.id, price: p, kind: o.role, title: o.role === "stop" ? (o.type === "TRAIL" ? "Trail" : "Stop") : o.tag === "tp2" ? "Target 2" : "Target", value: money(pnl), tone: pnl >= 0 ? "pos" : "neg", order: o, moved, drag: true });
       }
     }
     for (const o of orders) {
