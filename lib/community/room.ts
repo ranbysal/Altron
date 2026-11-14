@@ -6,10 +6,10 @@ import { create } from "zustand";
  * hour after it closes or until the next trade opens, whichever comes first.
  */
 
-export type Msg = { id: string; tradeId: string; name: string; trader?: boolean; text: string; at: number; replyTo?: string };
+export type Msg = { id: string; tradeId: string; name: string; trader?: boolean; text: string; at: number; replyTo?: string; uid?: string; owner?: boolean };
 
-/** Who is typing. Built from Yazan's seat for now; members get their own name once sign-in exists. */
-export const VIEWER = { name: "Yazan", trader: true };
+/** Who is speaking: the signed-in person, as themselves. */
+export type Speaker = { id: string | null; name: string; role: "member" | "trader" | "owner" | null };
 
 const KEY = "altron-room-v1";
 export const ROOM_AFTER_MS = 60 * 60_000;
@@ -36,10 +36,13 @@ export function startRoom() {
 }
 
 let n = 0;
-export function say(tradeId: string, text: string, replyTo?: string) {
+export function say(who: Speaker, tradeId: string, text: string, replyTo?: string) {
   const body = text.trim().slice(0, 1200);
-  if (!body) return;
-  useRoom.setState({ msgs: [...useRoom.getState().msgs, { id: `m${Date.now().toString(36)}${(n++).toString(36)}`, tradeId, name: VIEWER.name, trader: VIEWER.trader, text: body, at: Date.now(), replyTo }] });
+  if (!body || !who.name) return;
+  const msg: Msg = { id: `m${Date.now().toString(36)}${(n++).toString(36)}`, tradeId, name: who.name, text: body, at: Date.now(), replyTo, uid: who.id ?? undefined };
+  if (who.role === "trader") msg.trader = true;
+  if (who.role === "owner") msg.owner = true;
+  useRoom.setState({ msgs: [...useRoom.getState().msgs, msg] });
 }
 
 /** When a trade's room shuts: an hour after the close, or the moment the next trade opens. */

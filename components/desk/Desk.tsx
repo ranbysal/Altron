@@ -18,7 +18,7 @@ const KEYS: [string, string][] = [
   ["S", "Sell at market, ticket size, with bracket"],
   ["F", "Close the position in the selected market"],
   ["Esc", "Close a pop-up, leave full screen, then cancel working entries"],
-  ["1 – 4", "Switch market"],
+  ["1 – 8", "Switch market"],
   ["T", "Next timeframe"],
   ["M", "Markets panel"],
   ["L", "Live P&L panel"],
@@ -151,7 +151,7 @@ export function Desk({ owner }: { owner?: OwnerSide } = {}) {
         const i = TIMEFRAMES.findIndex((x) => x.id === st.settings.tf);
         return setSettings({ tf: TIMEFRAMES[(i + 1) % TIMEFRAMES.length].id });
       }
-      if (["1", "2", "3", "4"].includes(k)) return selectSym(SYMS[+k - 1]);
+      if (/^[1-8]$/.test(k) && SYMS[+k - 1]) return selectSym(SYMS[+k - 1]);
       if (!st.settings.hotkeys) return;
       if (lower === "b" || lower === "s") {
         e.preventDefault();

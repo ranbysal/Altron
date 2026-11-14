@@ -1,0 +1,46 @@
+/* The owner's dashboard: the paper account, trade by trade. */
+
+.curve { position: relative; height: 240px; margin: 0 -32px; padding: 0 32px 18px; color: var(--pos); }
+.curve svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.curve .up { color: var(--pos); }
+.curve .down { color: var(--neg); }
+.line { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linejoin: round; }
+.zero { stroke: var(--tl); stroke-dasharray: 2 4; }
+.curveEnd { position: absolute; right: 32px; top: 0; font-family: var(--mono); font-size: 11px; color: var(--dim); font-variant-numeric: tabular-nums; }
+.curveEmpty { display: grid; place-items: center; height: 200px; margin-bottom: 18px; border-top: 1px dashed var(--tl); border-bottom: 1px dashed var(--tl); }
+.curveEmpty span { font-size: 13px; color: var(--dim); }
+
+.split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+
+.empty { margin: 0; font-size: 13px; line-height: 1.55; color: var(--dim); max-width: 46ch; }
+
+.days { margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--tl); }
+.days li { display: grid; grid-template-columns: 96px minmax(0, 1fr) 84px auto; align-items: center; gap: 14px; padding: 9px 0; border-bottom: 1px solid var(--tl); font-size: 12.5px; }
+.days li > span:first-child { font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
+.days b { font-weight: 400; text-align: right; font-variant-numeric: tabular-nums; }
+.days em { font-style: normal; font-family: var(--mono); font-size: 10px; color: var(--dim); white-space: nowrap; }
+.bar { position: relative; height: 6px; }
+.bar::before { content: ""; position: absolute; inset: 0 auto 0 0; width: calc(var(--w) * 100%); min-width: 2px; border-radius: 1px; background: var(--pos); opacity: 0.85; }
+.bar[data-neg]::before { background: var(--neg); }
+
+.review { display: flex; flex-direction: column; gap: 12px; }
+.review p { margin: 0; font-size: 15px; line-height: 1.6; color: var(--text); max-width: 60ch; }
+.when { font-family: var(--mono); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--dim); }
+.more { align-self: flex-start; display: inline-flex; gap: 8px; align-items: center; height: 34px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--tl); font-size: 12.5px; color: var(--text); text-decoration: none; transition: border-color 0.2s, color 0.2s; }
+.more:hover { border-color: var(--text); color: var(--text-strong); }
+
+.tableWrap { overflow-x: auto; margin: 0 -4px; }
+.table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.table th { padding: 0 12px 10px 0; text-align: left; font-family: var(--mono); font-size: 10px; font-weight: 400; letter-spacing: 0.12em; text-transform: uppercase; color: var(--dim); border-bottom: 1px solid var(--tl); white-space: nowrap; }
+.table td { padding: 11px 12px 11px 0; border-bottom: 1px solid var(--tl); color: var(--text); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.table .num { text-align: right; padding-right: 0; padding-left: 12px; }
+.mono { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.what { max-width: 420px; overflow: hidden; text-overflow: ellipsis; color: var(--muted) !important; }
+.side { display: inline-block; padding: 2px 7px; border-radius: 4px; font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; background: color-mix(in srgb, var(--blue) 12%, transparent); color: var(--blue); }
+.side[data-s="s"] { background: color-mix(in srgb, var(--ember) 12%, transparent); color: var(--ember); }
+.by { display: inline-block; margin-right: 8px; padding: 1px 5px; border-radius: 3px; font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.08em; box-shadow: inset 0 0 0 1px var(--his); color: var(--his); }
+
+@media (max-width: 980px) {
+  .split { grid-template-columns: minmax(0, 1fr); }
+  .curve { margin: 0 -20px; padding: 0 20px 18px; }
+}

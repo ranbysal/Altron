@@ -4,11 +4,11 @@ import { useState } from "react";
 import { DitherGlow } from "./DitherCanvas";
 import s from "./landing.module.css";
 
-const MARKETS = ["NQ", "ES", "MNQ", "MES", "Other"] as const;
+const MARKETS = ["NQ", "ES", "US30", "Gold", "Micros", "Other"] as const;
 
 export function Access() {
   const [sent, setSent] = useState(false);
-  const [picked, setPicked] = useState<Record<string, boolean>>({ NQ: true, MNQ: true });
+  const [picked, setPicked] = useState<Record<string, boolean>>({ NQ: true });
 
   return (
     <section id="access" className={s.access}>

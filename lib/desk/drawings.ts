@@ -74,7 +74,7 @@ function load(): Partial<DrawState> {
       keep: !!raw.keep,
       locked: !!raw.locked,
       hidden: !!raw.hidden,
-      byUnder: { NQ: raw.byUnder?.NQ ?? [], ES: raw.byUnder?.ES ?? [] },
+      byUnder: { NQ: raw.byUnder?.NQ ?? [], ES: raw.byUnder?.ES ?? [], YM: raw.byUnder?.YM ?? [], GC: raw.byUnder?.GC ?? [] },
       fib: fib && fib.length ? fib : FIB_DEFAULT,
     };
   } catch {
@@ -89,7 +89,7 @@ export const useDraw = create<DrawState>(() => ({
   keep: false,
   locked: false,
   hidden: false,
-  byUnder: { NQ: [], ES: [] },
+  byUnder: { NQ: [], ES: [], YM: [], GC: [] },
   selected: null,
   fib: FIB_DEFAULT,
 }));

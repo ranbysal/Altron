@@ -44,7 +44,7 @@
 /* ---------------- the stage ---------------- */
 
 .stageHead { position: relative; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 16px; height: 56px; padding: 0 28px; animation: f-rise 0.7s var(--ease) backwards 0.1s; }
-.follow { justify-self: start; display: inline-flex; align-items: center; gap: 10px; height: 30px; padding: 0 14px 0 12px; border: 0; border-radius: 999px; background: none; box-shadow: inset 0 0 0 1px var(--tl); font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text); cursor: pointer; transition: box-shadow 0.3s var(--ease), color 0.3s var(--ease); }
+.follow { justify-self: start; display: inline-flex; align-items: center; gap: 10px; height: 30px; padding: 0 14px 0 12px; border: 0; border-radius: 999px; background: none; box-shadow: inset 0 0 0 1px var(--tl); font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text); white-space: nowrap; cursor: pointer; transition: box-shadow 0.3s var(--ease), color 0.3s var(--ease); }
 .follow i { width: 7px; height: 7px; border-radius: 50%; box-shadow: inset 0 0 0 1.2px var(--dim); }
 .follow[data-on] i { background: var(--live-green); box-shadow: none; animation: f-live 2.2s infinite; }
 .follow:hover { color: var(--text-strong); box-shadow: inset 0 0 0 1px var(--dim); }
@@ -252,6 +252,17 @@
 .sent b { font-weight: 400; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sent li[data-k="stopline"] b { color: var(--ember); }
 .sent em { font-style: normal; font-family: var(--mono); font-size: 10px; color: var(--dim); }
+.sent > .k:not(:first-child) { margin-top: 18px; }
+.calls li { grid-template-columns: 64px 128px minmax(0, 1fr) auto; }
+.calls li span { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.calls li:not([data-ok]) span { color: var(--ember); }
+.calls li:not([data-acted]) b { color: var(--muted); }
+.budget { display: grid; gap: 8px; width: 100%; max-width: 420px; padding: 4px 0 2px; }
+.budget b { font-weight: 300; font-size: 22px; letter-spacing: -0.02em; color: var(--text-strong); font-variant-numeric: tabular-nums; }
+.budget b em { font-style: normal; font-size: 13px; color: var(--dim); letter-spacing: 0; }
+.budgetBar { position: relative; height: 4px; border-radius: 2px; background: var(--tl); overflow: visible; }
+.budgetBar::before { content: ""; position: absolute; inset: 0 auto 0 0; width: calc(var(--p) * 100%); border-radius: 2px; background: var(--his); transition: width 0.6s cubic-bezier(0.3, 1, 0.4, 1); }
+.budgetBar i { position: absolute; top: -3px; width: 1px; height: 10px; background: var(--dim); }
 
 /* ---------------- narrower screens ---------------- */
 
@@ -269,7 +280,8 @@
 }
 @media (max-width: 760px) {
   .twins { grid-template-columns: minmax(0, 1fr); }
-  .stageHead { grid-template-columns: 1fr auto; padding: 0 20px; }
+  .stageHead { grid-template-columns: auto minmax(0, 1fr); padding: 0 20px; }
+  .headMeta { justify-self: end; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   .headAcct { display: none; }
   .twinFoot { flex-direction: column; align-items: stretch; }
   .openBtn { justify-content: space-between; }
@@ -283,6 +295,9 @@
   .ladder::before { display: none; }
   .wire { grid-template-columns: 10px minmax(0, 1fr); }
   .wire span { grid-column: 2; }
+  .wiring { grid-template-columns: minmax(0, 1fr); gap: 28px; }
+  .calls li { grid-template-columns: 56px minmax(0, 1fr) auto; }
+  .calls li span { grid-column: 2 / -1; }
 }
 @media (prefers-reduced-motion: reduce) {
   .page *, .page *::before, .page *::after { animation: none !important; transition: none !important; }

@@ -86,6 +86,7 @@ export function Calendar({ period, selected, onSelect, daily }: { period: Period
           })}
           {hover && (
             <div
+              data-pop=""
               className={s.calTip}
               style={{ "--cx": (hover.w + 0.5) / CALENDAR_WEEKS, "--row": hover.d } as CSSProperties}
             >

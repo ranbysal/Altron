@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { fmt } from "@/lib/format";
-import { INSTRUMENTS } from "@/lib/desk/instruments";
+import { INSTRUMENTS, MICRO_OF } from "@/lib/desk/instruments";
 import { hisBook, openPnl, useDesk, type Order, type Trade } from "@/lib/desk/store";
 import { clockS, currentTrade } from "@/lib/community/trades";
 import { startRoom } from "@/lib/community/room";
@@ -46,7 +46,7 @@ export function useFollowView() {
   const ownOrders = useDesk((d) => d.orders);
   const f: Follow | undefined = trade && st ? st.follows[trade.id] : undefined;
   const log = useMemo(() => (st && trade ? st.log.filter((l) => l.his === trade.id) : NO_LOG), [st, trade]);
-  const his = useMemo(() => (trade ? hisOf(trade, { orders: hisOrders } as never) : null), [trade, hisOrders]);
+  const his = useMemo(() => (trade ? hisOf(trade, hisOrders) : null), [trade, hisOrders]);
   const acct = st ? account(rules, limits, st, equity) : null;
   const orders = useMemo(() => (trade ? ownOrders.filter((o) => o.follows === trade.id) : []), [ownOrders, trade]);
   return { now, ready: ready && !!st, trade, his, f, own, log, st, rules, limits, acct, orders, thinking };
@@ -142,7 +142,7 @@ export function Pending({ v }: { v: View }) {
       {his && (
         <div className={x.waitHead}>
           <span className={`${x.side} ${his.dir > 0 ? x.sideL : x.sideS}`}>{his.dir > 0 ? "Long" : "Short"}</span>
-          <span>{INSTRUMENTS[his.under === "NQ" ? "MNQ" : "MES"].name.replace("Micro E-mini ", "")} micros</span>
+          <span>{INSTRUMENTS[MICRO_OF[his.under]].name.replace("Micro E-mini ", "").replace("Micro ", "")} micros</span>
           <em>{f?.status === "watching" ? mmss(limits.window - t) : ""}</em>
         </div>
       )}

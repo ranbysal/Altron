@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "worker": "tsx worker/main.ts"
   },
   "engines": {
     "node": ">=20.9.0"
@@ -18,6 +19,7 @@
     "next": "^16.4.5",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
+    "tsx": "^4.23.15",
     "zustand": "^5.1.0"
   },
   "devDependencies": {

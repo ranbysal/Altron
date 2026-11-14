@@ -12,7 +12,9 @@ import { BAYER4 } from "@/lib/noise";
 import { onThemeChange } from "@/lib/theme";
 import { fmt, money } from "@/lib/format";
 import { TRADES, computeStats } from "@/lib/journal";
-import { placeholders, say, startRoom, useRoom, VIEWER } from "@/lib/community/room";
+import { placeholders, say, startRoom, useRoom } from "@/lib/community/room";
+import { useMe } from "@/lib/me";
+import { isOpen } from "@/lib/desk/market";
 import { clock, clockS, currentTrade, dayWord, dirOf, entryOf, exitOf, held, notesOf, roomOf, stopOf, streamOf, targetOf, type Line } from "@/lib/community/trades";
 import { useFeed, useNow, type Calendar, type Wire } from "@/lib/community/watch";
 import { CalControls, CalendarCard, Moves, News, XWatcher, useCalView } from "./Watcher";
@@ -400,7 +402,7 @@ function Countdown({ until }: { until: number }) {
   );
 }
 
-function RoomLine({ l, onReply }: { l: Line; onReply?: (l: Line & { kind: "msg" }) => void }) {
+function RoomLine({ l, me, onReply }: { l: Line; me: string | null; onReply?: (l: Line & { kind: "msg" }) => void }) {
   if (l.kind === "event")
     return (
       <li className={c.ev} data-tone={l.tone}>
@@ -424,7 +426,7 @@ function RoomLine({ l, onReply }: { l: Line; onReply?: (l: Line & { kind: "msg" 
       </li>
     );
   return (
-    <li className={c.say} data-trader={l.trader ? "" : undefined}>
+    <li className={c.say} data-trader={l.trader ? "" : undefined} data-mine={l.uid && l.uid === me ? "" : undefined}>
       {l.trader ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img className={c.face} src="/yazan.webp" alt="" width={22} height={22} />
@@ -436,8 +438,9 @@ function RoomLine({ l, onReply }: { l: Line; onReply?: (l: Line & { kind: "msg" 
       <header>
         <b>{l.name}</b>
         {l.trader && <span className={c.badge}>Desk</span>}
+        {l.owner && <span className={c.badge}>Altron</span>}
         <time>{clock(l.at)}</time>
-        {onReply && !l.trader && (
+        {onReply && !(l.uid && l.uid === me) && (
           <button type="button" className={c.replyBtn} onClick={() => onReply(l)}>
             Reply
           </button>
@@ -469,6 +472,7 @@ function Room({ trade, now }: { trade: Trade; now: number }) {
   const [reply, setReply] = useState<(Line & { kind: "msg" }) | null>(null);
   const [fresh, setFresh] = useState(0);
   const seen = useRef(0);
+  const me = useMe();
 
   useLayoutEffect(() => {
     const el = box.current;
@@ -481,9 +485,9 @@ function Room({ trade, now }: { trade: Trade; now: number }) {
   }, [lines.length]);
 
   const send = () => {
-    if (!room.open || !text.trim()) return;
+    if (!room.open || !text.trim() || !me.name) return;
     stick.current = true;
-    say(trade.id, text, reply?.id);
+    say(me, trade.id, text, reply?.id);
     setText("");
     setReply(null);
   };
@@ -520,11 +524,18 @@ function Room({ trade, now }: { trade: Trade; now: number }) {
           <RoomLine
             key={l.id}
             l={l}
+            me={me.id}
             onReply={
               room.open
                 ? (m) => {
                     setReply(m);
-                    area.current?.focus();
+                    // after the reply bar renders, with the caret at the end of anything already typed
+                    requestAnimationFrame(() => {
+                      const el = area.current;
+                      if (!el) return;
+                      el.focus();
+                      el.setSelectionRange(el.value.length, el.value.length);
+                    });
                   }
                 : undefined
             }
@@ -561,7 +572,14 @@ function Room({ trade, now }: { trade: Trade; now: number }) {
                 Replying to <b>{reply.name}</b>
                 <em>{reply.text}</em>
               </span>
-              <button type="button" onClick={() => setReply(null)} aria-label="Cancel the reply">
+              <button
+                type="button"
+                onClick={() => {
+                  setReply(null);
+                  area.current?.focus();
+                }}
+                aria-label="Cancel the reply"
+              >
                 ×
               </button>
             </div>
@@ -571,7 +589,7 @@ function Room({ trade, now }: { trade: Trade; now: number }) {
               ref={area}
               value={text}
               onChange={(e) => setText(e.target.value)}
-              placeholder={reply ? `Reply to ${reply.name}` : `Message the room as ${VIEWER.name}`}
+              placeholder={reply ? `Reply to ${reply.name}` : me.name ? `Message the room as ${me.name}` : "Message the room"}
               rows={1}
               maxLength={1200}
               aria-label="Message the room"
@@ -586,7 +604,7 @@ function Room({ trade, now }: { trade: Trade; now: number }) {
                 }
               }}
             />
-            <button type="submit" disabled={!text.trim()} aria-label="Send">
+            <button type="submit" disabled={!text.trim() || !me.name} aria-label="Send">
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <path d="M8 13V3M3.5 7.5 8 3l4.5 4.5" />
               </svg>
@@ -648,10 +666,13 @@ function SheetIn({ trade, kind, now, onClose, side }: Omit<SheetProps, "who">) {
   const [full, setFull] = useState(false);
   const fullRef = useRef(full);
   fullRef.current = full;
+  // the parent hands a new onClose every second; the sheet's setup must not run again for it
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   const close = useCallback(() => {
     setLeaving(true);
-    window.setTimeout(onClose, 180);
-  }, [onClose]);
+    window.setTimeout(() => onCloseRef.current(), 180);
+  }, []);
 
   // the page underneath stays still and out of reach
   useEffect(() => {
@@ -950,7 +971,7 @@ export function Community() {
           {ready && <History trades={past} now={now} onOpen={(x) => setOpen({ id: x.id, kind: "history" })} />}
         </Cell>
 
-        <Cell i={6} className={c.aMoves} label="Moves" aside="NQ and ES · this session" bodyClass={c.body}>
+        <Cell i={6} className={c.aMoves} label="Moves" aside={`NQ and ES · ${isOpen(now) ? "this session" : "last session"}`} bodyClass={c.body}>
           <Moves now={now} />
         </Cell>
       </div>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { isOpen } from "@/lib/desk/market";
 import { dayStart, getMarket, useDesk } from "@/lib/desk/store";
 import { INSTRUMENTS, type Under } from "@/lib/desk/instruments";
 import { fmt } from "@/lib/format";
@@ -536,7 +537,7 @@ function Market({ under, s, marks, hot }: { under: Under; s: Session | null; mar
           {up ? "+" : "−"}
           {fmt(Math.abs(chg))}
           <em>
-            {up ? "+" : "−"}
+            {Math.abs(pct) < 0.005 ? "" : up ? "+" : "−"}
             {Math.abs(pct).toFixed(2)}%
           </em>
         </span>
@@ -565,11 +566,15 @@ export function Moves({ now }: { now: number }) {
     const run = () => {
       const m = getMarket();
       if (!m) return;
-      const since = dayStart();
       const sessions: Partial<Record<Under, Session>> = {};
       const moves: Move[] = [];
       for (const u of ["NQ", "ES"] as Under[]) {
-        const s = sessionOf(m, u, since);
+        // while the market is shut (the weekend, the 5 PM halt) the last session stays up
+        const bars = m.bars(u, 60);
+        let k = bars.length - 1;
+        while (k > 0 && !isOpen(bars[k].t)) k--;
+        const last = bars[k]?.t ?? Date.now();
+        const s = sessionOf(m, u, Math.min(dayStart(), dayStart(last)));
         if (!s) continue;
         sessions[u] = s;
         moves.push(...movesOf(s));

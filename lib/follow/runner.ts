@@ -1,11 +1,14 @@
 "use client";
 
 import { create } from "zustand";
-import { INSTRUMENTS, type Sym } from "@/lib/desk/instruments";
-import { cancelOrder, flatten, getMarket, hisBook, moveOrder, openPnl, placeExit, placeOrder, resetOwnerBook, useDesk, type Book, type Trade } from "@/lib/desk/store";
-import { dirOf, entryOf, exitOf, stopOf } from "@/lib/community/trades";
+import type { Sym } from "@/lib/desk/instruments";
+import { cancelOrder, flatten, getMarket, hisBook, moveOrder, placeExit, placeOrder, resetOwnerBook, useDesk } from "@/lib/desk/store";
 import { useOwner } from "@/lib/owner/store";
-import { DEFAULT_LIMITS, DEFAULT_RULES, MICRO, initState, restart, tick, type Action, type Advice, type Alert, type Ask, type His, type Limits, type Rules, type State, type Under, type World } from "./engine";
+import { call, listen, live } from "@/lib/live/link";
+import { DEFAULT_LIMITS, DEFAULT_RULES, MICRO, initState, restart, tick, type Action, type Advice, type Alert, type Ask, type Limits, type Rules, type State, type World } from "./engine";
+import { worldFrom } from "./world";
+import type { AiCall, FollowView, Review } from "@/worker/follow";
+export { hisOf } from "./world";
 
 /*
  * Runs the follow engine against the owner's paper book, once a second, in the browser.
@@ -15,7 +18,7 @@ import { DEFAULT_LIMITS, DEFAULT_RULES, MICRO, initState, restart, tick, type Ac
 
 const KEY = "altron-follow-v2";
 
-export type Sent = { at: number; kind: Alert["kind"]; title: string; lines: string[]; sent: boolean | null };
+export type Sent = { at: number; kind: Alert["kind"] | "review"; title: string; lines: string[]; sent: boolean | null };
 
 type FollowStore = {
   ready: boolean;
@@ -32,9 +35,16 @@ type FollowStore = {
   aiPausedUntil: number;
   thinking: Record<string, boolean>;
   alerts: Sent[];
+  /** where the engine runs: on the worker (always on) or in this page */
+  where: "server" | "page";
+  /** from the worker: every model call, the week's spend, the daily reviews and what's wired */
+  calls: AiCall[];
+  spend: FollowView["spend"] | null;
+  reviews: Review[];
+  wiring: FollowView["wiring"] | null;
 };
 
-export const useFollow = create<FollowStore>(() => ({ ready: false, state: null, rules: DEFAULT_RULES, limits: DEFAULT_LIMITS, ai: null, model: null, discord: null, advice: [], aiFails: 0, aiPausedUntil: 0, thinking: {}, alerts: [] }));
+export const useFollow = create<FollowStore>(() => ({ ready: false, state: null, rules: DEFAULT_RULES, limits: DEFAULT_LIMITS, ai: null, model: null, discord: null, advice: [], aiFails: 0, aiPausedUntil: 0, thinking: {}, alerts: [], where: "page", calls: [], spend: null, reviews: [], wiring: null }));
 const set = useFollow.setState;
 const get = useFollow.getState;
 
@@ -66,55 +76,23 @@ function save() {
 /* the world, from the desk                                            */
 /* ------------------------------------------------------------------ */
 
-const MICROS: Sym[] = ["MNQ", "MES"];
-
-function hisTargets(t: Trade, his: Book): number[] {
-  const live = !t.closedAt;
-  const xs = live ? his.orders.filter((o) => o.sym === t.sym && o.role === "target" && o.limit !== undefined).map((o) => o.limit!) : t.target !== undefined ? [t.target] : [];
-  const e = entryOf(t);
-  return [...new Set(xs)].sort((a, b) => Math.abs(a - e) - Math.abs(b - e));
-}
-
-/** One of Yazan's desk trades, the way the engine reads it. */
-export function hisOf(t: Trade, his: Book): His {
-  return { id: t.id, under: INSTRUMENTS[t.sym].under as Under, dir: dirOf(t) as 1 | -1, qty: t.qty, entry: entryOf(t), openedAt: t.openedAt, closedAt: t.closedAt, exit: exitOf(t), targets: hisTargets(t, his), stop: stopOf(t, his.orders) };
-}
+const MICROS: Sym[] = ["MNQ", "MES", "MYM", "MGC"];
 
 function worldOf(now: number): World | null {
   const d = useDesk.getState();
   if (!d.ready || d.seat !== "owner" || !d.other) return null;
-  const his = hisBook(d);
-  const m = getMarket();
-  const recent = [...his.trades].sort((a, b) => a.openedAt - b.openedAt).slice(-6);
-  const hs: His[] = recent.map((t) => hisOf(t, his));
-  const latest = hs[hs.length - 1];
-  const under: Under = latest?.under ?? "NQ";
-  const msym = MICRO[under].sym as Sym;
-  const results: Record<string, number> = {};
-  for (const t of d.trades) if (t.follows && t.closedAt) results[t.follows] = (results[t.follows] ?? 0) + t.pnl;
-  const tradeOf = new Map(d.trades.map((t) => [t.id, t]));
-  return {
+  return worldFrom({
     now,
-    last: d.quotes[msym].last,
-    bars: (m?.bars(under, 60) ?? []).slice(-30).map((b) => ({ t: b.t, h: b.h, l: b.l, c: b.c })),
-    ticks: (m?.bars(under, 1) ?? []).filter((b) => b.t >= now - 6 * 60_000).map((b) => ({ t: b.t, p: b.c })),
-    his: hs,
-    mine: {
-      positions: MICROS.flatMap((x) => {
-        const p = d.positions[x];
-        return p ? [{ under: INSTRUMENTS[x].under as Under, qty: p.qty, avg: p.avg, follows: tradeOf.get(p.tradeId)?.follows }] : [];
-      }),
-      orders: d.orders.filter((o) => MICROS.includes(o.sym)).map((o) => ({ id: o.id, side: o.side, qty: o.qty, price: (o.role === "stop" || o.type === "STP" ? o.stop : o.limit) ?? 0, follows: o.follows, tag: o.tag })),
-      fills: d.fills.filter((f) => MICROS.includes(f.sym) && tradeOf.get(f.tradeId)?.follows !== undefined).slice(-40).map((f) => ({ under: INSTRUMENTS[f.sym].under as Under, side: f.side, qty: f.qty, price: f.price, at: f.at, role: f.role })),
-      balance: d.start + d.trades.reduce((a, t) => a + t.pnl, 0),
-      open: openPnl(d),
-      results,
-    },
+    his: { ...hisBook(d), notices: d.notices },
+    mine: { positions: d.positions, orders: d.orders, fills: d.fills, trades: d.trades, notes: d.notes, notices: [] },
+    start: d.start,
+    quotes: d.quotes,
+    market: getMarket(),
     following: useOwner.getState().following,
     news: newsNext(now),
     advice: get().advice,
     ai: get().limits.useAI && !!get().ai && now >= get().aiPausedUntil,
-  };
+  });
 }
 
 /* ------------------------------------------------------------------ */
@@ -220,6 +198,7 @@ let started = false;
 export function startFollow() {
   if (started || typeof window === "undefined") return;
   started = true;
+  if (live()) return startServer();
   const saved = load();
   if (saved) set({ rules: { ...DEFAULT_RULES, ...saved.rules }, limits: { ...DEFAULT_LIMITS, ...saved.limits, risk: { ...DEFAULT_LIMITS.risk, ...saved.limits?.risk }, minStop: { ...DEFAULT_LIMITS.minStop, ...saved.limits?.minStop } }, alerts: saved.alerts ?? [] });
   set({ ready: true });
@@ -242,13 +221,16 @@ export function startFollow() {
 
 export function setRules(patch: Partial<Rules>) {
   set({ rules: { ...get().rules, ...patch } });
+  if (server("rules", { patch })) return;
   save();
 }
 export function setLimits(patch: Partial<Limits>) {
   set({ limits: { ...get().limits, ...patch } });
+  if (server("limits", { patch })) return;
   save();
 }
 export function restartFollow() {
+  if (server("restart")) return;
   const st = get().state;
   if (!st) return;
   set({ state: restart(st, Date.now()) });
@@ -256,12 +238,70 @@ export function restartFollow() {
 }
 /** Start the paper account over from the firm's size: a fresh evaluation. */
 export function startOver() {
+  if (server("startOver")) return;
   const f = get();
   resetOwnerBook(f.rules.size);
   set({ state: initState(f.rules, f.rules.size, Date.now()), advice: [] });
   save();
 }
+/** Ask for today's review now (on the server only). */
+export function reviewNow() {
+  server("review");
+}
 /** Send a test alert, so the owner knows Discord is wired. */
 export function testAlert() {
+  if (server("test")) return;
   void raise({ kind: "info", title: "Test alert from Altron", lines: ["If this reached your phone, stop line alerts and session summaries will too."] });
+}
+
+/* ------------------------------------------------------------------ */
+/* on the worker                                                       */
+/* ------------------------------------------------------------------ */
+
+/** Send a control to the worker; false when the engine runs in this page. */
+function server(action: string, extra: Record<string, unknown> = {}): boolean {
+  if (get().where !== "server") return false;
+  call<FollowView>("/follow", { method: "POST", body: { action, ...extra } })
+    .then(take)
+    .catch(() => undefined);
+  return true;
+}
+
+function take(v: FollowView) {
+  set({
+    ready: true,
+    state: v.state,
+    rules: v.rules,
+    limits: v.limits,
+    advice: v.advice,
+    alerts: v.alerts,
+    thinking: v.thinking,
+    aiPausedUntil: v.aiPausedUntil,
+    calls: v.calls,
+    spend: v.spend,
+    reviews: v.reviews,
+    wiring: v.wiring,
+    ai: v.wiring.anthropic,
+    model: v.wiring.anthropic ? v.wiring.tiers.entry : null,
+    discord: v.wiring.discord,
+  });
+  if (useOwner.getState().following !== v.following) {
+    syncing = true;
+    useOwner.setState({ following: v.following });
+    syncing = false;
+  }
+}
+
+let syncing = false;
+function startServer() {
+  set({ where: "server" });
+  listen({ follow: (v) => take(v as FollowView) });
+  call<FollowView>("/follow").then(take).catch(() => undefined);
+  // the switch on the owner's pages turns following on and off on the server
+  useOwner.subscribe((s, prev) => {
+    if (syncing || s.following === prev.following) return;
+    call<FollowView>("/follow", { method: "POST", body: { action: "following", on: s.following } })
+      .then(take)
+      .catch(() => undefined);
+  });
 }

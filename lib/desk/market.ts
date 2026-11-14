@@ -1,7 +1,7 @@
-import type { Under } from "./instruments";
+import { UNDERS, type Under } from "./instruments";
 
 /**
- * Simulated CME feed for the desk: NQ and ES, correlated, ticking four times a
+ * Simulated CME feed for the desk: NQ, ES and the Dow, correlated, and Gold, ticking four times a
  * second. History comes in layers so every timeframe has depth:
  *   - one-second bars for the last two hours
  *   - one-minute bars for the last ten days
@@ -27,6 +27,8 @@ export type Quote = {
 const SPEC: Record<Under, { tick: number; start: number; sigma: number; vol: number; dayVol: number }> = {
   NQ: { tick: 0.25, start: 24486.25, sigma: 9.5, vol: 950, dayVol: 0.0145 },
   ES: { tick: 0.25, start: 6836.5, sigma: 2.3, vol: 2300, dayVol: 0.0105 },
+  YM: { tick: 1, start: 47852, sigma: 15, vol: 260, dayVol: 0.0095 },
+  GC: { tick: 0.1, start: 4085.3, sigma: 1.45, vol: 620, dayVol: 0.0115 },
 };
 
 /** Rough turning points of the last few years, so the long views look like the market did. */
@@ -70,6 +72,44 @@ const PATH: Record<Under, [string, number][]> = {
     ["2025-07-28", 6420],
     ["2025-10-29", 6900],
     ["2026-01-15", 7010],
+  ],
+  YM: [
+    ["2019-01-02", 23300],
+    ["2019-12-31", 28500],
+    ["2020-02-12", 29500],
+    ["2020-03-23", 18300],
+    ["2020-09-02", 29100],
+    ["2021-12-31", 36300],
+    ["2022-09-30", 28700],
+    ["2023-03-15", 31800],
+    ["2023-07-31", 35600],
+    ["2023-10-27", 32400],
+    ["2024-07-17", 41200],
+    ["2024-08-05", 38700],
+    ["2024-12-04", 45000],
+    ["2025-04-07", 37600],
+    ["2025-07-28", 44900],
+    ["2025-10-28", 48000],
+    ["2026-01-15", 49000],
+  ],
+  GC: [
+    ["2019-01-02", 1285],
+    ["2019-09-04", 1560],
+    ["2020-03-16", 1460],
+    ["2020-08-06", 2070],
+    ["2021-03-08", 1680],
+    ["2022-03-08", 2070],
+    ["2022-09-28", 1630],
+    ["2023-05-04", 2080],
+    ["2023-10-05", 1830],
+    ["2024-04-12", 2440],
+    ["2024-10-30", 2800],
+    ["2024-12-30", 2610],
+    ["2025-04-22", 3500],
+    ["2025-06-30", 3300],
+    ["2025-10-20", 4380],
+    ["2025-10-28", 3950],
+    ["2026-01-15", 4300],
   ],
 };
 
@@ -359,16 +399,60 @@ type Series = {
 export const TF_SECONDS = [1, 30, 60, 300, 900, 1800, 3600, 86400] as const;
 export type TfSec = (typeof TF_SECONDS)[number];
 
+/* ------------------------------------------------------------------ */
+/* one tape for everyone: the server's market, streamed                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Bars as a flat list of small whole numbers: seconds since the bar before, then (in ticks) the
+ * open against the last close, high above open, open above low, close against open, and volume.
+ */
+export function packBars(bars: Bar[], tick: number): number[] {
+  const out: number[] = [];
+  let prevT = 0;
+  let prevC = 0;
+  for (const b of bars) {
+    const t = Math.round(b.t / 1000);
+    const o = Math.round(b.o / tick);
+    const c = Math.round(b.c / tick);
+    out.push(t - prevT, o - prevC, Math.round(b.h / tick) - o, o - Math.round(b.l / tick), c - o, b.v);
+    prevT = t;
+    prevC = c;
+  }
+  return out;
+}
+export function unpackBars(a: number[], tick: number): Bar[] {
+  const out: Bar[] = [];
+  let t = 0;
+  let c = 0;
+  for (let i = 0; i + 5 < a.length; i += 6) {
+    t += a[i];
+    const o = c + a[i + 1];
+    c = o + a[i + 4];
+    out.push({ t: t * 1000, o: o * tick, h: (o + a[i + 2]) * tick, l: (o - a[i + 3]) * tick, c: c * tick, v: a[i + 5] });
+  }
+  return out;
+}
+
+type SnapSeries = { s1: number[]; m1: number[]; quote: Quote; latent: number; anchor: number; heat: number };
+/** What a browser needs to draw the same tape as the server: recent seconds and minutes, and the quote. */
+export type MarketSnap = { at: number; u: Record<Under, SnapSeries> };
+/** One streamed step: each market's quote and its latest second and minute bars. */
+export type MarketTick = { at: number; u: Partial<Record<Under, { q: Quote; s: Bar; m: Bar }>> };
+
 export class Market {
   private series: Record<Under, Series>;
   private rnd: () => number;
   private lastStep = 0;
   private rolls = new Map<string, Rollup>();
   private joined = new Map<string, { n: number; bars: Bar[] }>();
+  /** fed by the server rather than walking on its own */
+  private remote = false;
+  private pending: MarketTick[] = [];
 
   private pins: Pins;
 
-  constructor(endPrices?: Partial<Record<Under, number>>, pins: Pins = {}) {
+  constructor(endPrices?: Partial<Record<Under, number>>, pins: Pins = {}, snap?: MarketSnap) {
     this.pins = pins;
     let seed = (Date.now() % 2147483647) | 0;
     this.rnd = () => {
@@ -378,8 +462,72 @@ export class Market {
       return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
     };
     const now = Date.now();
-    this.series = { NQ: this.build("NQ", now, endPrices?.NQ), ES: this.build("ES", now, endPrices?.ES) };
+    if (snap) {
+      this.remote = true;
+      this.series = Object.fromEntries(UNDERS.map((u) => [u, snap.u[u] ? this.fromSnap(u, snap.u[u], now) : this.build(u, now)])) as Record<Under, Series>;
+    } else this.series = Object.fromEntries(UNDERS.map((u) => [u, this.build(u, now, endPrices?.[u])])) as Record<Under, Series>;
     this.lastStep = now;
+  }
+
+  /** The server's recent tape, with older history drawn here to meet it. */
+  private fromSnap(under: Under, x: SnapSeries, now: number): Series {
+    const sp = SPEC[under];
+    const m1 = unpackBars(x.m1, sp.tick);
+    const s1 = unpackBars(x.s1, sp.tick);
+    const m30 = this.halfHours(under, m1[0].t, m1[0].o);
+    const d1 = this.days(under, m30[0].t, m30[0].o);
+    return { under, tick: sp.tick, latent: x.latent, anchor: x.anchor, s1, m1, m30, d1, version: 0, heat: x.heat, quote: { ...x.quote, at: x.quote.at || now } };
+  }
+
+  snapshot(): MarketSnap {
+    // three days of minutes and half an hour of seconds; older history is drawn by the page
+    const one = (s: Series): SnapSeries => ({ s1: packBars(s.s1.slice(-1800), s.tick), m1: packBars(s.m1.slice(-3 * 1380), s.tick), quote: s.quote, latent: s.latent, anchor: s.anchor, heat: s.heat });
+    return { at: Date.now(), u: Object.fromEntries(UNDERS.map((u) => [u, one(this.series[u])])) as Record<Under, SnapSeries> };
+  }
+
+  /** The latest step, for streaming. */
+  tickNow(): MarketTick {
+    const one = (s: Series) => ({ q: s.quote, s: s.s1[s.s1.length - 1], m: s.m1[s.m1.length - 1] });
+    return { at: Date.now(), u: Object.fromEntries(UNDERS.map((u) => [u, one(this.series[u])])) };
+  }
+
+  /** A step from the server; applied on the next `step`. */
+  feed(t: MarketTick) {
+    this.pending.push(t);
+  }
+
+  isRemote() {
+    return this.remote;
+  }
+
+  private applyRemote(): boolean {
+    if (!this.pending.length) return false;
+    const list = this.pending;
+    this.pending = [];
+    let changed = false;
+    for (const t of list) {
+      for (const under of UNDERS) {
+        const u = t.u[under];
+        if (!u) continue;
+        const s = this.series[under];
+        const put = (arr: Bar[], b: Bar, keep: number) => {
+          const last = arr[arr.length - 1];
+          if (last && last.t === b.t) arr[arr.length - 1] = { ...b };
+          else if (!last || b.t > last.t) {
+            arr.push({ ...b });
+            const extra = arr.length - keep;
+            if (extra > 600) arr.splice(0, extra);
+          }
+        };
+        put(s.s1, u.s, S1_KEEP);
+        put(s.m1, u.m, M1_DAYS * 1380 + 900);
+        if (u.q.last !== s.quote.last || u.q.at !== s.quote.at) changed = true;
+        s.quote = u.q;
+        s.latent = u.q.last;
+        s.version++;
+      }
+    }
+    return changed;
   }
 
   private snapper(tick: number) {
@@ -627,6 +775,7 @@ export class Market {
 
   /** Advance the tape to `now`. Returns true if any price changed. */
   step(now: number): boolean {
+    if (this.remote) return this.applyRemote();
     let changed = false;
     // after a long sleep (hidden tab), pick the tape up again instead of racing through it
     if (now - this.lastStep > 20_000) this.lastStep = now - 20_000;
@@ -636,8 +785,11 @@ export class Market {
       const t = this.lastStep + (k + 1) * STEP_MS;
       const z1 = gauss(this.rnd);
       const z2 = gauss(this.rnd);
-      const shocks: Record<Under, number> = { NQ: z1, ES: 0.86 * z1 + 0.51 * z2 };
-      for (const under of ["NQ", "ES"] as Under[]) {
+      const z3 = gauss(this.rnd);
+      const z4 = gauss(this.rnd);
+      // the indexes move together; gold mostly on its own, a little against them
+      const shocks: Record<Under, number> = { NQ: z1, ES: 0.86 * z1 + 0.51 * z2, YM: 0.78 * z1 + 0.32 * z2 + 0.54 * z3, GC: -0.12 * z1 + 0.99 * z4 };
+      for (const under of UNDERS) {
         const s = this.series[under];
         const sp = SPEC[under];
         // bursts: volatility clusters, then calms

@@ -433,3 +433,16 @@ begin
     end if;
   end loop;
 end $$;
+
+-- ---------------------------------------------------------------------------
+-- the worker (Railway): both paper books, the follow engine, AI spend, reviews
+-- ---------------------------------------------------------------------------
+
+-- one row per key ("books", "follow"), written only by the worker with the service role key
+create table if not exists public.worker_state (
+  key text primary key,
+  data jsonb not null,
+  updated_at timestamptz not null default now()
+);
+alter table public.worker_state enable row level security;
+-- no policies: browsers never read this table; they get the books from the worker

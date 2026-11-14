@@ -64,7 +64,7 @@ function ChartBar({ viewer = false, frozen = false }: { viewer?: boolean; frozen
           <rect className={s.barIconFill} x="2.6" y="3.6" width="2.4" height="8.8" rx="0.8" />
         </svg>
       </button>
-      <div className={s.syms} role="tablist" aria-label="Market" style={{ "--i": SYMS.indexOf(sym) } as CSSProperties}>
+      <div className={s.syms} role="tablist" aria-label="Market" style={{ "--c": SYMS.indexOf(sym) % 4, "--r": Math.floor(SYMS.indexOf(sym) / 4) } as CSSProperties}>
         <span className={s.symBar} aria-hidden="true" />
         {SYMS.map((x, k) => (
           <button key={x} type="button" role="tab" aria-selected={x === sym} onClick={() => selectSym(x)} title={`${INSTRUMENTS[x].name} (${k + 1})`}>
@@ -152,7 +152,7 @@ type Line = {
   order?: Order;
   alertId?: string;
   /** the ticket's order, drawn before it's sent */
-  draft?: "entry" | "stop" | "target";
+  draft?: "entry" | "stop" | "target" | "target2";
   /** a draft exit that keeps its distance when the draft entry is dragged */
   follows?: boolean;
   /** a stop or target moved since members last heard: offer to tell them */
@@ -267,11 +267,12 @@ export function Chart({
   const alerts = useDesk(useShallow((st) => st.alerts.filter((a) => a.sym === sym)));
   const ticket = useDesk((st) => st.ticket);
   const tQty = useDesk((st) => st.settings.qty[sym]);
-  const [dStop, dTarget, dFollowStop, dFollowTarget] = useDesk(
+  const [dStop, dTarget, dFollowStop, dFollowTarget, dTarget2, dFollowTarget2] = useDesk(
     useShallow((st) => {
       const e = ticketExits(st, sym);
-      const exact = (w: "stop" | "target") => st.ticket.pxSym === sym && st.settings.exitUnits[w][0] === "price" && (w === "stop" ? st.ticket.stopPx : st.ticket.targetPx) !== null;
-      return [e.stop, e.target, !exact("stop"), !exact("target")] as const;
+      const px = { stop: st.ticket.stopPx, target: st.ticket.targetPx, target2: st.ticket.target2Px };
+      const exact = (w: "stop" | "target" | "target2") => st.ticket.pxSym === sym && st.settings.exitUnits[w][0] === "price" && px[w] !== null;
+      return [e.stop, e.target, !exact("stop"), !exact("target"), st.settings.qty[sym] >= 2 ? e.target2 : null, !exact("target2")] as const;
     }),
   );
   const log = useDesk((st) => st.settings.chart.log);
@@ -373,7 +374,7 @@ export function Chart({
         for (const o of orders) {
           if (o.role !== "stop" && o.role !== "target") continue;
           const p = o.role === "stop" ? o.stop! : o.limit!;
-          const pnl = (p - pos.avg) * pos.qty * inst.pv;
+          const pnl = (p - pos.avg) * Math.sign(pos.qty) * Math.min(o.qty, Math.abs(pos.qty)) * inst.pv;
           out.push({ id: o.id, price: p, kind: o.role, title: o.role === "stop" ? "Stop" : "Target", value: money(pnl), tone: pnl >= 0 ? "pos" : "neg", drag: false });
         }
       }
@@ -385,9 +386,9 @@ export function Chart({
       for (const o of orders) {
         if (o.role !== "stop" && o.role !== "target") continue;
         const p = o.role === "stop" ? o.stop! : o.limit!;
-        const pnl = (p - pos.avg) * pos.qty * inst.pv;
+        const pnl = (p - pos.avg) * Math.sign(pos.qty) * Math.min(o.qty, Math.abs(pos.qty)) * inst.pv;
         const moved = seat === "trader" && p !== o.told && p !== o.quiet;
-        out.push({ id: o.id, price: p, kind: o.role, title: o.role === "stop" ? (o.type === "TRAIL" ? "Trail" : "Stop") : "Target", value: money(pnl), tone: pnl >= 0 ? "pos" : "neg", order: o, moved, drag: true });
+        out.push({ id: o.id, price: p, kind: o.role, title: o.role === "stop" ? (o.type === "TRAIL" ? "Trail" : "Stop") : o.tag === "tp2" ? "Target 2" : "Target", value: money(pnl), tone: pnl >= 0 ? "pos" : "neg", order: o, moved, drag: true });
       }
     }
     for (const o of orders) {
@@ -403,11 +404,12 @@ export function Chart({
       const side = ticket.side;
       const legPnl = (p: number) => (p - dp) * side * tQty * inst.pv;
       out.push({ id: "d-entry", price: dp, kind: side > 0 ? "dbuy" : "dsell", title: `${side > 0 ? "Buy" : "Sell"} ${tQty}`, value: ticket.type === "LMT" ? "Limit" : "Stop", draft: "entry", drag: true });
-      if (dTarget !== null) out.push({ id: "d-target", price: dTarget, kind: "dtarget", title: "TP", value: money(legPnl(dTarget)), tone: "pos", draft: "target", follows: dFollowTarget, drag: true });
+      if (dTarget !== null) out.push({ id: "d-target", price: dTarget, kind: "dtarget", title: dTarget2 !== null ? "TP1" : "TP", value: money(legPnl(dTarget) / (dTarget2 !== null ? 2 : 1)), tone: "pos", draft: "target", follows: dFollowTarget, drag: true });
+      if (dTarget2 !== null) out.push({ id: "d-target2", price: dTarget2, kind: "dtarget", title: "TP2", value: money(legPnl(dTarget2) / 2), tone: "pos", draft: "target2", follows: dFollowTarget2, drag: true });
       if (dStop !== null) out.push({ id: "d-stop", price: dStop, kind: "dstop", title: "SL", value: money(legPnl(dStop)), tone: "neg", draft: "stop", follows: dFollowStop, drag: true });
     }
     return out;
-  }, [viewer, marks, hisPos, hisOrders, seat, pos, orders, alerts, inst.pv, ticket, tQty, dStop, dTarget, dFollowStop, dFollowTarget]);
+  }, [viewer, marks, hisPos, hisOrders, seat, pos, orders, alerts, inst.pv, ticket, tQty, dStop, dTarget, dFollowStop, dFollowTarget, dTarget2, dFollowTarget2]);
   const linesRef = useRef(lines);
   linesRef.current = lines;
 
@@ -1756,7 +1758,7 @@ export function Chart({
       if (l.order) moveOrder(l.order.id, p);
       if (l.alertId) moveAlert(l.alertId, p);
       if (l.draft === "entry") setTicket(useDesk.getState().ticket.type === "LMT" ? { limit: p } : { stop: p });
-      if (l.draft === "stop" || l.draft === "target") setExitPrice(l.draft, p);
+      if (l.draft === "stop" || l.draft === "target" || l.draft === "target2") setExitPrice(l.draft, p);
     }
     invalidate(true);
   };
@@ -1900,12 +1902,13 @@ export function Chart({
                   <button
                     type="button"
                     className={s.lineX}
-                    aria-label={l.draft === "entry" ? "Back to a market order" : l.draft ? `Remove the ${l.draft === "stop" ? "stop loss" : "take profit"}` : `Cancel ${l.title}`}
+                    aria-label={l.draft === "entry" ? "Back to a market order" : l.draft ? `Remove the ${l.draft === "stop" ? "stop loss" : l.draft === "target2" ? "second target" : "take profit"}` : `Cancel ${l.title}`}
                     onPointerDown={(e) => e.stopPropagation()}
                     onClick={() => {
                       if (l.draft === "entry") setTicket({ type: "MKT" });
                       else if (l.draft === "stop") setSettings({ stopOn: false });
                       else if (l.draft === "target") setSettings({ targetOn: false });
+                      else if (l.draft === "target2") setSettings({ target2On: false });
                       else if (l.order) cancelOrder(l.order.id);
                       else removeAlert(l.alertId!);
                     }}

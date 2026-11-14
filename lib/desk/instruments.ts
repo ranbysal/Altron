@@ -1,7 +1,8 @@
-/** The four contracts the desk trades. Micros track the same index as their minis. */
+/** The contracts the desk trades. Micros track the same market as their minis. */
 
-export type Sym = "NQ" | "ES" | "MNQ" | "MES";
-export type Under = "NQ" | "ES";
+export type Sym = "NQ" | "ES" | "YM" | "GC" | "MNQ" | "MES" | "MYM" | "MGC";
+export type Under = "NQ" | "ES" | "YM" | "GC";
+export const UNDERS: Under[] = ["NQ", "ES", "YM", "GC"];
 
 export type Instrument = {
   sym: Sym;
@@ -18,9 +19,17 @@ export const INSTRUMENTS: Record<Sym, Instrument> = {
   ES: { sym: "ES", under: "ES", code: "ESZ6", name: "E-mini S&P 500", tick: 0.25, pv: 50, micro: false },
   MNQ: { sym: "MNQ", under: "NQ", code: "MNQZ6", name: "Micro E-mini Nasdaq-100", tick: 0.25, pv: 2, micro: true },
   MES: { sym: "MES", under: "ES", code: "MESZ6", name: "Micro E-mini S&P 500", tick: 0.25, pv: 5, micro: true },
+  YM: { sym: "YM", under: "YM", code: "YMZ6", name: "E-mini Dow", tick: 1, pv: 5, micro: false },
+  MYM: { sym: "MYM", under: "YM", code: "MYMZ6", name: "Micro E-mini Dow", tick: 1, pv: 0.5, micro: true },
+  GC: { sym: "GC", under: "GC", code: "GCZ6", name: "Gold", tick: 0.1, pv: 100, micro: false },
+  MGC: { sym: "MGC", under: "GC", code: "MGCZ6", name: "Micro Gold", tick: 0.1, pv: 10, micro: true },
 };
 
-export const SYMS: Sym[] = ["NQ", "ES", "MNQ", "MES"];
+export const SYMS: Sym[] = ["NQ", "ES", "YM", "GC", "MNQ", "MES", "MYM", "MGC"];
+/** Each market's micro. */
+export const MICRO_OF: Record<Under, Sym> = { NQ: "MNQ", ES: "MES", YM: "MYM", GC: "MGC" };
+/** What people call each market. */
+export const UNDER_NAME: Record<Under, string> = { NQ: "Nasdaq", ES: "S&P 500", YM: "US30", GC: "Gold" };
 
 export const tickValue = (s: Sym) => INSTRUMENTS[s].tick * INSTRUMENTS[s].pv;
 export const snap = (s: Sym, p: number) => Math.round(p / INSTRUMENTS[s].tick) * INSTRUMENTS[s].tick;
@@ -53,4 +62,4 @@ export const RANGES: { id: Range; tf: Timeframe; label: string }[] = [
 ];
 
 /** Intraday margin per contract, as discount brokers set it for day trades. */
-export const DAY_MARGIN: Record<Sym, number> = { NQ: 1000, ES: 500, MNQ: 100, MES: 50 };
+export const DAY_MARGIN: Record<Sym, number> = { NQ: 1000, ES: 500, YM: 500, GC: 1000, MNQ: 100, MES: 50, MYM: 50, MGC: 100 };

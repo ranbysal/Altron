@@ -277,6 +277,8 @@ export function EquityChart({
       ro.disconnect();
       off();
       cancelAnimationFrame(st.raf);
+      // a frame cancelled here must not look pending to the next mount (React runs effects twice in development)
+      st.raf = 0;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -348,7 +350,7 @@ export function EquityChart({
             <span className={s.scrub} style={{ transform: `translateX(${hover.x}px)` }} />
             <span className={s.ring} style={{ transform: `translate(${hover.x}px, ${hover.y}px)` }} />
             {p.dd < 0 && <span className={`${s.ring} ${s.ringEmber}`} style={{ transform: `translate(${hover.x}px, ${hover.dy}px)` }} />}
-            <div className={s.tip} style={{ transform: `translateX(${Math.min(Math.max(hover.x + 14, 0), (wrapRef.current?.clientWidth ?? 0) - 214)}px)` }}>
+            <div data-pop="" className={s.tip} style={{ transform: `translateX(${Math.min(Math.max(hover.x + 14, 0), (wrapRef.current?.clientWidth ?? 0) - 214)}px)` }}>
               {t ? (
                 <>
                   <span className={s.tipHead}>

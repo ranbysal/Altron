@@ -14,7 +14,7 @@
 /* inputs                                                              */
 /* ------------------------------------------------------------------ */
 
-export type Under = "NQ" | "ES";
+export type Under = "NQ" | "ES" | "YM" | "GC";
 export type Dir = 1 | -1;
 
 /** Yazan's trade as his book has it. */
@@ -87,7 +87,19 @@ export type Rules = {
   lockAbove: number;
   /** close anything open by this time, minutes after midnight New York */
   closeBy: number;
+  /** the firm's consistency rule: no one day may make more than this share of the profit target */
+  consistency: number | null;
+  /** the most micros the firm lets the account hold */
+  firmMicros: number | null;
+  /** the preset these rules came from, if any */
+  preset: string | null;
 };
+
+/** Firm accounts, as the firm lists them. Lucid Flex is the account being paper tested. */
+export const PRESETS: { id: string; label: string; rules: Omit<Rules, "name" | "funded" | "closeBy"> }[] = [
+  { id: "lucid-flex-150", label: "Lucid Flex 150K", rules: { size: 150_000, drawdown: 4_500, trailing: "eod", profitTarget: 9_000, dailyLoss: 2_700, lockAbove: 100, consistency: 0.4, firmMicros: 100, preset: "lucid-flex-150" } },
+  { id: "lucid-flex-100", label: "Lucid Flex 100K", rules: { size: 100_000, drawdown: 3_000, trailing: "eod", profitTarget: 6_000, dailyLoss: 1_800, lockAbove: 100, consistency: 0.4, firmMicros: 60, preset: "lucid-flex-100" } },
+];
 
 export type Phase = "eval" | "buffer" | "built";
 
@@ -113,7 +125,7 @@ export type Limits = {
   useAI: boolean;
 };
 
-export const DEFAULT_RULES: Rules = { name: "Account 1", size: 150_000, drawdown: 4_500, trailing: "eod", profitTarget: 9_000, dailyLoss: null, funded: false, lockAbove: 100, closeBy: 16 * 60 + 55 };
+export const DEFAULT_RULES: Rules = { name: "Account 1", funded: false, closeBy: 16 * 60 + 55, ...PRESETS[0].rules };
 
 export const DEFAULT_LIMITS: Limits = {
   stopLine: 0.75,
@@ -122,13 +134,13 @@ export const DEFAULT_LIMITS: Limits = {
   window: 120,
   minRR: 1.2,
   stopAtr: 4,
-  minStop: { NQ: 40, ES: 10 },
+  minStop: { NQ: 40, ES: 10, YM: 80, GC: 6 },
   newsMin: 2,
   maxMicros: 30,
   useAI: true,
 };
 
-export const MICRO = { NQ: { sym: "MNQ", pv: 2, tick: 0.25 }, ES: { sym: "MES", pv: 5, tick: 0.25 } } as const;
+export const MICRO = { NQ: { sym: "MNQ", pv: 2, tick: 0.25 }, ES: { sym: "MES", pv: 5, tick: 0.25 }, YM: { sym: "MYM", pv: 0.5, tick: 1 }, GC: { sym: "MGC", pv: 10, tick: 0.1 } } as const;
 const COMMISSION = 0.9; // per micro, round turn
 
 /* ------------------------------------------------------------------ */
@@ -326,10 +338,10 @@ function stopFor(h: His, s: Seen, limits: Limits, from: number): number {
 }
 
 /** Size to the budget: as many micros as the stop allows, or none. */
-function size(h: His, budget: number, stopDist: number, limits: Limits): { micros: number; stopDist: number } | null {
+function size(h: His, budget: number, stopDist: number, limits: Limits, firmCap = Infinity): { micros: number; stopDist: number } | null {
   const pv = MICRO[h.under].pv;
   let micros = Math.floor(budget / (stopDist * pv + COMMISSION));
-  if (micros >= 1) return { micros: Math.min(micros, limits.maxMicros, Math.max(1, h.qty * 10)), stopDist };
+  if (micros >= 1) return { micros: Math.min(micros, limits.maxMicros, firmCap, Math.max(1, h.qty * 10)), stopDist };
   // one micro fits only with a tighter stop: take it if that stop is still sensible
   const tight = (budget - COMMISSION) / pv;
   if (tight >= limits.minStop[h.under]) return { micros: 1, stopDist: tight };
@@ -367,7 +379,7 @@ export function rulesEntry(h: His, s: Seen, f: Follow, limits: Limits, stopDist:
   const ratio = rr(h, price, stopDist);
   if (s.t < 5) return { act: "wait", why: "Reading his trade" };
   if (ratio !== null && ratio < limits.minRR) {
-    return { act: "pass", why: `Price is ${pct(Math.max(0, s.progress))} of the way to his target; what's left is ${ratio.toFixed(1)}× our stop, under the ${limits.minRR.toFixed(1)}× we need` };
+    return { act: "pass", why: `Price is ${pct(Math.max(0, s.progress))} of the way to his target; what's left is ${(Math.floor(ratio * 100) / 100).toFixed(ratio >= limits.minRR - 0.1 ? 2 : 1)}× our stop, under the ${limits.minRR.toFixed(1)}× we need` };
   }
   if (f.limit !== undefined && s.speed30 <= -0.5 * s.atr) return { act: "cancel", why: `Falling fast against him (${pts(-s.speed30)} in 30 seconds); pulled our order and kept watching` };
   if (s.speed30 >= 0.75 * s.atr && s.move > 0.15 * s.atr) return { act: "now", why: `Moving his way fast (${pts(s.speed30)} in 30 seconds), going now so we don't miss it` };
@@ -487,6 +499,8 @@ export function tick(prev: State, w: World, rules: Rules, limits: Limits): Out {
     if (!w.following) return "Following is paused";
     if (dayStopped) return `Today has cost ${money(-dayDown)}, the daily stop`;
     if (rules.dailyLoss !== null && -dayDown >= rules.dailyLoss * 0.8) return "Close to the firm's daily loss limit";
+    // in the evaluation, no one day may make too much of the target: stop a little short of it
+    if (!rules.funded && rules.consistency !== null && dayDown >= rules.consistency * rules.profitTarget * 0.9) return `Up ${money(dayDown)} today: more would break the ${Math.round(rules.consistency * 100)}% consistency rule`;
     if (closing) return "Too close to the session close";
     if (w.news && w.news.at - w.now <= limits.newsMin * 60_000 && w.news.at - w.now > -limits.newsMin * 60_000) return `${w.news.name} is due`;
     return null;
@@ -507,7 +521,7 @@ export function tick(prev: State, w: World, rules: Rules, limits: Limits): Out {
   function step(h: His) {
     if (!st.follows[h.id]) {
       const late = (w.now - h.openedAt) / 1000;
-      const why = h.closedAt ? (h.closedAt < st.startedAt ? "Before following started" : "Missed: Follow wasn't running") : late > limits.window ? `Seen ${Math.round(late / 60)} min after his entry, past the window` : null;
+      const why = h.closedAt ? (h.closedAt < st.startedAt ? "Before following started" : "Missed: Follow wasn't running") : late > limits.window ? `Seen ${late >= 5400 ? `${Math.round(late / 3600)} h` : `${Math.round(late / 60)} min`} after his entry, past the window` : null;
       st.follows[h.id] = { his: h.id, under: h.under, dir: h.dir, status: why ? "passed" : "watching", seenAt: w.now, why: why ?? undefined };
       if (!why) log({ his: h.id, kind: "see", text: `Yazan ${h.dir > 0 ? "bought" : "sold"} ${h.qty} ${h.under} at ${px(h.entry)}`, sub: h.targets.length ? `${h.targets.length > 1 ? "Targets" : "Target"} ${h.targets.map(px).join(" and ")}${h.stop !== undefined ? `, stop ${px(h.stop)}` : ", no stop posted"}` : "No target posted yet" });
     }
@@ -564,7 +578,7 @@ export function tick(prev: State, w: World, rules: Rules, limits: Limits): Out {
       } else {
         const block = blocked();
         const sd = stopFor(h, s, limits, w.last);
-        const sized = size(h, budget, sd, limits);
+        const sized = size(h, budget, sd, limits, rules.firmMicros ?? Infinity);
         if (block || !sized) {
           if (entryO) actions.push({ kind: "cancel", id: entryO.id });
           const why = block ?? `Room is too thin for a sensible stop`;
@@ -619,7 +633,7 @@ export function tick(prev: State, w: World, rules: Rules, limits: Limits): Out {
           return;
         }
         if (call?.act === "limit" && call.price !== undefined && (!entryO || Math.abs(entryO.price - call.price) >= MICRO[h.under].tick)) {
-          const at = size(h, budget, stopFor(h, s, limits, call.price), limits) ?? sized;
+          const at = size(h, budget, stopFor(h, s, limits, call.price), limits, rules.firmMicros ?? Infinity) ?? sized;
           const { q1, q2 } = split(at.micros, h, acct.phase);
           if (entryO) actions.push({ kind: "move", id: entryO.id, price: call.price });
           else actions.push({ kind: "enter", his: h.id, under: h.under, side: h.dir, qty: at.micros, type: "LMT", price: call.price });

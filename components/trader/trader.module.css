@@ -165,8 +165,11 @@
 .me i { position: absolute; right: -1px; bottom: -1px; width: 9px; height: 9px; border-radius: 50%; background: var(--live-green); box-shadow: 0 0 0 2px var(--bg); }
 .meOwner { display: grid; place-items: center; padding: 0; border: 0; background: var(--text-strong); color: var(--page); cursor: pointer; }
 .meForm { display: contents; }
-.meOwner::after { content: attr(data-tip); position: absolute; top: calc(100% + 8px); right: 0; padding: 4px 8px; border-radius: 6px; background: var(--text-strong); color: var(--page); font-family: var(--mono); font-size: 10px; white-space: nowrap; opacity: 0; transform: translateY(-3px); transition: opacity 0.15s, transform 0.15s; pointer-events: none; }
-.meOwner:hover::after, .meOwner:focus-visible::after { opacity: 1; transform: none; }
+.meBtn { padding: 0; border: 0; background: none; cursor: pointer; }
+.meMember { display: grid; place-items: center; background: var(--tl); color: var(--text-strong); }
+.meMember b { font-family: var(--mono); font-size: 12px; font-weight: 400; letter-spacing: 0.04em; }
+:is(.meOwner, .meBtn)::after { content: attr(data-tip); position: absolute; top: calc(100% + 8px); right: 0; padding: 4px 8px; border-radius: 6px; background: var(--text-strong); color: var(--page); font-family: var(--mono); font-size: 10px; white-space: nowrap; opacity: 0; transform: translateY(-3px); transition: opacity 0.15s, transform 0.15s; pointer-events: none; }
+:is(.meOwner, .meBtn):hover::after, :is(.meOwner, .meBtn):focus-visible::after { opacity: 1; transform: none; }
 
 /* ---------- page ---------- */
 .page { min-height: 100vh; padding: 6px 6px 28px; }
@@ -184,6 +187,9 @@
 .row3 { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); }
 
 .cell { position: relative; min-width: 0; }
+/* a cell showing a popover rises above its neighbours and its own grid lines */
+.cell:has([data-pop]) { z-index: 30; }
+.cell:has([data-pop]) > .cellIn { z-index: 4; }
 .cellIn {
   position: relative;
   height: 100%;
@@ -681,11 +687,30 @@
 }
 @media (max-width: 760px) {
   .nav { padding: 0 16px; grid-template-columns: auto 1fr; }
-  .tabs, .navSep, .clock { display: none; }
+  .navSep, .clock { display: none; }
+  /* on a phone the views move to a bar along the bottom, in reach of a thumb */
+  .tabs {
+    position: fixed;
+    left: 10px;
+    right: 10px;
+    bottom: calc(10px + env(safe-area-inset-bottom));
+    z-index: 60;
+    justify-content: space-between;
+    overflow-x: auto;
+    scrollbar-width: none;
+    background: var(--glass-strong);
+    -webkit-backdrop-filter: blur(16px);
+    backdrop-filter: blur(16px);
+    box-shadow: 0 18px 40px -18px var(--shadow);
+  }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tab { flex: 1 0 auto; justify-content: center; padding: 0 11px; font-size: 12.5px; }
   .brandName { font-size: 17px; letter-spacing: 0.18em; margin-right: -0.18em; }
-  .page { padding: 5px 5px 24px; }
+  .page { padding: 5px 5px calc(84px + env(safe-area-inset-bottom)); }
   .row5 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .cellIn { padding: 20px 18px 22px; }
+  .cellHead { flex-wrap: wrap; row-gap: 4px; }
+  .aside { white-space: normal; }
   .hero { padding: 22px 18px 0; }
   .heroTop { flex-direction: column; }
   .equity { margin: 0 -18px; }
